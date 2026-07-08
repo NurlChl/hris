@@ -1,0 +1,549 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { CalendarDays, Clock, Plus, Trash2, Edit, X, Loader2, AlertCircle, Calendar } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import SearchSelect from "@/components/SearchSelect";
+
+interface ScheduleTemplate {
+  _id: string;
+  name: string;
+  clockIn: string;
+  clockOut: string;
+  isBreakActive: boolean;
+  breakOut?: string;
+  breakIn?: string;
+  activeDays: number[];
+  gracePeriodMinutes: number;
+}
+
+interface Employee {
+  _id: string;
+  name: string;
+  employeeId: string;
+}
+
+interface Assignment {
+  _id: string;
+  employeeId: { _id: string; name: string; employeeId: string; } | null;
+  scheduleId: { _id: string; name: string; } | null;
+  date: string;
+}
+
+export default function SchedulesPage() {
+  const [activeTab, setActiveTab] = useState<"template" | "shift">("template");
+  const [templates, setTemplates] = useState<ScheduleTemplate[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Form state template
+  const [formOpen, setFormOpen] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [clockIn, setClockIn] = useState("09:00");
+  const [clockOut, setClockOut] = useState("17:00");
+  const [isBreakActive, setIsBreakActive] = useState(false);
+  const [breakOut, setBreakOut] = useState("12:00");
+  const [breakIn, setBreakIn] = useState("13:00");
+  const [activeDays, setActiveDays] = useState<number[]>([1, 2, 3, 4, 5]); // Senin - Jumat
+  const [gracePeriodMinutes, setGracePeriodMinutes] = useState(1);
+  
+  // Shift assignment state
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignEmployeeId, setAssignEmployeeId] = useState("");
+  const [assignScheduleId, setAssignScheduleId] = useState("");
+  const [assignDate, setAssignDate] = useState("");
+
+  const [errorMessage, setErrorMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetchData();
+  }, [activeTab]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      if (activeTab === "template") {
+        const res = await fetch("/api/v1/schedules?type=template");
+        const data = await res.json();
+        if (data.success) setTemplates(data.data);
+      } else {
+        // Load assignments & employees for builder
+        const [rEmp, rAssign, rTemp] = await Promise.all([
+          fetch("/api/v1/employees"),
+          fetch("/api/v1/schedules?type=assign"),
+          fetch("/api/v1/schedules?type=template"),
+        ]);
+        const [dEmp, dAssign, dTemp] = await Promise.all([
+          rEmp.json(),
+          rAssign.json(),
+          rTemp.json(),
+        ]);
+        if (dEmp.success) setEmployees(dEmp.data);
+        if (dAssign.success) setAssignments(dAssign.data);
+        if (dTemp.success) setTemplates(dTemp.data);
+      }
+    } catch (err) {
+      console.error("Gagal memuat jadwal:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenForm = (temp?: ScheduleTemplate) => {
+    if (temp) {
+      setSelectedTemplateId(temp._id);
+      setName(temp.name);
+      setClockIn(temp.clockIn);
+      setClockOut(temp.clockOut);
+      setIsBreakActive(temp.isBreakActive);
+      setBreakOut(temp.breakOut || "12:00");
+      setBreakIn(temp.breakIn || "13:00");
+      setActiveDays(temp.activeDays);
+      setGracePeriodMinutes(temp.gracePeriodMinutes);
+    } else {
+      setSelectedTemplateId(null);
+      setName("");
+      setClockIn("09:00");
+      setClockOut("17:00");
+      setIsBreakActive(false);
+      setBreakOut("12:00");
+      setBreakIn("13:00");
+      setActiveDays([1, 2, 3, 4, 5]);
+      setGracePeriodMinutes(1);
+    }
+    setErrorMessage("");
+    setFormOpen(true);
+  };
+
+  const handleCloseForm = () => setFormOpen(false);
+
+  const handleSubmitTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setErrorMessage("");
+
+    try {
+      const res = await fetch("/api/v1/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: selectedTemplateId,
+          name,
+          clockIn,
+          clockOut,
+          isBreakActive,
+          breakOut: isBreakActive ? breakOut : undefined,
+          breakIn: isBreakActive ? breakIn : undefined,
+          activeDays,
+          gracePeriodMinutes,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchData();
+        setFormOpen(false);
+      } else {
+        setErrorMessage(data.error?.message || "Gagal menyimpan template");
+      }
+    } catch (err) {
+      setErrorMessage("Kesalahan koneksi ke server");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    if (!confirm("Apakah Anda yakin ingin menghapus template jadwal ini?")) return;
+    try {
+      const res = await fetch(`/api/v1/schedules/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        fetchData();
+      }
+    } catch (err) {
+      console.error("Gagal menghapus template:", err);
+    }
+  };
+
+  const handleDayToggle = (day: number) => {
+    if (activeDays.includes(day)) {
+      setActiveDays(activeDays.filter(d => d !== day));
+    } else {
+      setActiveDays([...activeDays, day].sort());
+    }
+  };
+
+  const handleOpenAssign = () => {
+    setAssignEmployeeId(employees[0]?._id || "");
+    setAssignScheduleId(templates[0]?._id || "");
+    setAssignDate(new Date().toISOString().split("T")[0]);
+    setErrorMessage("");
+    setAssignOpen(true);
+  };
+
+  const handleCloseAssign = () => setAssignOpen(false);
+
+  const handleAssignSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setErrorMessage("");
+
+    try {
+      const res = await fetch("/api/v1/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "assign",
+          employeeId: assignEmployeeId,
+          scheduleId: assignScheduleId,
+          date: assignDate,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchData();
+        setAssignOpen(false);
+      } else {
+        setErrorMessage(data.error?.message || "Gagal menugaskan jadwal");
+      }
+    } catch (err) {
+      setErrorMessage("Kesalahan koneksi ke server");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const dayNames = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+
+  return (
+    <div className="space-y-6 font-sans">
+      <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Jadwal Kerja & Shift</h1>
+          <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">Buat template jam operasional shift kerja dan petakan kalender penugasan karyawan</p>
+        </div>
+        {activeTab === "template" ? (
+          <button
+            onClick={() => handleOpenForm()}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-sm font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 active:scale-[0.98] transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            Tambah Template
+          </button>
+        ) : (
+          <button
+            onClick={handleOpenAssign}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-sm font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 active:scale-[0.98] transition-all"
+          >
+            <Calendar className="w-4 h-4" />
+            Tugaskan Jadwal
+          </button>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 p-1 bg-slate-100 dark:bg-white/2 border border-slate-200 dark:border-white/8 rounded-lg w-fit">
+        <button
+          onClick={() => setActiveTab("template")}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "template" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+        >
+          <Clock className="w-3.5 h-3.5" />
+          Template Jam Kerja
+        </button>
+        <button
+          onClick={() => setActiveTab("shift")}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "shift" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+        >
+          <CalendarDays className="w-3.5 h-3.5" />
+          Shift Builder & Kalender
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
+          <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
+        </div>
+      ) : activeTab === "template" ? (
+        // Templates Layout
+        templates.length === 0 ? (
+          <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
+            <Clock className="w-8 h-8 mb-2 opacity-50" />
+            <p className="text-sm font-medium">Belum ada template jam kerja</p>
+            <p className="text-xs mt-1">Buat template jam kerja (contoh: Shift Pagi, Backoffice) untuk mempermudah pemetaan presensi.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {templates.map(temp => (
+              <motion.div
+                layout
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                key={temp._id}
+                className="bg-white border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-5 hover:border-white/12 hover:bg-white dark:bg-white/3 transition-all duration-300 flex flex-col justify-between"
+              >
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-500/20 font-semibold text-[10px]">
+                        Late Grace: {temp.gracePeriodMinutes}m
+                      </span>
+                      <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 mt-1">{temp.name}</h3>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={() => handleOpenForm(temp)} className="p-1.5 rounded hover:bg-white/4 text-slate-550 dark:text-slate-400 hover:text-slate-200 transition-all cursor-pointer">
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDeleteTemplate(temp._id)} className="p-1.5 rounded hover:bg-red-500/5 text-slate-550 dark:text-slate-400 hover:text-red-400 transition-all cursor-pointer">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 text-xs text-slate-550 dark:text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-slate-500" />
+                      <span>{temp.clockIn} - {temp.clockOut} WIB</span>
+                    </div>
+                    {temp.isBreakActive && (
+                      <p className="text-[10px] text-slate-500 pl-5">
+                        Istirahat: {temp.breakOut} - {temp.breakIn} WIB
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-white/4 flex flex-wrap gap-1">
+                  {dayNames.map((day, idx) => {
+                    const active = temp.activeDays.includes(idx);
+                    return (
+                      <span
+                        key={day}
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${ active ? "bg-slate-100 dark:bg-white/10 text-slate-750 dark:text-slate-300 border border-slate-200 dark:border-white/8" : "bg-white dark:bg-white/2 text-slate-600 border-slate-200 dark:border-white/4" }`}
+                      >
+                        {day.substring(0, 3)}
+                      </span>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )
+      ) : (
+        // Shift Builder Calendar List
+        assignments.length === 0 ? (
+          <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
+            <CalendarDays className="w-8 h-8 mb-2 opacity-50" />
+            <p className="text-sm font-medium">Belum ada penugasan jadwal kerja</p>
+            <p className="text-xs mt-1">Petakan template jam kerja ke kalender harian karyawan perusahaan.</p>
+          </div>
+        ) : (
+          <div className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl overflow-hidden overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-white/8 bg-white dark:bg-white/2 text-slate-550 dark:text-slate-400">
+                  <th className="p-4 font-semibold">Karyawan</th>
+                  <th className="p-4 font-semibold">Jadwal Kerja</th>
+                  <th className="p-4 font-semibold">Tanggal Aktif</th>
+                  <th className="p-4 font-semibold">Jam Operasional</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignments.map(ass => (
+                  <tr key={ass._id} className="border-b border-slate-200 dark:border-white/4 hover:bg-white/1 transition-all">
+                    <td className="p-4">
+                      <div>
+                        <span className="font-bold text-slate-900 dark:text-slate-200">{ass.employeeId?.name || "Karyawan Terhapus"}</span>
+                        <span className="block text-[10px] text-slate-500">{ass.employeeId?.employeeId || "-"}</span>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-white/10 text-slate-750 dark:text-slate-300 border border-slate-200 dark:border-white/8 font-semibold text-[10px]">
+                        {ass.scheduleId?.name || "Template Terhapus"}
+                      </span>
+                    </td>
+                    <td className="p-4 text-slate-700 dark:text-slate-300 font-medium">
+                      {new Date(ass.date).toLocaleDateString("id-ID", { year: "numeric", month: "long", day: "numeric" })}
+                    </td>
+                    <td className="p-4 text-slate-550 dark:text-slate-400">
+                      {ass.scheduleId ? `${(ass.scheduleId as any).clockIn} - ${(ass.scheduleId as any).clockOut} WIB` : "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {/* Template Form Panel */}
+      <AnimatePresence>
+        {formOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={handleCloseForm} className="absolute inset-0 bg-black" />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-200">
+                  {selectedTemplateId ? "Edit Template Jadwal" : "Tambah Template Jadwal Baru"}
+                </h3>
+                <button onClick={handleCloseForm} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {errorMessage && (
+                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSubmitTemplate} className="space-y-4 text-xs">
+                <div className="space-y-1">
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Nama Jadwal / Shift</label>
+                  <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Shift Pagi Satpam" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Jam Masuk (Clock In)</label>
+                    <input type="time" required value={clockIn} onChange={e => setClockIn(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Jam Pulang (Clock Out)</label>
+                    <input type="time" required value={clockOut} onChange={e => setClockOut(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Toleransi Telat (Menit)</label>
+                  <input type="number" required min={0} value={gracePeriodMinutes} onChange={e => setGracePeriodMinutes(parseInt(e.target.value))} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold block">Hari Kerja Aktif</label>
+                  <div className="flex flex-wrap gap-2">
+                    {dayNames.map((day, idx) => {
+                      const active = activeDays.includes(idx);
+                      return (
+                        <button
+                          type="button"
+                          key={day}
+                          onClick={() => handleDayToggle(idx)}
+                          className={`px-3 py-1 rounded text-xs font-semibold cursor-pointer transition-all ${ active ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-900 dark:border-white shadow" : "bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-700 hover:dark:text-slate-300" }`}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2">
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="break-check" checked={isBreakActive} onChange={e => setIsBreakActive(e.target.checked)} className="w-4 h-4 rounded border-slate-200 dark:border-white/8 bg-slate-900 accent-blue-500 cursor-pointer" />
+                    <label htmlFor="break-check" className="text-slate-700 dark:text-slate-300 font-semibold cursor-pointer">Aktifkan Jam Istirahat</label>
+                  </div>
+                  {isBreakActive && (
+                    <div className="grid grid-cols-2 gap-4 mt-2">
+                      <div className="space-y-1">
+                        <label className="text-slate-550 dark:text-slate-400 text-[10px]">Mulai Istirahat</label>
+                        <input type="time" value={breakOut} onChange={e => setBreakOut(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-slate-550 dark:text-slate-400 text-[10px]">Kembali Istirahat</label>
+                        <input type="time" value={breakIn} onChange={e => setBreakIn(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
+                  <button type="button" onClick={handleCloseForm} className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 hover:bg-white dark:bg-white/2 cursor-pointer transition-all">Batal</button>
+                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
+                    {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    Simpan Template
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Assignment Form Modal */}
+      <AnimatePresence>
+        {assignOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={handleCloseAssign} className="absolute inset-0 bg-black" />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-200">Tugaskan Jadwal Kalender</h3>
+                <button onClick={handleCloseAssign} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {errorMessage && (
+                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleAssignSubmit} className="space-y-4 text-xs">
+                <SearchSelect
+                  label="Pilih Karyawan"
+                  value={assignEmployeeId}
+                  onChange={setAssignEmployeeId}
+                  options={employees.map(emp => ({
+                    label: `${emp.name} (${emp.employeeId})`,
+                    value: emp._id
+                  }))}
+                  placeholder="Pilih karyawan..."
+                />
+
+                <SearchSelect
+                  label="Pilih Template Jadwal Kerja"
+                  value={assignScheduleId}
+                  onChange={setAssignScheduleId}
+                  options={templates.map(temp => ({
+                    label: temp.name,
+                    value: temp._id
+                  }))}
+                  placeholder="Pilih jadwal..."
+                />
+
+                <div className="space-y-1">
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Tanggal Penugasan</label>
+                  <input type="date" required value={assignDate} onChange={e => setAssignDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
+                  <button type="button" onClick={handleCloseAssign} className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 hover:bg-white dark:bg-white/2 cursor-pointer transition-all">Batal</button>
+                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
+                    {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    Tugaskan Jadwal
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

@@ -1,0 +1,221 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "HRIS (Human Resource Information System) API Documentation",
+    "description": "Dokumentasi RESTful API untuk Sistem HRIS terintegrasi (Portal Karyawan + Dashboard CMS Admin). Dokumentasi ini mencakup modul Autentikasi, Karyawan, Departemen (Divisi & Jabatan), Presensi, Inventaris, Rekrutmen ATS, dan KPI.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Base URL"
+    }
+  ],
+  "paths": {
+    "/public/positions": {
+      "get": {
+        "summary": "Mendapatkan Daftar Lowongan Kerja Aktif",
+        "description": "Mengambil semua lowongan kerja (Jabatan) yang berstatus aktif lengkap dengan informasi Divisi dan Cabang Kantor terkait. Jika parameter `id` disertakan, akan mengembalikan detail satu lowongan saja.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "description": "ID Jabatan/Lowongan Kerja spesifik",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Berhasil memuat daftar lowongan kerja",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "message": { "type": "string", "example": "Berhasil memuat data lowongan kerja aktif" },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PositionDetail"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/candidates": {
+      "post": {
+        "summary": "Kirim Lamaran Kerja Baru (Apply)",
+        "description": "Mengajukan lamaran kerja baru untuk posisi tertentu dari halaman karir eksternal. Pelamar wajib menyertakan Nama, Email, No. HP, CV URL, dan ID Lowongan.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "email", "phone", "positionId", "cvUrl"],
+                "properties": {
+                  "name": { "type": "string", "example": "Budi Santoso" },
+                  "email": { "type": "string", "format": "email", "example": "budi.santoso@gmail.com" },
+                  "phone": { "type": "string", "example": "081234567890" },
+                  "positionId": { "type": "string", "example": "65b9c02d1847e92384a51e2f" },
+                  "cvUrl": { "type": "string", "format": "uri", "example": "https://drive.google.com/file/d/123/view" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lamaran berhasil dikirim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "message": { "type": "string", "example": "Lamaran Anda berhasil dikirim" },
+                    "data": {
+                      "$ref": "#/components/schemas/Candidate"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/positions": {
+      "get": {
+        "summary": "Daftar Jabatan Kerja (CMS Admin)",
+        "description": "Mengambil semua data jabatan yang terdaftar di dalam sistem HRIS. Memerlukan login sesi.",
+        "responses": {
+          "200": {
+            "description": "Daftar jabatan berhasil dimuat"
+          }
+        }
+      },
+      "post": {
+        "summary": "Tambah / Edit Jabatan (CMS Admin)",
+        "description": "Membuat jabatan baru atau memperbarui jabatan yang sudah ada jika menyertakan `id`. Mendukung konfigurasi detail karir (Jobdesk, Kualifikasi, Lokasi, Tipe, Status Loker). Memerlukan izin menulis konfigurasi.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "id": { "type": "string", "description": "ID Jabatan jika ingin meng-update", "example": "65b9c02d1847e92384a51e2f" },
+                  "name": { "type": "string", "example": "Senior Software Engineer" },
+                  "divisionId": { "type": "string", "example": "65b9b9fd1847e92384a51e12" },
+                  "description": { "type": "string", "example": "Memimpin tim engineer dalam pengembangan web Next.js" },
+                  "jobdesk": { "type": "string", "example": "Mengembangkan kode React\nMelakukan code review" },
+                  "requirements": { "type": "string", "example": "Minimal 5 tahun pengalaman\nMenguasai Node.js & TypeScript" },
+                  "location": { "type": "string", "example": "Jakarta" },
+                  "type": { "type": "string", "example": "Full-Time" },
+                  "status": { "type": "string", "enum": ["active", "inactive"], "example": "active" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Jabatan berhasil disimpan"
+          }
+        }
+      }
+    },
+    "/divisions": {
+      "get": {
+        "summary": "Daftar Divisi (CMS Admin)",
+        "description": "Mengambil semua data divisi terdaftar beserta hubungan cabang dan atasan divisi.",
+        "responses": {
+          "200": {
+            "description": "Daftar divisi berhasil dimuat"
+          }
+        }
+      },
+      "post": {
+        "summary": "Tambah / Edit Divisi (CMS Admin)",
+        "description": "Membuat divisi baru atau mengedit divisi jika menyertakan `id`. Hubungkan divisi ke cabang kantor agar nama divisi yang sama bisa dibedakan antar cabang.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "id": { "type": "string", "example": "65b9b9fd1847e92384a51e12" },
+                  "name": { "type": "string", "example": "Finance & Accounting" },
+                  "headId": { "type": "string", "description": "ID Karyawan ketua divisi", "example": "65b9a8fd1847e92384a51e01" },
+                  "branchId": { "type": "string", "description": "ID Cabang Kantor penempatan divisi", "example": "65b9a1fd1847e92384a50f99" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Divisi berhasil disimpan"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PositionDetail": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string", "example": "65b9c02d1847e92384a51e2f" },
+          "name": { "type": "string", "example": "Senior Software Engineer" },
+          "divisionId": {
+            "type": "object",
+            "properties": {
+              "_id": { "type": "string", "example": "65b9b9fd1847e92384a51e12" },
+              "name": { "type": "string", "example": "IT Division" },
+              "branchId": {
+                "type": "object",
+                "properties": {
+                  "_id": { "type": "string", "example": "65b9a1fd1847e92384a50f99" },
+                  "name": { "type": "string", "example": "Head Office Jakarta" }
+                }
+              }
+            }
+          },
+          "description": { "type": "string", "example": "Deskripsi umum pekerjaan..." },
+          "jobdesk": { "type": "string", "example": "Melakukan penulisan kode React\nMemelihara server Next.js" },
+          "requirements": { "type": "string", "example": "Minimal lulusan S1 IT\nPengalaman 3 tahun" },
+          "location": { "type": "string", "example": "Jakarta" },
+          "type": { "type": "string", "example": "Full-Time" },
+          "status": { "type": "string", "example": "active" }
+        }
+      },
+      "Candidate": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string", "example": "65b9d3ff1847e92384a51e50" },
+          "name": { "type": "string", "example": "Budi Santoso" },
+          "email": { "type": "string", "example": "budi.santoso@gmail.com" },
+          "phone": { "type": "string", "example": "081234567890" },
+          "positionId": { "type": "string", "example": "65b9c02d1847e92384a51e2f" },
+          "currentStage": { "type": "string", "example": "Administrasi" },
+          "status": { "type": "string", "example": "pending" },
+          "cvUrl": { "type": "string", "example": "https://drive.google.com/file/d/123/view" }
+        }
+      }
+    }
+  }
+}
