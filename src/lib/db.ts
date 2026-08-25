@@ -1,7 +1,17 @@
 import mongoose from "mongoose";
+import dns from "dns";
 
 // Disable strictPopulate globally to avoid dynamic routing/HMR populate errors
 mongoose.set("strictPopulate", false);
+
+// Custom DNS servers fallback to prevent ECONNREFUSED on MongoDB Atlas SRV queries in Windows / local ISP DNS
+try {
+  if (typeof dns.setServers === "function") {
+    dns.setServers(["8.8.8.8", "1.1.1.1"]);
+  }
+} catch (e) {
+  // Ignore if dns.setServers is restricted in the execution environment
+}
 
 const MONGODB_URI = process.env.MONGODB_URI;
 

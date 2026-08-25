@@ -197,7 +197,7 @@ async function seed() {
     // 3.3. Seed Master Penempatan (Cabang, Divisi, Jabatan)
     console.log("Seeding master corporate data...");
     
-    let branchDoc = await Branch.findOne({ code: "KPJ" });
+    let branchDoc = await Branch.findOne({ $or: [{ code: "KPJ" }, { name: "Kantor Pusat Jakarta" }] });
     if (!branchDoc) {
       branchDoc = await Branch.create({
         name: "Kantor Pusat Jakarta",
@@ -210,7 +210,7 @@ async function seed() {
       console.log("Created corporate Branch: Kantor Pusat Jakarta");
     }
 
-    let divisionDoc = await Division.findOne({ code: "IT" });
+    let divisionDoc = await Division.findOne({ $or: [{ code: "IT" }, { name: "Teknologi Informasi" }] });
     if (!divisionDoc) {
       divisionDoc = await Division.create({
         name: "Teknologi Informasi",
@@ -219,7 +219,7 @@ async function seed() {
       console.log("Created corporate Division: Teknologi Informasi");
     }
 
-    let positionDoc = await Position.findOne({ code: "SSE" });
+    let positionDoc = await Position.findOne({ $or: [{ code: "SSE" }, { name: "Senior Software Engineer" }] });
     if (!positionDoc) {
       positionDoc = await Position.create({
         name: "Senior Software Engineer",
@@ -232,7 +232,7 @@ async function seed() {
     // 3.4. Seed Default Employee & STAFF User
     console.log("Seeding default Employee & Staff account...");
     const empEmail = "budi@hris.com";
-    let employeeDoc = await Employee.findOne({ personalEmail: empEmail });
+    let employeeDoc = await Employee.findOne({ $or: [{ personalEmail: empEmail }, { employeeId: "EMP-2026-0001" }] });
     
     if (!employeeDoc) {
       employeeDoc = await Employee.create({
