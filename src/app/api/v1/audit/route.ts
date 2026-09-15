@@ -1,84 +1,118 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
+import mongoose from "mongoose";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import { requireUser, pagination, Forbidden } from "@/lib/guard";
 import { checkPermission } from "@/lib/rbac";
 import AuditLog from "@/models/AuditLog";
 import User from "@/models/User";
-import { connectToDatabase } from "@/lib/db";
+import Employee from "@/models/Employee";
+import Role from "@/models/Role";
+import { wibEndOfDay, wibStartOfDay } from "@/lib/time";
 
+/**
+ * Audit trail reader.
+ *
+ * The log is the system's accountability record, so reading it is itself a
+ * privileged action — gated on the `audit` module, falling back to `settings`
+ * for installations seeded before `audit` existed.
+ */
 export const GET = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk mengakses data ini", null, 401);
-  }
+  const ctx = await requireUser(req);
 
-  // Check RBAC permission for settings read
-  const perm = await checkPermission(session.user.id, "settings", "read");
+  const perm = (await checkPermission(ctx.user.id, "audit", "read")).allowed
+    ? await checkPermission(ctx.user.id, "audit", "read")
+    : await checkPermission(ctx.user.id, "settings", "read");
   if (!perm.allowed) {
-    return apiError("FORBIDDEN", "Anda tidak memiliki izin untuk melihat log audit", null, 403);
+    throw Forbidden("Anda tidak memiliki izin melihat log audit.");
   }
 
-  await connectToDatabase();
+  const sp = new URL(req.url).searchParams;
+  const { page, limit, skip } = pagination(req, 50, 200);
 
-  const url = new URL(req.url);
-  const page = parseInt(url.searchParams.get("page") || "1", 10);
-  const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-  const moduleFilter = url.searchParams.get("module") || "";
-  const actionFilter = url.searchParams.get("action") || "";
+  const query: Record<string, unknown> = {};
+  const moduleFilter = sp.get("module");
+  const actionFilter = sp.get("action");
+  const from = sp.get("from");
+  const to = sp.get("to");
+  const search = sp.get("q")?.trim();
 
-  const skip = (page - 1) * limit;
-
-  // Build filter query
-  const query: Record<string, any> = {};
-  if (moduleFilter) {
-    query.module = moduleFilter;
-  }
-  if (actionFilter) {
-    query.action = actionFilter;
-  }
-
-  // Fetch count and logs
-  const total = await AuditLog.countDocuments(query);
-  const logs = await AuditLog.find(query)
-    .sort({ timestamp: -1 })
-    .skip(skip)
-    .limit(limit)
-    .lean();
-
-  // Retrieve unique user details to map to the logs (avoiding N+1 lookup)
-  const userIds = Array.from(new Set(logs.map(log => log.userId).filter(Boolean)));
-  const users = await User.find({ _id: { $in: userIds } })
-    .select("name email role")
-    .lean();
-
-  const userMap = new Map(users.map(u => [(u._id as any).toString(), u]));
-
-  const mappedLogs = logs.map(log => {
-    const userKey = log.userId ? log.userId.toString() : "";
-    const userDetail = userMap.get(userKey) || null;
-    return {
-      ...log,
-      user: userDetail ? {
-        name: userDetail.name,
-        email: userDetail.email,
-        role: userDetail.role
-      } : {
-        name: "System / Anonymous",
-        email: "-",
-        role: "-"
-      }
+  if (moduleFilter && moduleFilter !== "all") query.module = moduleFilter;
+  if (actionFilter && actionFilter !== "all") query.action = actionFilter;
+  if (from || to) {
+    query.timestamp = {
+      ...(from ? { $gte: wibStartOfDay(from) } : {}),
+      ...(to ? { $lte: wibEndOfDay(to) } : {}),
     };
-  });
+  }
+  if (search) {
+    const safe = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    query.action = { $regex: safe, $options: "i" };
+  }
+
+  const [logs, total, modules, actions] = await Promise.all([
+    AuditLog.find(query).sort({ timestamp: -1 }).skip(skip).limit(limit).lean<
+      Array<{ _id: unknown; userId: unknown; action: string; module: string; timestamp: Date }>
+    >(),
+    AuditLog.countDocuments(query),
+    AuditLog.distinct("module"),
+    AuditLog.distinct("action"),
+  ]);
+
+  /* --- resolve actors ------------------------------------------------ */
+  // The User model has no `name` or `role` field — the previous version
+  // selected both and rendered `undefined` for every row. The display name
+  // comes from the linked Employee, and the role from the referenced Role.
+  const userIds = Array.from(
+    new Set(logs.map((l) => l.userId).filter(Boolean).map((u) => String(u)))
+  ).filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } })
+        .select("email roleId employeeId")
+        .lean<Array<{ _id: mongoose.Types.ObjectId; email: string; roleId?: mongoose.Types.ObjectId; employeeId?: mongoose.Types.ObjectId }>>()
+    : [];
+
+  const [roles, employees] = await Promise.all([
+    Role.find({ _id: { $in: users.map((u) => u.roleId).filter(Boolean) } })
+      .select("name")
+      .lean<Array<{ _id: mongoose.Types.ObjectId; name: string }>>(),
+    Employee.find({ _id: { $in: users.map((u) => u.employeeId).filter(Boolean) } })
+      .select("name employeeId")
+      .lean<Array<{ _id: mongoose.Types.ObjectId; name: string; employeeId: string }>>(),
+  ]);
+
+  const roleMap = new Map(roles.map((r) => [String(r._id), r.name]));
+  const empMap = new Map(employees.map((e) => [String(e._id), e]));
+  const userMap = new Map(
+    users.map((u) => {
+      const emp = u.employeeId ? empMap.get(String(u.employeeId)) : undefined;
+      return [
+        String(u._id),
+        {
+          name: emp?.name ?? u.email,
+          nip: emp?.employeeId ?? "-",
+          email: u.email,
+          role: u.roleId ? roleMap.get(String(u.roleId)) ?? "-" : "-",
+        },
+      ];
+    })
+  );
+
+  const mapped = logs.map((log) => ({
+    ...log,
+    actor: (log.userId && userMap.get(String(log.userId))) || {
+      name: "Sistem / Anonim",
+      nip: "-",
+      email: "-",
+      role: "-",
+    },
+  }));
 
   return apiSuccess(
     {
-      logs: mappedLogs,
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
-      }
+      logs: mapped,
+      filters: { modules: modules.sort(), actions: actions.sort() },
     },
-    "Berhasil memuat log audit"
+    "Berhasil memuat log audit",
+    { page, limit, total }
   );
 });

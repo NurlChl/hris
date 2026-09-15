@@ -1,75 +1,103 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
-import { checkPermission } from "@/lib/rbac";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import { requireUser, requirePermission, BadRequest } from "@/lib/guard";
 import { logActivity } from "@/lib/audit/logger";
+import {
+  SETTING_DEFS,
+  SETTING_GROUPS,
+  SETTING_MAP,
+  coerceSetting,
+  getSettings,
+  invalidateSettingsCache,
+} from "@/lib/settings";
 import Setting from "@/models/Setting";
-import { connectToDatabase } from "@/lib/db";
 
+/**
+ * Reads the effective configuration: stored rows merged over the declared
+ * defaults, so the CMS form and every server rule see the same values even for
+ * keys that were never saved.
+ */
 export const GET = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk mengakses data ini", null, 401);
+  const ctx = await requireUser(req);
+  const settings = await getSettings(true);
+
+  // Only the CMS needs the field metadata; ordinary portal reads just want the
+  // values. Keys marked internal never leave the server for a non-admin.
+  const wantsSchema = new URL(req.url).searchParams.get("schema") === "1";
+  const isAdmin = ["SUPERADMIN", "HRD"].includes(ctx.user.role);
+
+  if (!wantsSchema || !isAdmin) {
+    // Credentials-like values must not be handed to a portal user.
+    const safe = { ...settings };
+    delete safe.default_employee_password;
+    return apiSuccess(safe, "Berhasil memuat pengaturan");
   }
 
-  await connectToDatabase();
-  const settings = await Setting.find({});
-  
-  // Transform to a key-value object
-  const settingsMap = settings.reduce((acc, curr) => {
-    acc[curr.key] = curr.value;
-    return acc;
-  }, {} as Record<string, any>);
-
-  return apiSuccess(settingsMap, "Berhasil memuat pengaturan");
+  return apiSuccess(
+    {
+      values: settings,
+      groups: SETTING_GROUPS,
+      fields: SETTING_DEFS.filter((d) => !d.internal),
+    },
+    "Berhasil memuat pengaturan"
+  );
 });
 
 export const POST = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk melakukan aksi ini", null, 401);
+  const ctx = await requirePermission(req, "settings", "write");
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    throw BadRequest("Format data tidak valid.");
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw BadRequest("Format data pengaturan tidak valid.");
   }
 
-  // Check dynamic permissions
-  const perm = await checkPermission(session.user.id, "settings", "write");
-  if (!perm.allowed) {
-    return apiError("FORBIDDEN", "Anda tidak memiliki izin untuk mengubah pengaturan", null, 403);
+  const entries = Object.entries(body as Record<string, unknown>);
+  if (!entries.length) throw BadRequest("Tidak ada pengaturan yang dikirim.");
+
+  // Only declared keys are writable — an arbitrary key could otherwise be
+  // injected into the settings collection and read back elsewhere.
+  const unknownKeys = entries.filter(([k]) => !SETTING_MAP[k]).map(([k]) => k);
+  if (unknownKeys.length) {
+    throw BadRequest(`Kunci pengaturan tidak dikenali: ${unknownKeys.join(", ")}.`);
   }
 
-  const body = await req.json();
-  if (!body || typeof body !== "object") {
-    return apiError("BAD_REQUEST", "Format data tidak valid");
-  }
+  const before = await getSettings(true);
+  const changed: Record<string, { from: unknown; to: unknown }> = {};
 
-  await connectToDatabase();
-  
-  const oldSettings = await Setting.find({});
-  const oldMap = oldSettings.reduce((acc, curr) => {
-    acc[curr.key] = curr.value;
-    return acc;
-  }, {} as Record<string, any>);
-
-  const updatedMap: Record<string, any> = {};
-
-  // Bulk update settings key-value pair
-  for (const [key, value] of Object.entries(body)) {
-    const setting = await Setting.findOneAndUpdate(
+  for (const [key, rawValue] of entries) {
+    const value = coerceSetting(key, rawValue);
+    if (before[key] === value) continue;
+    await Setting.findOneAndUpdate(
       { key },
-      { value },
-      { new: true, upsert: true }
+      { value, description: SETTING_MAP[key].description },
+      { upsert: true, new: true }
     );
-    updatedMap[key] = setting.value;
+    changed[key] = { from: before[key], to: value };
   }
 
-  // Audit logging
-  await logActivity({
-    userId: session.user.id,
-    action: "UPDATE_SETTINGS",
-    module: "settings",
-    before: oldMap,
-    after: updatedMap,
-    ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-    userAgent: req.headers.get("user-agent") || "",
-  });
+  invalidateSettingsCache();
+  const after = await getSettings(true);
 
-  return apiSuccess(updatedMap, "Berhasil memperbarui pengaturan");
+  if (Object.keys(changed).length) {
+    void logActivity({
+      userId: ctx.user.id,
+      action: "UPDATE_SETTINGS",
+      module: "settings",
+      before: Object.fromEntries(Object.entries(changed).map(([k, v]) => [k, v.from])),
+      after: Object.fromEntries(Object.entries(changed).map(([k, v]) => [k, v.to])),
+      ip: ctx.ip,
+      userAgent: ctx.userAgent,
+    });
+  }
+
+  return apiSuccess(
+    after,
+    Object.keys(changed).length
+      ? `${Object.keys(changed).length} pengaturan diperbarui dan langsung berlaku.`
+      : "Tidak ada perubahan yang perlu disimpan."
+  );
 });

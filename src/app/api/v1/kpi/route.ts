@@ -1,210 +1,149 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
+import mongoose from "mongoose";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import { requireUser, Forbidden } from "@/lib/guard";
 import { checkPermission } from "@/lib/rbac";
-import { logActivity } from "@/lib/audit/logger";
-import { connectToDatabase } from "@/lib/db";
-import KpiTemplate from "@/models/KpiTemplate";
 import KpiEvaluation from "@/models/KpiEvaluation";
+import KpiTemplate from "@/models/KpiTemplate";
+import { DEFAULT_GRADES } from "@/lib/hr/kpi";
 import Employee from "@/models/Employee";
-import Division from "@/models/Division";
-import User from "@/models/User";
+import "@/models/Division";
+import "@/models/Position";
 
+/**
+ * KPI overview.
+ *
+ * Template and appraisal CRUD live in `/kpi/templates` and `/kpi/evaluations`;
+ * this route only aggregates. Results are narrowed by the caller's permission
+ * scope, so a supervisor sees their division's numbers rather than the
+ * company's.
+ */
 export const GET = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk mengakses data ini", null, 401);
+  const ctx = await requireUser(req);
+  const perm = await checkPermission(ctx.user.id, "kpi", "read");
+  if (!perm.allowed) throw Forbidden("Anda tidak memiliki izin melihat data KPI.");
+
+  const sp = new URL(req.url).searchParams;
+  const period = sp.get("period");
+
+  /* --- scope ---
+     `employeeFilter` narrows the headcount the same way `scope` narrows the
+     appraisals. Coverage divides one by the other, so the two have to be drawn
+     from the same population — counting every employee in the company while
+     only reading one division's appraisals reports a coverage far below the
+     real one. */
+  const scope: Record<string, unknown> = {};
+  const employeeFilter: Record<string, unknown> = { status: "active" };
+
+  if (perm.scope === "self") {
+    scope.employeeId = ctx.user.employeeId ?? "000000000000000000000000";
+    employeeFilter._id = ctx.user.employeeId ?? "000000000000000000000000";
+  } else if (perm.scope === "division" && ctx.user.divisionId) {
+    employeeFilter.divisionId = ctx.user.divisionId;
+    const ids = await Employee.find({ divisionId: ctx.user.divisionId })
+      .select("_id")
+      .lean<Array<{ _id: mongoose.Types.ObjectId }>>();
+    scope.employeeId = { $in: ids.map((e) => e._id) };
+  } else if (perm.scope === "branch" && ctx.user.branchId) {
+    employeeFilter.branchId = ctx.user.branchId;
+    const ids = await Employee.find({ branchId: ctx.user.branchId })
+      .select("_id")
+      .lean<Array<{ _id: mongoose.Types.ObjectId }>>();
+    scope.employeeId = { $in: ids.map((e) => e._id) };
   }
 
-  // Allow read access for performance/kpi module
-  const perm = await checkPermission(session.user.id, "employees", "read");
-  if (!perm.allowed) {
-    return apiError("FORBIDDEN", "Anda tidak memiliki izin untuk melihat data KPI", null, 403);
-  }
+  const filter = { ...scope, ...(period ? { period } : {}) };
 
-  await connectToDatabase();
-
-  const url = new URL(req.url);
-  const type = url.searchParams.get("type") || "dashboard";
-
-  if (type === "templates") {
-    const templates = await KpiTemplate.find({})
-      .populate("divisionId", "name")
-      .lean();
-    return apiSuccess(templates, "Berhasil memuat templat KPI");
-
-  } else if (type === "evaluations") {
-    const evaluations = await KpiEvaluation.find({})
-      .populate("employeeId", "name employeeId NIK branchId divisionId positionId")
-      .populate("templateId", "name")
-      .populate("evaluatorId", "name")
-      .sort({ period: -1, finalScore: -1 })
-      .lean();
-    return apiSuccess(evaluations, "Berhasil memuat evaluasi KPI");
-
-  } else {
-    // Dashboard analytics
-    const evaluations = await KpiEvaluation.find({})
+  const [evaluations, templateCount, activeEmployees, periods] = await Promise.all([
+    KpiEvaluation.find(filter)
       .populate({
         path: "employeeId",
-        select: "name divisionId positionId",
-        populate: { path: "divisionId", select: "name" }
+        select: "name employeeId divisionId",
+        populate: { path: "divisionId", select: "name" },
       })
-      .lean();
+      .sort({ finalScore: -1 })
+      .limit(1000)
+      .lean<Array<Record<string, unknown>>>(),
+    KpiTemplate.countDocuments({ isActive: true }),
+    Employee.countDocuments(employeeFilter),
+    KpiEvaluation.distinct("period", scope),
+  ]);
 
-    const templates = await KpiTemplate.find({}).lean();
-    const totalEmployees = await Employee.countDocuments({ status: "active" });
+  /* --- status counts --- */
+  const byStatus = evaluations.reduce<Record<string, number>>((acc, e) => {
+    const s = e.status as string;
+    acc[s] = (acc[s] ?? 0) + 1;
+    return acc;
+  }, {});
 
-    // Aggregate statistics
-    const totalEvaluations = evaluations.length;
-    const totalScoreSum = evaluations.reduce((sum, e) => sum + e.finalScore, 0);
-    const averageScore = totalEvaluations > 0 ? Number((totalScoreSum / totalEvaluations).toFixed(2)) : 0;
+  // Only appraisals the employee has seen count toward averages. Including
+  // drafts would let an unfinished form move the division's reported score.
+  const settled = evaluations.filter((e) => e.status !== "draft");
+  const averageScore = settled.length
+    ? Math.round((settled.reduce((n, e) => n + ((e.finalScore as number) || 0), 0) / settled.length) * 100) / 100
+    : 0;
 
-    // Group scores by division
-    const divisionStats: Record<string, { sum: number; count: number; name: string }> = {};
-    for (const ev of evaluations) {
-      const emp = ev.employeeId as any;
-      if (emp && emp.divisionId) {
-        const divId = emp.divisionId._id.toString();
-        const divName = emp.divisionId.name;
-        if (!divisionStats[divId]) {
-          divisionStats[divId] = { sum: 0, count: 0, name: divName };
-        }
-        divisionStats[divId].sum += ev.finalScore;
-        divisionStats[divId].count += 1;
-      }
-    }
+  /* --- per division --- */
+  type DivisionStat = { name: string; sum: number; count: number };
+  const divisionStats = new Map<string, DivisionStat>();
+  for (const e of settled) {
+    const emp = e.employeeId as { divisionId?: { _id?: unknown; name?: string } } | null;
+    const div = emp?.divisionId;
+    if (!div?._id) continue;
+    const key = String(div._id);
+    const entry = divisionStats.get(key) ?? { name: div.name ?? "Tanpa divisi", sum: 0, count: 0 };
+    entry.sum += (e.finalScore as number) || 0;
+    entry.count += 1;
+    divisionStats.set(key, entry);
+  }
 
-    const divisionAverages = Object.values(divisionStats).map(div => ({
-      name: div.name,
-      average: Number((div.sum / div.count).toFixed(2))
-    }));
+  const divisionAverages = [...divisionStats.values()]
+    .map((d) => ({ name: d.name, average: Math.round((d.sum / d.count) * 100) / 100, count: d.count }))
+    .sort((a, b) => b.average - a.average);
 
-    // Top performers
-    const sortedEvaluations = [...evaluations]
-      .sort((a, b) => b.finalScore - a.finalScore)
-      .slice(0, 5)
-      .map(ev => {
-        const emp = ev.employeeId as any;
-        return {
-          employeeName: emp ? emp.name : "Karyawan Dihapus",
-          divisionName: emp && emp.divisionId ? emp.divisionId.name : "-",
-          finalScore: ev.finalScore,
-          period: ev.period
-        };
-      });
+  /* --- distribution across grade bands ---
+     The dashboard aggregates appraisals from templates that may define their
+     own bands, so it reports against the shared default set rather than any
+     one template's. */
+  const distribution = DEFAULT_GRADES.map((g) => ({ label: g.label, min: g.min, count: 0 }))
+    .sort((a, b) => b.min - a.min);
+  for (const e of settled) {
+    const score = (e.finalScore as number) || 0;
+    const band = distribution.find((d) => score >= d.min);
+    if (band) band.count += 1;
+  }
 
-    return apiSuccess({
+  const topPerformers = settled.slice(0, 5).map((e) => {
+    const emp = e.employeeId as { name?: string; divisionId?: { name?: string } } | null;
+    return {
+      employeeName: emp?.name ?? "Karyawan dihapus",
+      divisionName: emp?.divisionId?.name ?? "-",
+      finalScore: e.finalScore,
+      gradeLabel: e.gradeLabel,
+      period: e.period,
+    };
+  });
+
+  return apiSuccess(
+    {
       stats: {
-        totalEmployees,
-        totalEvaluated: totalEvaluations,
+        totalEvaluations: evaluations.length,
+        settledEvaluations: settled.length,
         averageScore,
-        averagePercentage: Math.min(100, averageScore)
+        templateCount,
+        activeEmployees,
+        // How much of the workforce has a settled appraisal for the filtered
+        // period; the number HR actually chases.
+        coverage:
+          activeEmployees > 0 && period
+            ? Math.round((settled.length / activeEmployees) * 100)
+            : null,
       },
+      byStatus,
       divisionAverages,
-      topPerformers: sortedEvaluations
-    }, "Berhasil memuat analisis dashboard KPI");
-  }
-});
-
-export const POST = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk melakukan aksi ini", null, 401);
-  }
-
-  const perm = await checkPermission(session.user.id, "employees", "write");
-  if (!perm.allowed) {
-    return apiError("FORBIDDEN", "Anda tidak memiliki izin untuk mengonfigurasi KPI", null, 403);
-  }
-
-  const body = await req.json();
-  const { type, id, name, divisionId, indicators, employeeId, templateId, period, scores, notes } = body;
-
-  await connectToDatabase();
-
-  if (type === "template") {
-    if (!name || !divisionId || !indicators || !Array.isArray(indicators)) {
-      return apiError("BAD_REQUEST", "Data templat KPI tidak lengkap");
-    }
-
-    // Validate weights total = 100%
-    const totalWeight = indicators.reduce((sum: number, ind: any) => sum + Number(ind.weight || 0), 0);
-    if (totalWeight !== 100) {
-      return apiError("BAD_REQUEST", `Total bobot indikator harus 100%. Saat ini: ${totalWeight}%`);
-    }
-
-    let template;
-    if (id) {
-      template = await KpiTemplate.findByIdAndUpdate(
-        id,
-        { name, divisionId, indicators },
-        { new: true }
-      );
-      await logActivity({
-        userId: session.user.id,
-        action: "UPDATE_KPI_TEMPLATE",
-        module: "employees",
-        before: null,
-        after: template.toObject(),
-        ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-        userAgent: req.headers.get("user-agent") || ""
-      });
-    } else {
-      template = await KpiTemplate.create({ name, divisionId, indicators });
-      await logActivity({
-        userId: session.user.id,
-        action: "CREATE_KPI_TEMPLATE",
-        module: "employees",
-        before: null,
-        after: template.toObject(),
-        ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-        userAgent: req.headers.get("user-agent") || ""
-      });
-    }
-
-    return apiSuccess(template, "Berhasil menyimpan templat KPI");
-
-  } else if (type === "evaluation") {
-    if (!employeeId || !templateId || !period || !scores || !Array.isArray(scores)) {
-      return apiError("BAD_REQUEST", "Data evaluasi KPI tidak lengkap");
-    }
-
-    // Verify template exists
-    const template = await KpiTemplate.findById(templateId);
-    if (!template) {
-      return apiError("NOT_FOUND", "Templat KPI tidak ditemukan");
-    }
-
-    // Calculate finalScore as weighted average
-    let weightedSum = 0;
-    for (const scoreItem of scores) {
-      weightedSum += (Number(scoreItem.score || 0) * Number(scoreItem.weight || 0)) / 100;
-    }
-    const finalScore = Number(weightedSum.toFixed(2));
-
-    // Save evaluation
-    const evaluation = await KpiEvaluation.create({
-      employeeId,
-      templateId,
-      period,
-      scores,
-      finalScore,
-      notes: notes || "",
-      evaluatorId: session.user.id
-    });
-
-    await logActivity({
-      userId: session.user.id,
-      action: "SUBMIT_KPI_EVALUATION",
-      module: "employees",
-      before: null,
-      after: evaluation.toObject(),
-      ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-      userAgent: req.headers.get("user-agent") || ""
-    });
-
-    return apiSuccess(evaluation, "Berhasil menyimpan evaluasi penilaian KPI karyawan");
-  }
-
-  return apiError("BAD_REQUEST", "Jenis aksi tidak didukung");
+      distribution,
+      topPerformers,
+      periods: (periods as string[]).sort().reverse(),
+    },
+    "Berhasil memuat ringkasan KPI"
+  );
 });

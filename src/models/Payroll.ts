@@ -8,6 +8,14 @@ export interface IPayroll extends Document {
   allowances: Array<{ name: string; amount: number }>;
   deductions: Array<{ name: string; amount: number }>;
   overtimeSalary: number;
+  /** Attendance facts the slip was derived from — kept so a slip can be
+   *  explained months later without recomputing from mutable source data. */
+  overtimeHours: number;
+  lateMinutes: number;
+  absentDays: number;
+  presentDays: number;
+  workingDays: number;
+  generatedAt?: Date;
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
@@ -35,10 +43,16 @@ const PayrollSchema = new Schema<IPayroll>(
       }
     ],
     overtimeSalary: { type: Number, default: 0 },
+    overtimeHours: { type: Number, default: 0 },
+    lateMinutes: { type: Number, default: 0 },
+    absentDays: { type: Number, default: 0 },
+    presentDays: { type: Number, default: 0 },
+    workingDays: { type: Number, default: 0 },
+    generatedAt: { type: Date, default: Date.now },
     totalEarnings: { type: Number, required: true },
     totalDeductions: { type: Number, required: true },
     netSalary: { type: Number, required: true },
-    fileUrl: { type: String, required: true },
+    fileUrl: { type: String, default: "" },
     generatedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     status: { 
       type: String, 

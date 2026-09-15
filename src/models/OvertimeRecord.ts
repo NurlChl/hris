@@ -5,7 +5,7 @@ export interface IOvertimeRecord extends Document {
   date: Date;
   hours: number;
   source: "auto" | "manual";
-  notes?: string;
+  note?: string;
   status: "pending" | "approved" | "rejected";
 }
 
@@ -14,8 +14,12 @@ const OvertimeRecordSchema = new Schema<IOvertimeRecord>({
   date: { type: Date, required: true, index: true },
   hours: { type: Number, required: true },
   source: { type: String, enum: ["auto", "manual"], default: "manual", required: true },
-  notes: { type: String },
+  note: { type: String, default: "" },
   status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending", index: true },
-});
+}, { timestamps: true });
+
+// One overtime record per employee per day, so the daily job can upsert safely
+// and a repeated run cannot pay the same hours twice.
+OvertimeRecordSchema.index({ employeeId: 1, date: 1 }, { unique: true });
 
 export default mongoose.models.OvertimeRecord || mongoose.model<IOvertimeRecord>("OvertimeRecord", OvertimeRecordSchema);

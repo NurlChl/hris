@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { CalendarDays, Clock, Plus, Trash2, Edit, X, Loader2, AlertCircle, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import SearchSelect from "@/components/SearchSelect";
@@ -26,7 +26,7 @@ interface Employee {
 interface Assignment {
   _id: string;
   employeeId: { _id: string; name: string; employeeId: string; } | null;
-  scheduleId: { _id: string; name: string; } | null;
+  scheduleId: { _id: string; name: string; clockIn?: string; clockOut?: string } | null;
   date: string;
 }
 
@@ -58,11 +58,7 @@ export default function SchedulesPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    fetchData();
-  }, [activeTab]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       if (activeTab === "template") {
@@ -90,7 +86,11 @@ export default function SchedulesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeTab]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const handleOpenForm = (temp?: ScheduleTemplate) => {
     if (temp) {
@@ -220,15 +220,15 @@ export default function SchedulesPage() {
 
   return (
     <div className="space-y-6 font-sans">
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
+      <div className="flex items-center justify-between border-b border-line pb-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Jadwal Kerja & Shift</h1>
-          <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">Buat template jam operasional shift kerja dan petakan kalender penugasan karyawan</p>
+          <h1 className="text-xl font-semibold text-foreground dark:text-foreground">Jadwal Kerja & Shift</h1>
+          <p className="text-xs text-muted dark:text-muted mt-1">Buat template jam operasional shift kerja dan petakan kalender penugasan karyawan</p>
         </div>
         {activeTab === "template" ? (
           <button
             onClick={() => handleOpenForm()}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-sm font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 active:scale-[0.98] transition-all"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-sm font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all"
           >
             <Plus className="w-4 h-4" />
             Tambah Template
@@ -236,7 +236,7 @@ export default function SchedulesPage() {
         ) : (
           <button
             onClick={handleOpenAssign}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-sm font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 active:scale-[0.98] transition-all"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-sm font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all"
           >
             <Calendar className="w-4 h-4" />
             Tugaskan Jadwal
@@ -245,17 +245,17 @@ export default function SchedulesPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 p-1 bg-slate-100 dark:bg-white/2 border border-slate-200 dark:border-white/8 rounded-lg w-fit">
+      <div className="flex gap-2 p-1 bg-surface-2 border border-line rounded-lg w-fit">
         <button
           onClick={() => setActiveTab("template")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "template" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "template" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
         >
           <Clock className="w-3.5 h-3.5" />
           Template Jam Kerja
         </button>
         <button
           onClick={() => setActiveTab("shift")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "shift" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "shift" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
         >
           <CalendarDays className="w-3.5 h-3.5" />
           Shift Builder & Kalender
@@ -263,13 +263,13 @@ export default function SchedulesPage() {
       </div>
 
       {loading ? (
-        <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
-          <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
+        <div className="h-64 flex items-center justify-center text-muted dark:text-muted">
+          <Loader2 className="w-8 h-8 animate-spin text-foreground" />
         </div>
       ) : activeTab === "template" ? (
         // Templates Layout
         templates.length === 0 ? (
-          <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
+          <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
             <Clock className="w-8 h-8 mb-2 opacity-50" />
             <p className="text-sm font-medium">Belum ada template jam kerja</p>
             <p className="text-xs mt-1">Buat template jam kerja (contoh: Shift Pagi, Backoffice) untuk mempermudah pemetaan presensi.</p>
@@ -282,46 +282,46 @@ export default function SchedulesPage() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 key={temp._id}
-                className="bg-white border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-5 hover:border-white/12 hover:bg-white dark:bg-white/3 transition-all duration-300 flex flex-col justify-between"
+                className="bg-white border border-line/60 dark:border-white/6 rounded-xl p-5 hover:border-white/12 hover:bg-surface transition-all duration-300 flex flex-col justify-between"
               >
                 <div className="space-y-4">
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
-                      <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-500/20 font-semibold text-[10px]">
+                      <span className="px-2 py-0.5 rounded bg-primary-soft text-primary dark:text-primary border border-primary/20 font-semibold text-[11px]">
                         Late Grace: {temp.gracePeriodMinutes}m
                       </span>
-                      <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 mt-1">{temp.name}</h3>
+                      <h3 className="text-base font-semibold text-foreground dark:text-foreground mt-1">{temp.name}</h3>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <button onClick={() => handleOpenForm(temp)} className="p-1.5 rounded hover:bg-white/4 text-slate-550 dark:text-slate-400 hover:text-slate-200 transition-all cursor-pointer">
+                      <button onClick={() => handleOpenForm(temp)} className="p-1.5 rounded hover:bg-white/4 text-muted dark:text-muted hover:text-foreground transition-all cursor-pointer">
                         <Edit className="w-4 h-4" />
                       </button>
-                      <button onClick={() => handleDeleteTemplate(temp._id)} className="p-1.5 rounded hover:bg-red-500/5 text-slate-550 dark:text-slate-400 hover:text-red-400 transition-all cursor-pointer">
+                      <button onClick={() => handleDeleteTemplate(temp._id)} className="p-1.5 rounded hover:bg-danger-soft text-muted dark:text-muted hover:text-danger transition-all cursor-pointer">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
 
-                  <div className="space-y-1.5 text-xs text-slate-550 dark:text-slate-400">
+                  <div className="space-y-1.5 text-xs text-muted dark:text-muted">
                     <div className="flex items-center gap-2">
-                      <Clock className="w-3.5 h-3.5 text-slate-500" />
+                      <Clock className="w-3.5 h-3.5 text-muted" />
                       <span>{temp.clockIn} - {temp.clockOut} WIB</span>
                     </div>
                     {temp.isBreakActive && (
-                      <p className="text-[10px] text-slate-500 pl-5">
+                      <p className="text-xs text-muted pl-5">
                         Istirahat: {temp.breakOut} - {temp.breakIn} WIB
                       </p>
                     )}
                   </div>
                 </div>
 
-                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-white/4 flex flex-wrap gap-1">
+                <div className="mt-4 pt-4 border-t border-line flex flex-wrap gap-1">
                   {dayNames.map((day, idx) => {
                     const active = temp.activeDays.includes(idx);
                     return (
                       <span
                         key={day}
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${ active ? "bg-slate-100 dark:bg-white/10 text-slate-750 dark:text-slate-300 border border-slate-200 dark:border-white/8" : "bg-white dark:bg-white/2 text-slate-600 border-slate-200 dark:border-white/4" }`}
+                        className={`px-1.5 py-0.5 rounded text-[11px] font-semibold ${ active ? "bg-surface-2 dark:bg-white/10 text-muted dark:text-muted border border-line" : "bg-surface text-muted border-line" }`}
                       >
                         {day.substring(0, 3)}
                       </span>
@@ -335,16 +335,16 @@ export default function SchedulesPage() {
       ) : (
         // Shift Builder Calendar List
         assignments.length === 0 ? (
-          <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
+          <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
             <CalendarDays className="w-8 h-8 mb-2 opacity-50" />
             <p className="text-sm font-medium">Belum ada penugasan jadwal kerja</p>
             <p className="text-xs mt-1">Petakan template jam kerja ke kalender harian karyawan perusahaan.</p>
           </div>
         ) : (
-          <div className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl overflow-hidden overflow-x-auto">
+          <div className="bg-surface border border-line/60 dark:border-white/6 rounded-xl overflow-hidden overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse min-w-[700px]">
               <thead>
-                <tr className="border-b border-slate-200 dark:border-white/8 bg-white dark:bg-white/2 text-slate-550 dark:text-slate-400">
+                <tr className="border-b border-line bg-surface text-muted dark:text-muted">
                   <th className="p-4 font-semibold">Karyawan</th>
                   <th className="p-4 font-semibold">Jadwal Kerja</th>
                   <th className="p-4 font-semibold">Tanggal Aktif</th>
@@ -353,23 +353,23 @@ export default function SchedulesPage() {
               </thead>
               <tbody>
                 {assignments.map(ass => (
-                  <tr key={ass._id} className="border-b border-slate-200 dark:border-white/4 hover:bg-white/1 transition-all">
+                  <tr key={ass._id} className="border-b border-line hover:bg-white/1 transition-all">
                     <td className="p-4">
                       <div>
-                        <span className="font-bold text-slate-900 dark:text-slate-200">{ass.employeeId?.name || "Karyawan Terhapus"}</span>
-                        <span className="block text-[10px] text-slate-500">{ass.employeeId?.employeeId || "-"}</span>
+                        <span className="font-semibold text-foreground dark:text-foreground">{ass.employeeId?.name || "Karyawan Terhapus"}</span>
+                        <span className="block text-xs text-muted">{ass.employeeId?.employeeId || "-"}</span>
                       </div>
                     </td>
                     <td className="p-4">
-                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-white/10 text-slate-750 dark:text-slate-300 border border-slate-200 dark:border-white/8 font-semibold text-[10px]">
+                      <span className="px-2 py-0.5 rounded bg-surface-2 dark:bg-white/10 text-muted dark:text-muted border border-line font-semibold text-[11px]">
                         {ass.scheduleId?.name || "Template Terhapus"}
                       </span>
                     </td>
-                    <td className="p-4 text-slate-700 dark:text-slate-300 font-medium">
+                    <td className="p-4 text-foreground font-medium">
                       {new Date(ass.date).toLocaleDateString("id-ID", { year: "numeric", month: "long", day: "numeric" })}
                     </td>
-                    <td className="p-4 text-slate-550 dark:text-slate-400">
-                      {ass.scheduleId ? `${(ass.scheduleId as any).clockIn} - ${(ass.scheduleId as any).clockOut} WIB` : "-"}
+                    <td className="p-4 text-muted dark:text-muted">
+                      {ass.scheduleId ? `${ass.scheduleId.clockIn ?? "?"} - ${ass.scheduleId.clockOut ?? "?"} WIB` : "-"}
                     </td>
                   </tr>
                 ))}
@@ -388,19 +388,19 @@ export default function SchedulesPage() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
+              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
             >
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-200">
+              <div className="flex items-center justify-between border-b border-line pb-4 mb-4">
+                <h3 className="text-base font-semibold text-foreground dark:text-foreground">
                   {selectedTemplateId ? "Edit Template Jadwal" : "Tambah Template Jadwal Baru"}
                 </h3>
-                <button onClick={handleCloseForm} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
+                <button onClick={handleCloseForm} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
               {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
+                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2 mb-4">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMessage}</span>
                 </div>
@@ -408,28 +408,28 @@ export default function SchedulesPage() {
 
               <form onSubmit={handleSubmitTemplate} className="space-y-4 text-xs">
                 <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Nama Jadwal / Shift</label>
-                  <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Shift Pagi Satpam" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  <label className="text-foreground font-semibold">Nama Jadwal / Shift</label>
+                  <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Shift Pagi Satpam" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Jam Masuk (Clock In)</label>
-                    <input type="time" required value={clockIn} onChange={e => setClockIn(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                    <label className="text-foreground font-semibold">Jam Masuk (Clock In)</label>
+                    <input type="time" required value={clockIn} onChange={e => setClockIn(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Jam Pulang (Clock Out)</label>
-                    <input type="time" required value={clockOut} onChange={e => setClockOut(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                    <label className="text-foreground font-semibold">Jam Pulang (Clock Out)</label>
+                    <input type="time" required value={clockOut} onChange={e => setClockOut(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Toleransi Telat (Menit)</label>
-                  <input type="number" required min={0} value={gracePeriodMinutes} onChange={e => setGracePeriodMinutes(parseInt(e.target.value))} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  <label className="text-foreground font-semibold">Toleransi Telat (Menit)</label>
+                  <input type="number" required min={0} value={gracePeriodMinutes} onChange={e => setGracePeriodMinutes(Number.isFinite(e.target.valueAsNumber) ? e.target.valueAsNumber : 0)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold block">Hari Kerja Aktif</label>
+                  <label className="text-foreground font-semibold block">Hari Kerja Aktif</label>
                   <div className="flex flex-wrap gap-2">
                     {dayNames.map((day, idx) => {
                       const active = activeDays.includes(idx);
@@ -438,7 +438,7 @@ export default function SchedulesPage() {
                           type="button"
                           key={day}
                           onClick={() => handleDayToggle(idx)}
-                          className={`px-3 py-1 rounded text-xs font-semibold cursor-pointer transition-all ${ active ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-900 dark:border-white shadow" : "bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-700 hover:dark:text-slate-300" }`}
+                          className={`px-3 py-1 rounded text-xs font-semibold cursor-pointer transition-all ${ active ? "bg-primary text-primary-foreground border border-line-strong dark:border-white shadow" : "bg-surface border border-line text-muted dark:text-muted hover:text-foreground hover:dark:text-muted" }`}
                         >
                           {day}
                         </button>
@@ -449,26 +449,26 @@ export default function SchedulesPage() {
 
                 <div className="space-y-2 pt-2">
                   <div className="flex items-center gap-2">
-                    <input type="checkbox" id="break-check" checked={isBreakActive} onChange={e => setIsBreakActive(e.target.checked)} className="w-4 h-4 rounded border-slate-200 dark:border-white/8 bg-slate-900 accent-blue-500 cursor-pointer" />
-                    <label htmlFor="break-check" className="text-slate-700 dark:text-slate-300 font-semibold cursor-pointer">Aktifkan Jam Istirahat</label>
+                    <input type="checkbox" id="break-check" checked={isBreakActive} onChange={e => setIsBreakActive(e.target.checked)} className="w-4 h-4 rounded border-line bg-surface-2 accent-blue-500 cursor-pointer" />
+                    <label htmlFor="break-check" className="text-foreground font-semibold cursor-pointer">Aktifkan Jam Istirahat</label>
                   </div>
                   {isBreakActive && (
                     <div className="grid grid-cols-2 gap-4 mt-2">
                       <div className="space-y-1">
-                        <label className="text-slate-550 dark:text-slate-400 text-[10px]">Mulai Istirahat</label>
-                        <input type="time" value={breakOut} onChange={e => setBreakOut(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <label className="text-muted dark:text-muted text-[11px]">Mulai Istirahat</label>
+                        <input type="time" value={breakOut} onChange={e => setBreakOut(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-slate-550 dark:text-slate-400 text-[10px]">Kembali Istirahat</label>
-                        <input type="time" value={breakIn} onChange={e => setBreakIn(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <label className="text-muted dark:text-muted text-[11px]">Kembali Istirahat</label>
+                        <input type="time" value={breakIn} onChange={e => setBreakIn(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                     </div>
                   )}
                 </div>
 
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
-                  <button type="button" onClick={handleCloseForm} className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 hover:bg-white dark:bg-white/2 cursor-pointer transition-all">Batal</button>
-                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-6">
+                  <button type="button" onClick={handleCloseForm} className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all">Batal</button>
+                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
                     {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Simpan Template
                   </button>
@@ -488,17 +488,17 @@ export default function SchedulesPage() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
+              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
             >
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-200">Tugaskan Jadwal Kalender</h3>
-                <button onClick={handleCloseAssign} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
+              <div className="flex items-center justify-between border-b border-line pb-4 mb-4">
+                <h3 className="text-base font-semibold text-foreground dark:text-foreground">Tugaskan Jadwal Kalender</h3>
+                <button onClick={handleCloseAssign} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
               {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
+                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2 mb-4">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMessage}</span>
                 </div>
@@ -528,13 +528,13 @@ export default function SchedulesPage() {
                 />
 
                 <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Tanggal Penugasan</label>
-                  <input type="date" required value={assignDate} onChange={e => setAssignDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  <label className="text-foreground font-semibold">Tanggal Penugasan</label>
+                  <input type="date" required value={assignDate} onChange={e => setAssignDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                 </div>
 
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
-                  <button type="button" onClick={handleCloseAssign} className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 hover:bg-white dark:bg-white/2 cursor-pointer transition-all">Batal</button>
-                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-6">
+                  <button type="button" onClick={handleCloseAssign} className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all">Batal</button>
+                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
                     {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Tugaskan Jadwal
                   </button>

@@ -1,38 +1,122 @@
 import mongoose, { Schema, Document } from "mongoose";
+import type { EvaluationStatus, KpiScoreShape } from "@/lib/hr/kpi";
 
-export interface IKpiEvaluationScore {
-  indicatorName: string;
-  weight: number;
-  score: number; // 0 to 100
-}
+/**
+ * One filled-in appraisal.
+ *
+ * The document carries a **snapshot** of the template's structure (aspect and
+ * indicator names, weights, and the score mode) rather than only referencing the
+ * template. Templates get edited between cycles, and an appraisal that silently
+ * changed shape a year after it was signed would be worthless as a record.
+ *
+ * Status flow:
+ *   draft        supervisor is still filling it in; invisible to the employee
+ *   submitted    sent to the employee, who can read it and respond
+ *   acknowledged employee has seen it and optionally left a comment
+ *   finalized    HR has locked it; no further edits, appears in history
+ * A supervisor can also return a submitted appraisal to draft before the
+ * employee acknowledges it, which is the only backwards transition allowed.
+ *
+ * Status labels and the scoring maths live in lib/hr/kpi, which the portal and
+ * admin pages import directly instead of reaching into this model.
+ */
+
+export type { EvaluationStatus };
+export type IKpiScore = KpiScoreShape;
 
 export interface IKpiEvaluation extends Document {
   employeeId: mongoose.Types.ObjectId;
   templateId: mongoose.Types.ObjectId;
-  period: string; // e.g., "2026-07"
-  scores: IKpiEvaluationScore[];
-  finalScore: number; // weighted average
+  /** 2026-07, 2026-Q3, 2026-S1, or 2026 depending on the period type. */
+  period: string;
+  periodType: string;
+  scoreMode: string;
+
+  scores: KpiScoreShape[];
+  /** Weighted 0–100 roll-up across aspects. */
+  finalScore: number;
+  gradeLabel: string;
+
+  strengths: string;
+  improvements: string;
+  /** Free-text development plan agreed with the employee. */
+  developmentPlan: string;
+  recommendation: "promote" | "retain" | "monitor" | "improve" | "none";
   notes: string;
+
+  status: EvaluationStatus;
   evaluatorId: mongoose.Types.ObjectId;
+  submittedAt?: Date | null;
+  acknowledgedAt?: Date | null;
+  employeeComment: string;
+  finalizedBy?: mongoose.Types.ObjectId | null;
+  finalizedAt?: Date | null;
+
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-const KpiEvaluationScoreSchema = new Schema({
-  indicatorName: { type: String, required: true },
-  weight: { type: Number, required: true },
-  score: { type: Number, required: true }
-});
-
-const KpiEvaluationSchema = new Schema(
+const ScoreSchema = new Schema<KpiScoreShape>(
   {
-    employeeId: { type: Schema.Types.ObjectId, ref: "Employee", required: true },
+    aspectKey: { type: String, required: true },
+    aspectName: { type: String, required: true },
+    aspectWeight: { type: Number, required: true },
+    indicatorKey: { type: String, required: true },
+    indicatorName: { type: String, required: true },
+    indicatorWeight: { type: Number, required: true },
+    // Raw value as entered, in the template's score mode.
+    rawScore: { type: Number, required: true },
+    // Normalised to 0–100 so aggregation never depends on the input scale.
+    score: { type: Number, required: true, min: 0, max: 100 },
+    // Optional score the employee gave themselves, same normalisation.
+    selfScore: { type: Number, default: null },
+    note: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
+const KpiEvaluationSchema = new Schema<IKpiEvaluation>(
+  {
+    employeeId: { type: Schema.Types.ObjectId, ref: "Employee", required: true, index: true },
     templateId: { type: Schema.Types.ObjectId, ref: "KpiTemplate", required: true },
-    period: { type: String, required: true }, // Format "YYYY-MM"
-    scores: [KpiEvaluationScoreSchema],
-    finalScore: { type: Number, required: true },
+    period: { type: String, required: true, index: true },
+    periodType: { type: String, default: "quarterly" },
+    scoreMode: { type: String, default: "scale_5" },
+
+    scores: { type: [ScoreSchema], default: [] },
+    finalScore: { type: Number, default: 0, min: 0, max: 100 },
+    gradeLabel: { type: String, default: "" },
+
+    strengths: { type: String, default: "" },
+    improvements: { type: String, default: "" },
+    developmentPlan: { type: String, default: "" },
+    recommendation: {
+      type: String,
+      enum: ["promote", "retain", "monitor", "improve", "none"],
+      default: "none",
+    },
     notes: { type: String, default: "" },
-    evaluatorId: { type: Schema.Types.ObjectId, ref: "User", required: true }
+
+    status: {
+      type: String,
+      enum: ["draft", "submitted", "acknowledged", "finalized"],
+      default: "draft",
+      index: true,
+    },
+    evaluatorId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    submittedAt: { type: Date, default: null },
+    acknowledgedAt: { type: Date, default: null },
+    employeeComment: { type: String, default: "" },
+    finalizedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    finalizedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
-export default mongoose.models.KpiEvaluation || mongoose.model<IKpiEvaluation>("KpiEvaluation", KpiEvaluationSchema);
+// One appraisal per employee per period per template.
+KpiEvaluationSchema.index({ employeeId: 1, period: 1, templateId: 1 }, { unique: true });
+// Backs the "my appraisals" list in the portal and the admin history view.
+KpiEvaluationSchema.index({ employeeId: 1, status: 1, period: -1 });
+
+export default mongoose.models.KpiEvaluation ||
+  mongoose.model<IKpiEvaluation>("KpiEvaluation", KpiEvaluationSchema);

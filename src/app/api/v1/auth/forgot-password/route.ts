@@ -1,50 +1,59 @@
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
+import { z } from "zod";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import { parseBody, enforceRateLimit } from "@/lib/guard";
+import { RATE_RULES, clientIp } from "@/lib/rate-limit";
 import { connectToDatabase } from "@/lib/db";
-import { sendEmail } from "@/lib/notification/notificationService";
+import { getSettings } from "@/lib/settings";
+import { issueOtp } from "@/lib/auth/otp";
+import { logActivity } from "@/lib/audit/logger";
 import User from "@/models/User";
-import VerificationCode from "@/models/VerificationCode";
 
+const schema = z.object({
+  email: z.string().trim().toLowerCase().email("Format email tidak valid"),
+});
+
+/**
+ * Starts a password reset.
+ *
+ * Two rate limits apply: one per IP so a single source cannot enumerate the
+ * user table, and one per address so an attacker cannot use the system to
+ * mail-bomb an employee. The response is identical either way — whether the
+ * address exists is never disclosed.
+ */
 export const POST = wrapRouteHandler(async (req) => {
-  const { email } = await req.json();
+  const ip = clientIp(req);
+  enforceRateLimit("forgot-ip", ip, RATE_RULES.auth);
 
-  if (!email) {
-    return apiError("BAD_REQUEST", "Email wajib diisi");
-  }
+  const body = await parseBody(req, schema);
+  enforceRateLimit("forgot-email", body.email, RATE_RULES.otp);
+
+  const genericMessage =
+    "Jika email tersebut terdaftar, kami telah mengirimkan kode verifikasi. Periksa kotak masuk dan folder spam Anda.";
 
   await connectToDatabase();
+  const user = await User.findOne({ email: body.email, isActive: { $ne: false } })
+    .select("_id email")
+    .lean<{ _id: unknown; email: string } | null>();
 
-  const user = await User.findOne({ email });
   if (!user) {
-    // Return success to prevent email enumeration attacks, but bypass sending code
-    return apiSuccess(null, "Jika email terdaftar, kode verifikasi telah dikirim.");
+    return apiSuccess(null, genericMessage);
   }
 
-  // Generate 6-digit OTP code
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins expiry
+  const settings = await getSettings();
+  try {
+    await issueOtp(user.email, "reset_password", String(settings.company_name));
+  } catch (err) {
+    // A mail outage must not tell the caller whether the address exists.
+    console.error("[FORGOT-PASSWORD] gagal mengirim OTP:", (err as Error).message);
+  }
 
-  await VerificationCode.findOneAndUpdate(
-    { email, purpose: "reset_password" },
-    { code, expires },
-    { upsert: true, new: true }
-  );
-
-  // Send Email with OTP
-  const sent = await sendEmail({
-    to: email,
-    subject: "Reset Password - HRIS OTP Code",
-    html: `
-      <div style="font-family: sans-serif; padding: 24px; color: #333; max-width: 480px; border: 1px solid #eee; border-radius: 8px;">
-        <h2 style="font-size: 20px; font-weight: bold; color: #111; margin-bottom: 16px;">Kode Verifikasi Reset Password</h2>
-        <p>Halo,</p>
-        <p>Anda menerima email ini karena ada permintaan untuk mengatur ulang kata sandi akun HRIS Anda.</p>
-        <div style="background-color: #f4f4f5; padding: 16px; border-radius: 6px; font-size: 24px; font-weight: bold; text-align: center; letter-spacing: 4px; margin: 24px 0; color: #000;">
-          ${code}
-        </div>
-        <p style="font-size: 12px; color: #666;">Kode verifikasi ini berlaku selama 15 menit. Jika Anda tidak merasa mengajukan permintaan ini, abaikan email ini.</p>
-      </div>
-    `
+  void logActivity({
+    userId: String(user._id),
+    action: "REQUEST_PASSWORD_RESET",
+    module: "auth",
+    ip,
+    userAgent: req.headers.get("user-agent") ?? "",
   });
 
-  return apiSuccess(null, "Kode verifikasi telah dikirim ke email Anda.");
+  return apiSuccess(null, genericMessage);
 });

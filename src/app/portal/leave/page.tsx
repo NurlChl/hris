@@ -1,331 +1,547 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
-import { 
-  Calendar, CalendarDays, Loader2, AlertCircle, FileText, CheckCircle2, 
-  Hourglass, Ban, Plus, X, UploadCloud, History as HistoryIcon
-} from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import SearchSelect from "@/components/SearchSelect";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarDays, CalendarPlus, History, Info, Paperclip, Trash2 } from "lucide-react";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  Field,
+  Input,
+  Modal,
+  Select,
+  SkeletonCards,
+  StatusBadge,
+  Tabs,
+  TableWrap,
+  Td,
+  Textarea,
+  Th,
+  type BadgeTone,
+} from "@/components/ui";
+import { useToast } from "@/components/ui/Toast";
+import { api, errorMessage } from "@/lib/client-api";
+import { formatDate, formatDateTime, wibDateKey } from "@/lib/time";
 
-interface LeaveType { _id: string; name: string; requiresEvidence: boolean; minLeadDays: number; }
-interface LeaveBalance {
+interface LeaveType {
   _id: string;
-  leaveTypeId: LeaveType;
+  name: string;
+  description: string;
+  quotaDays: number;
+  requiresEvidence: boolean;
+  minLeadDays: number;
+  maxConsecutiveDays: number;
+  deductsBalance: boolean;
+  colorTone: BadgeTone;
+}
+
+interface Balance {
+  _id: string;
+  leaveTypeId: LeaveType | null;
+  year: number;
   allocatedDays: number;
   usedDays: number;
   pendingDays: number;
   remainingDays: number;
 }
+
 interface LeaveRequest {
   _id: string;
-  leaveTypeId: LeaveType;
+  leaveTypeId: { name: string; colorTone?: BadgeTone } | null;
   startDate: string;
   endDate: string;
+  chargedDays: number;
+  calendarDays: number;
   reason: string;
-  status: "pending" | "approved" | "rejected";
+  status: string;
   createdAt: string;
+  evidenceUrl?: string;
 }
 
-export default function LeavePortalPage() {
-  const { data: session, status } = useSession();
-  const router = useRouter();
+export default function LeavePage() {
+  const toast = useToast();
 
-  const [balances, setBalances] = useState<LeaveBalance[]>([]);
+  const [tab, setTab] = useState<"balance" | "history">("balance");
+  const [balances, setBalances] = useState<Balance[]>([]);
   const [history, setHistory] = useState<LeaveRequest[]>([]);
-  const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
+  const [types, setTypes] = useState<LeaveType[]>([]);
+  const [year, setYear] = useState(new Date().getFullYear());
+
   const [loading, setLoading] = useState(true);
-
-  // Form Modal States
+  const [loadError, setLoadError] = useState("");
   const [formOpen, setFormOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
+  const [cancelTarget, setCancelTarget] = useState<LeaveRequest | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
-  // Form Inputs
-  const [leaveTypeId, setLeaveTypeId] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [reason, setReason] = useState("");
-  const [evidenceUrl, setEvidenceUrl] = useState("");
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/auth/login");
-    } else if (status === "authenticated") {
-      fetchLeaveData();
-    }
-  }, [status]);
-
-  const fetchLeaveData = async () => {
-    setLoading(true);
+  const load = useCallback(async () => {
+    setLoadError("");
     try {
-      const [rData, rTypes] = await Promise.all([
-        fetch("/api/v1/leave?type=balance"),
-        fetch("/api/v1/leave?type=types")
+      const [data, typeRes] = await Promise.all([
+        api.get<{ balances: Balance[]; history: LeaveRequest[]; year: number }>("/api/v1/leave"),
+        api.get<LeaveType[]>("/api/v1/leave?type=types"),
       ]);
-      const [dData, dTypes] = await Promise.all([
-        rData.json(),
-        rTypes.json()
-      ]);
-      if (dData.success) {
-        setBalances(dData.data.balances || []);
-        setHistory(dData.data.history || []);
-      }
-      if (dTypes.success) {
-        setLeaveTypes(dTypes.data || []);
-      }
+      setBalances(data.data?.balances ?? []);
+      setHistory(data.data?.history ?? []);
+      setYear(data.data?.year ?? new Date().getFullYear());
+      setTypes(typeRes.data ?? []);
     } catch (err) {
-      console.error("Gagal memuat data cuti:", err);
+      setLoadError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleOpenForm = () => {
-    setLeaveTypeId(leaveTypes[0]?._id || "");
-    setStartDate("");
-    setEndDate("");
-    setReason("");
-    setEvidenceUrl("");
-    setErrorMessage("");
-    setSuccessMessage("");
-    setFormOpen(true);
-  };
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const handleCloseForm = () => setFormOpen(false);
+  const pendingCount = useMemo(() => history.filter((h) => h.status === "pending").length, [history]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
+  const cancel = async () => {
+    if (!cancelTarget) return;
+    setCancelling(true);
     try {
-      const response = await fetch("/api/v1/leave", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leaveTypeId, startDate, endDate, reason, evidenceUrl }),
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setSuccessMessage(data.message || "Pengajuan cuti berhasil dikirim!");
-        fetchLeaveData();
-        setTimeout(() => setFormOpen(false), 1500);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal mengajukan cuti");
-      }
+      const res = await api.delete(`/api/v1/leave?id=${cancelTarget._id}`);
+      toast.success("Pengajuan dibatalkan", res.message);
+      setCancelTarget(null);
+      await load();
     } catch (err) {
-      setErrorMessage("Terjadi kesalahan koneksi server");
+      toast.error("Gagal membatalkan", errorMessage(err));
     } finally {
-      setSubmitting(false);
+      setCancelling(false);
     }
   };
 
-  if (status === "loading") {
+  if (loading) {
     return (
-      <div className="min-h-screen bg-[#07080d] flex items-center justify-center text-slate-550 dark:text-slate-400">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
+      <div className="space-y-6">
+        <div className="skeleton h-8 w-48" />
+        <SkeletonCards count={3} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#07080d] text-slate-900 dark:text-slate-100 transition-colors duration-200 p-6 md:p-12 font-sans relative overflow-hidden">
-      {/* Background Glows */}
-      <div className="absolute top-[-20%] left-[-20%] w-[50%] h-[50%] rounded-full bg-slate-500/2 blur-[120px]" />
-      <div className="absolute bottom-[-20%] right-[-20%] w-[50%] h-[50%] rounded-full bg-slate-500/2 blur-[120px]" />
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-[26px] md:text-[30px] text-heading">Izin &amp; Cuti</h1>
+          <p className="text-sm text-muted mt-2 leading-relaxed">
+            Saldo tahun {year}. Akhir pekan dan hari libur nasional tidak memotong kuota.
+          </p>
+        </div>
+        <Button icon={CalendarPlus} onClick={() => setFormOpen(true)}>
+          Ajukan izin / cuti
+        </Button>
+      </header>
 
-      <div className="max-w-5xl mx-auto space-y-8 relative z-10">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-6">
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white">
-              Portal Pengajuan Cuti & Izin
-            </h1>
-            <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">
-              Pantau sisa kuota cuti tahunan Anda, ajukan izin sakit, dan lihat riwayat pengajuan.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => router.push("/portal/attendance")}
-              className="px-4 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-100 hover:bg-white/4 transition-all cursor-pointer"
-            >
-              Portal Presensi
-            </button>
-            <button
-              onClick={handleOpenForm}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-xs font-semibold text-white dark:text-slate-900 cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 transition-all border border-slate-900 dark:border-white shadow-xs"
-            >
-              <Plus className="w-4 h-4" />
-              Ajukan Cuti / Izin
-            </button>
-          </div>
+      {loadError && <ErrorState message={loadError} onRetry={load} />}
+
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: "balance", label: "Saldo Saya", icon: CalendarDays },
+          { id: "history", label: "Riwayat Pengajuan", count: pendingCount, icon: History },
+        ]}
+      />
+
+      {tab === "balance" && (
+        <>
+          {balances.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={CalendarDays}
+                title="Saldo belum tersedia"
+                description="Hubungi HRD bila jenis cuti belum muncul untuk akun Anda."
+              />
+            </Card>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {balances.map((b) => {
+                const type = b.leaveTypeId;
+                if (!type) return null;
+                const pct = b.allocatedDays
+                  ? Math.round((b.remainingDays / b.allocatedDays) * 100)
+                  : 0;
+                return (
+                  <div key={b._id} className="card p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{type.name}</p>
+                        <p className="text-[11px] text-subtle mt-0.5 line-clamp-2 leading-relaxed">
+                          {type.description || "—"}
+                        </p>
+                      </div>
+                      {!type.deductsBalance && (
+                        <Badge tone="neutral">Tidak potong saldo</Badge>
+                      )}
+                    </div>
+
+                    <div className="mt-4 flex items-baseline gap-1.5">
+                      <span className="text-3xl font-semibold tabular-nums">{b.remainingDays}</span>
+                      <span className="text-xs text-muted">dari {b.allocatedDays} hari</span>
+                    </div>
+
+                    <div
+                      className="mt-3 h-1.5 rounded-full bg-surface-2 overflow-hidden"
+                      role="progressbar"
+                      aria-valuenow={pct}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`Sisa saldo ${type.name}`}
+                    >
+                      <div
+                        className={`h-full rounded-full ${pct > 40 ? "bg-success" : pct > 15 ? "bg-warning" : "bg-danger"}`}
+                        style={{ width: `${Math.max(pct, 2)}%` }}
+                      />
+                    </div>
+
+                    <dl className="mt-3.5 grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <dt className="text-subtle">Terpakai</dt>
+                        <dd className="font-semibold tabular-nums">{b.usedDays} hari</dd>
+                      </div>
+                      <div>
+                        <dt className="text-subtle">Menunggu approval</dt>
+                        <dd className="font-semibold tabular-nums">{b.pendingDays} hari</dd>
+                      </div>
+                    </dl>
+
+                    {type.minLeadDays > 0 && (
+                      <p className="mt-3 pt-3 border-t border-line text-[11px] text-subtle flex items-start gap-1.5">
+                        <Info className="w-3 h-3 shrink-0 mt-0.5" />
+                        Wajib diajukan minimal H-{type.minLeadDays}.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === "history" && (
+        <Card>
+          <CardHeader title="Riwayat pengajuan" description={`${history.length} pengajuan tercatat.`} />
+          <CardBody className="p-0">
+            {history.length === 0 ? (
+              <EmptyState
+                icon={History}
+                title="Belum ada pengajuan"
+                description="Pengajuan izin dan cuti Anda akan tercatat di sini beserta statusnya."
+                action={
+                  <Button size="sm" icon={CalendarPlus} onClick={() => setFormOpen(true)}>
+                    Ajukan izin / cuti
+                  </Button>
+                }
+              />
+            ) : (
+              <TableWrap>
+                <thead>
+                  <tr>
+                    <Th>Jenis</Th>
+                    <Th>Periode</Th>
+                    <Th>Durasi</Th>
+                    <Th>Alasan</Th>
+                    <Th>Status</Th>
+                    <Th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((h) => (
+                    <tr key={h._id} className="hover:bg-surface-2 transition-colors">
+                      <Td className="whitespace-nowrap font-medium">
+                        {h.leaveTypeId?.name ?? "—"}
+                      </Td>
+                      <Td className="whitespace-nowrap text-xs">
+                        {formatDate(h.startDate)} – {formatDate(h.endDate)}
+                      </Td>
+                      <Td className="whitespace-nowrap text-xs">
+                        <span className="font-semibold tabular-nums">{h.chargedDays} hari kerja</span>
+                        {h.calendarDays !== h.chargedDays && (
+                          <span className="block text-[11px] text-subtle">
+                            {h.calendarDays} hari kalender
+                          </span>
+                        )}
+                      </Td>
+                      <Td className="max-w-72">
+                        <span className="text-xs text-muted line-clamp-2">{h.reason}</span>
+                        {h.evidenceUrl && (
+                          <a
+                            href={h.evidenceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 mt-1 text-[11px] text-primary hover:underline"
+                          >
+                            <Paperclip className="w-3 h-3" />
+                            Lihat lampiran
+                          </a>
+                        )}
+                      </Td>
+                      <Td>
+                        <StatusBadge status={h.status} />
+                        <span className="block text-[11px] text-subtle mt-1">
+                          {formatDateTime(h.createdAt)}
+                        </span>
+                      </Td>
+                      <Td>
+                        {h.status === "pending" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={Trash2}
+                            onClick={() => setCancelTarget(h)}
+                            className="text-danger"
+                          >
+                            Batalkan
+                          </Button>
+                        )}
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </TableWrap>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      <LeaveFormModal
+        open={formOpen}
+        types={types}
+        balances={balances}
+        onClose={() => setFormOpen(false)}
+        onDone={() => {
+          setFormOpen(false);
+          setTab("history");
+          void load();
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(cancelTarget)}
+        onClose={() => setCancelTarget(null)}
+        onConfirm={cancel}
+        loading={cancelling}
+        title="Batalkan pengajuan?"
+        confirmLabel="Ya, batalkan"
+        message={`Pengajuan ${cancelTarget?.leaveTypeId?.name ?? ""} ${cancelTarget ? `${formatDate(cancelTarget.startDate)} – ${formatDate(cancelTarget.endDate)}` : ""} akan dibatalkan dan saldo cuti dikembalikan. Tindakan ini tidak dapat diurungkan.`}
+      />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+function LeaveFormModal({
+  open,
+  types,
+  balances,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  types: LeaveType[];
+  balances: Balance[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const toast = useToast();
+  const [leaveTypeId, setLeaveTypeId] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [reason, setReason] = useState("");
+  const [evidence, setEvidence] = useState<string | null>(null);
+  const [evidenceName, setEvidenceName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [fileError, setFileError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setLeaveTypeId(types[0]?._id ?? "");
+    setStartDate("");
+    setEndDate("");
+    setReason("");
+    setEvidence(null);
+    setEvidenceName("");
+    setFileError("");
+  }, [open, types]);
+
+  const selected = types.find((t) => t._id === leaveTypeId);
+  const balance = balances.find((b) => b.leaveTypeId?._id === leaveTypeId);
+
+  // Earliest date the chosen type permits, so the picker cannot offer a date
+  // the server will reject for lead time.
+  const minDate = useMemo(() => {
+    const lead = selected?.minLeadDays ?? 0;
+    const d = new Date();
+    d.setDate(d.getDate() + lead);
+    return wibDateKey(d);
+  }, [selected]);
+
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    setFileError("");
+    if (!file) {
+      setEvidence(null);
+      setEvidenceName("");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setFileError("Ukuran berkas melebihi 8 MB.");
+      e.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEvidence(String(reader.result));
+      setEvidenceName(file.name);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await api.post("/api/v1/leave", {
+        leaveTypeId,
+        startDate,
+        endDate,
+        reason: reason.trim(),
+        evidence: evidence ?? undefined,
+      });
+      toast.success("Pengajuan terkirim", res.message);
+      onDone();
+    } catch (err) {
+      toast.error("Pengajuan gagal", errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Ajukan izin / cuti"
+      description="Pengajuan akan diteruskan ke atasan dan HRD sesuai alur yang berlaku."
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={saving}>
+            Batal
+          </Button>
+          <Button size="sm" type="submit" form="leave-form" loading={saving}>
+            Kirim pengajuan
+          </Button>
+        </>
+      }
+    >
+      <form id="leave-form" onSubmit={submit} className="space-y-4">
+        <Field label="Jenis izin / cuti" required htmlFor="lv-type">
+          <Select
+            id="lv-type"
+            required
+            value={leaveTypeId}
+            onChange={(e) => setLeaveTypeId(e.target.value)}
+          >
+            <option value="" disabled>
+              Pilih jenis…
+            </option>
+            {types.map((t) => (
+              <option key={t._id} value={t._id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {selected && (
+          <Alert tone="info">
+            {selected.description && <span className="block mb-1">{selected.description}</span>}
+            <span className="block">
+              {balance && selected.deductsBalance
+                ? `Sisa saldo Anda ${balance.remainingDays} dari ${balance.allocatedDays} hari.`
+                : "Jenis ini tidak memotong saldo cuti tahunan."}
+              {selected.minLeadDays > 0 && ` Minimal diajukan H-${selected.minLeadDays}.`}
+              {selected.maxConsecutiveDays > 0 &&
+                ` Maksimal ${selected.maxConsecutiveDays} hari per pengajuan.`}
+              {selected.requiresEvidence && " Wajib melampirkan bukti."}
+            </span>
+          </Alert>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Tanggal mulai" required htmlFor="lv-start">
+            <Input
+              id="lv-start"
+              type="date"
+              required
+              min={minDate}
+              value={startDate}
+              onChange={(e) => {
+                setStartDate(e.target.value);
+                if (!endDate || endDate < e.target.value) setEndDate(e.target.value);
+              }}
+            />
+          </Field>
+          <Field label="Tanggal selesai" required htmlFor="lv-end">
+            <Input
+              id="lv-end"
+              type="date"
+              required
+              min={startDate || minDate}
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+          </Field>
         </div>
 
-        {loading ? (
-          <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
-            <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
-          </div>
-        ) : (
-          <div className="space-y-8">
-            {/* Balances grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-              {balances.map(b => (
-                <div key={b._id} className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-2xl p-5 hover:border-white/12 transition-all">
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">
-                    {b.leaveTypeId?.name || "Jenis Cuti"}
-                  </span>
-                  <h3 className="text-2xl font-bold text-slate-900 dark:text-slate-200 mt-2">{b.remainingDays} Hari</h3>
-                  
-                  <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-200 dark:border-white/4 text-[10px] text-slate-550 dark:text-slate-400">
-                    <div>
-                      <span className="text-slate-500 block">Jatah</span>
-                      <span className="font-semibold">{b.allocatedDays}d</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block">Terpakai</span>
-                      <span className="font-semibold">{b.usedDays}d</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block">Pending</span>
-                      <span className="font-semibold">{b.pendingDays}d</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+        <Field
+          label="Alasan"
+          required
+          htmlFor="lv-reason"
+          hint="Minimal 10 karakter. Alasan yang jelas mempercepat persetujuan."
+        >
+          <Textarea
+            id="lv-reason"
+            required
+            maxLength={1000}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Contoh: Menghadiri pernikahan saudara kandung di Yogyakarta."
+          />
+        </Field>
 
-            {/* Historical list */}
-            <div className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-2xl p-6 space-y-4">
-              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-200 dark:border-white/4 flex items-center gap-1.5">
-                <HistoryIcon className="w-4.5 h-4.5 text-slate-700 dark:text-slate-300" /> Riwayat Pengajuan
-              </h2>
-
-              {history.length === 0 ? (
-                <div className="h-32 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500 text-xs">
-                  <CalendarDays className="w-8 h-8 mb-2 opacity-50 text-slate-600" />
-                  Belum ada riwayat pengajuan cuti.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {history.map(req => {
-                    const start = new Date(req.startDate).toLocaleDateString("id-ID", { month: "short", day: "numeric" });
-                    const end = new Date(req.endDate).toLocaleDateString("id-ID", { year: "numeric", month: "short", day: "numeric" });
-                    return (
-                      <div key={req._id} className="flex items-center justify-between p-4 bg-white/1 border border-slate-200 dark:border-white/4 rounded-xl hover:border-slate-200 dark:hover:border-white/8 transition-all">
-                        <div className="space-y-1">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-800 dark:text-slate-350 border border-slate-200 dark:border-white/8 font-semibold text-[9px] uppercase">
-                            {req.leaveTypeId?.name || "Izin"}
-                          </span>
-                          <p className="text-xs text-slate-550 dark:text-slate-400">{start} - {end}</p>
-                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-200 mt-1 italic">"{req.reason}"</p>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border flex items-center gap-1.5 capitalize ${
-                            req.status === "approved"
-                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
-                              : req.status === "rejected"
-                              ? "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20"
-                              : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
-                          }`}>
-                            {req.status === "approved" ? <CheckCircle2 className="w-3.5 h-3.5" /> : req.status === "rejected" ? <Ban className="w-3.5 h-3.5" /> : <Hourglass className="w-3.5 h-3.5" />}
-                            {req.status}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Modal Form */}
-      <AnimatePresence>
-        {formOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={handleCloseForm} className="absolute inset-0 bg-black" />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-2xl w-full max-w-md relative z-10 p-6 overflow-hidden"
-            >
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200">Ajukan Cuti / Izin</h3>
-                <button onClick={handleCloseForm} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
-
-              {successMessage && (
-                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs flex items-center gap-2 mb-4">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{successMessage}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-                <SearchSelect
-                  label="Pilih Jenis Cuti"
-                  value={leaveTypeId}
-                  onChange={setLeaveTypeId}
-                  options={leaveTypes.map(t => ({ label: `${t.name} (H-${t.minLeadDays})`, value: t._id }))}
-                  placeholder="Pilih jenis cuti..."
-                />
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Tanggal Mulai</label>
-                    <input type="date" required value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Tanggal Selesai</label>
-                    <input type="date" required value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Alasan / Keterangan</label>
-                  <textarea required value={reason} onChange={e => setReason(e.target.value)} placeholder="Tulis alasan pengajuan cuti secara singkat..." rows={3} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs placeholder:text-slate-600" />
-                </div>
-
-                {/* Evidence Upload Placeholder */}
-                {leaveTypes.find(t => t._id === leaveTypeId)?.requiresEvidence && (
-                  <div className="p-4 rounded-lg border border-dashed border-slate-200 dark:border-white/8 bg-white/1 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-white dark:bg-white/2 transition-all">
-                    <UploadCloud className="w-6 h-6 text-slate-500 mb-1" />
-                    <span className="font-semibold text-slate-700 dark:text-slate-300 block text-[10px]">Lampirkan Bukti Dokumen</span>
-                    <span className="text-[9px] text-slate-500 italic mt-0.5">Wajib menyertakan Surat Keterangan Dokter/Bukti Sah.</span>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
-                  <button type="button" onClick={handleCloseForm} className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 hover:bg-white dark:bg-white/2 cursor-pointer transition-all">Batal</button>
-                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-xs font-semibold text-white dark:text-slate-900 border border-slate-900 dark:border-white hover:bg-slate-800 dark:hover:bg-slate-100 cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5 shadow-xs">
-                    {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    Ajukan Cuti
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-    </div>
+        <Field
+          label={`Lampiran bukti${selected?.requiresEvidence ? "" : " (opsional)"}`}
+          htmlFor="lv-file"
+          error={fileError}
+          hint="Format JPG, PNG, WEBP, atau PDF. Maksimal 8 MB."
+        >
+          <input
+            id="lv-file"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,application/pdf"
+            onChange={onFile}
+            className="w-full text-xs text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-surface-2 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-foreground hover:file:bg-surface-hover file:cursor-pointer cursor-pointer"
+          />
+          {evidenceName && (
+            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-success">
+              <Paperclip className="w-3 h-3" />
+              {evidenceName}
+            </p>
+          )}
+        </Field>
+      </form>
+    </Modal>
   );
 }

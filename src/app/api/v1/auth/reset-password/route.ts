@@ -1,40 +1,62 @@
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
+import { z } from "zod";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import { parseBody, enforceRateLimit, BadRequest } from "@/lib/guard";
+import { RATE_RULES, clientIp } from "@/lib/rate-limit";
 import { connectToDatabase } from "@/lib/db";
-import bcrypt from "bcryptjs";
+import { consumeOtp, hashNewPassword } from "@/lib/auth/otp";
+import { logActivity } from "@/lib/audit/logger";
+import { notifyUsers } from "@/lib/notification/notify";
 import User from "@/models/User";
-import VerificationCode from "@/models/VerificationCode";
+
+const schema = z.object({
+  email: z.string().trim().toLowerCase().email("Format email tidak valid"),
+  code: z.string().trim().regex(/^\d{6}$/, "Kode verifikasi terdiri dari 6 angka"),
+  newPassword: z.string().min(1, "Kata sandi baru wajib diisi"),
+});
 
 export const POST = wrapRouteHandler(async (req) => {
-  const { email, code, newPassword } = await req.json();
+  const ip = clientIp(req);
+  enforceRateLimit("reset-ip", ip, RATE_RULES.auth);
 
-  if (!email || !code || !newPassword) {
-    return apiError("BAD_REQUEST", "Email, kode OTP, dan password baru wajib diisi");
-  }
+  const body = await parseBody(req, schema);
+  enforceRateLimit("reset-email", body.email, RATE_RULES.auth);
 
-  if (newPassword.length < 6) {
-    return apiError("BAD_REQUEST", "Password minimal harus 6 karakter");
-  }
+  // Verify the code before touching the account, and hash before the lookup so
+  // a weak password is rejected without revealing whether the email exists.
+  await consumeOtp(body.email, "reset_password", body.code);
+  const passwordHash = await hashNewPassword(body.newPassword);
 
   await connectToDatabase();
+  const user = await User.findOne({ email: body.email });
+  if (!user) throw BadRequest("Kode verifikasi salah atau sudah kedaluwarsa.");
 
-  // Validate OTP code
-  const record = await VerificationCode.findOne({ email, code, purpose: "reset_password" });
-  if (!record || record.expires.getTime() < Date.now()) {
-    return apiError("BAD_REQUEST", "Kode OTP salah atau telah kedaluwarsa");
-  }
-
-  // Update user password
-  const user = await User.findOne({ email });
-  if (!user) {
-    return apiError("NOT_FOUND", "Pengguna tidak ditemukan");
-  }
-
-  const passwordHash = await bcrypt.hash(newPassword, 12);
   user.passwordHash = passwordHash;
+  // A successful reset also clears any lockout — the legitimate owner has just
+  // proven control of the mailbox.
+  user.failedLoginAttempts = 0;
+  user.lockedUntil = null;
+  user.mustChangePassword = false;
   await user.save();
 
-  // Delete verification code
-  await VerificationCode.deleteOne({ _id: record._id });
+  void logActivity({
+    userId: user._id.toString(),
+    action: "RESET_PASSWORD",
+    module: "auth",
+    ip,
+    userAgent: req.headers.get("user-agent") ?? "",
+  });
 
-  return apiSuccess(null, "Kata sandi Anda berhasil diperbarui. Silakan login kembali.");
+  // Tell the account holder their password changed — the standard way a
+  // takeover gets noticed.
+  void notifyUsers(
+    [{ userId: user._id.toString(), email: user.email, phone: user.phone }],
+    {
+      kind: "system",
+      title: "Kata sandi Anda berhasil diubah",
+      body: "Kata sandi akun HRIS Anda baru saja direset. Jika ini bukan Anda, segera hubungi HRD.",
+      href: "/portal/profile",
+    }
+  );
+
+  return apiSuccess(null, "Kata sandi berhasil diperbarui. Silakan login dengan kata sandi baru Anda.");
 });

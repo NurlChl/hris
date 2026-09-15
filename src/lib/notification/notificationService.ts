@@ -15,7 +15,7 @@ export interface SendWhatsappPayload {
  * Sends a generic notification payload to a webhook URL in JSON format.
  * Useful for n8n, GHL, or custom automations.
  */
-async function triggerWebhook(payload: any): Promise<boolean> {
+async function triggerWebhook(payload: Record<string, unknown>): Promise<boolean> {
   const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
   if (!webhookUrl) return false;
 

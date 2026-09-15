@@ -23,7 +23,7 @@ export const GET = wrapRouteHandler(async (req) => {
   } else {
     // Get active assignments
     const employeeId = url.searchParams.get("employeeId");
-    const filter: Record<string, any> = {};
+    const filter: Record<string, unknown> = {};
     if (employeeId) {
       filter.employeeId = employeeId;
     }

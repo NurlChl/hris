@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { 
   Users, Search, Calendar, ChevronRight, UserPlus, Info, Check, Ban, X, Loader2, 
   AlertCircle, FileText, ArrowRight, Building2, CalendarDays, ExternalLink, Briefcase
@@ -40,6 +40,17 @@ const DEFAULT_STAGES = [
   "Onboarding"
 ];
 
+/**
+ * A selection pipeline for one position. `positionId` comes back populated on
+ * some responses and as a bare id on others, so both forms are matched when
+ * looking a pipeline up.
+ */
+interface Pipeline {
+  _id: string;
+  positionId: { _id: string; name: string } | string | null;
+  stages: string[];
+}
+
 export default function RecruitmentPage() {
   const [activeTab, setActiveTab] = useState<"candidates" | "jobs">("candidates");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -50,7 +61,7 @@ export default function RecruitmentPage() {
   const [searchQuery, setSearchQuery] = useState("");
 
   // Pipelines state
-  const [pipelines, setPipelines] = useState<any[]>([]);
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [pipelinesLoading, setPipelinesLoading] = useState(false);
   const [pipelineModalOpen, setPipelineModalOpen] = useState(false);
   const [selectedPipelinePositionId, setSelectedPipelinePositionId] = useState("");
@@ -82,16 +93,7 @@ export default function RecruitmentPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  useEffect(() => {
-    fetchMetadata();
-    if (activeTab === "candidates") {
-      fetchCandidates();
-    } else {
-      fetchPipelines();
-    }
-  }, [activeTab]);
-
-  const fetchCandidates = async () => {
+  const fetchCandidates = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/v1/recruitment");
@@ -104,9 +106,9 @@ export default function RecruitmentPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchPipelines = async () => {
+  const fetchPipelines = useCallback(async () => {
     setPipelinesLoading(true);
     try {
       const res = await fetch("/api/v1/recruitment?type=pipelines");
@@ -119,7 +121,7 @@ export default function RecruitmentPage() {
     } finally {
       setPipelinesLoading(false);
     }
-  };
+  }, []);
 
   const handleSavePipeline = async () => {
     if (!selectedPipelinePositionId) return;
@@ -150,7 +152,7 @@ export default function RecruitmentPage() {
     }
   };
 
-  const fetchMetadata = async () => {
+  const fetchMetadata = useCallback(async () => {
     try {
       const [rPos, rBr, rDiv] = await Promise.all([
         fetch("/api/v1/positions"),
@@ -168,7 +170,16 @@ export default function RecruitmentPage() {
     } catch (err) {
       console.error("Gagal memuat meta:", err);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void fetchMetadata();
+    if (activeTab === "candidates") {
+      void fetchCandidates();
+    } else {
+      void fetchPipelines();
+    }
+  }, [activeTab, fetchMetadata, fetchCandidates, fetchPipelines]);
 
   const handleOpenAdd = () => {
     setName("");
@@ -294,15 +305,15 @@ export default function RecruitmentPage() {
 
   return (
     <div className="space-y-6 font-sans">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 dark:border-white/4 pb-4 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4 gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Recruitment & ATS Pipeline</h1>
-          <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">Pantau pipeline pelamar kerja, jadwalkan tes, dan migrasikan pelamar yang lulus menjadi karyawan baru</p>
+          <h1 className="text-xl font-semibold text-foreground dark:text-foreground">Recruitment & ATS Pipeline</h1>
+          <p className="text-xs text-muted dark:text-muted mt-1">Pantau pipeline pelamar kerja, jadwalkan tes, dan migrasikan pelamar yang lulus menjadi karyawan baru</p>
         </div>
         {activeTab === "candidates" && (
           <button
             onClick={handleOpenAdd}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 active:scale-[0.98] transition-all w-fit"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all w-fit"
           >
             <UserPlus className="w-4 h-4" />
             Tambah Pelamar
@@ -311,17 +322,17 @@ export default function RecruitmentPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 p-1 bg-slate-100 dark:bg-white/2 border border-slate-200 dark:border-white/8 rounded-lg w-fit">
+      <div className="flex gap-2 p-1 bg-surface-2 border border-line rounded-lg w-fit">
         <button
           onClick={() => setActiveTab("candidates")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "candidates" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "candidates" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
         >
           <Users className="w-3.5 h-3.5" />
           Kandidat Pelamar
         </button>
         <button
           onClick={() => setActiveTab("jobs")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "jobs" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "jobs" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
         >
           <Briefcase className="w-3.5 h-3.5" />
           Kelola Lowongan (Loker)
@@ -331,23 +342,23 @@ export default function RecruitmentPage() {
       {activeTab === "candidates" ? (
         <>
           <div className="flex items-center relative w-full sm:max-w-xs">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted" />
             <input
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               placeholder="Cari pelamar, lowongan..."
-              className="w-full pl-10 pr-4 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-500"
+              className="w-full pl-10 pr-4 py-2 rounded-lg bg-surface border border-line text-xs text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-muted"
             />
           </div>
 
           {loading ? (
-            <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
-              <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
+            <div className="h-64 flex items-center justify-center text-muted dark:text-muted">
+              <Loader2 className="w-8 h-8 animate-spin text-foreground" />
             </div>
           ) : filteredCandidates.length === 0 ? (
-            <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
-              <Users className="w-8 h-8 mb-2 opacity-50 text-slate-600" />
+            <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
+              <Users className="w-8 h-8 mb-2 opacity-50 text-muted" />
               <p className="text-sm font-medium">Pelamar tidak ditemukan</p>
               <p className="text-xs mt-1">Belum ada pelamar baru atau sesuaikan kata kunci pencarian.</p>
             </div>
@@ -357,10 +368,10 @@ export default function RecruitmentPage() {
           {DEFAULT_STAGES.map(stage => {
             const list = filteredCandidates.filter(c => c.currentStage === stage);
             return (
-              <div key={stage} className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-4 flex flex-col gap-3 min-h-[300px]">
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-2 mb-1">
-                  <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300">{stage}</h3>
-                  <span className="px-1.5 py-0.5 rounded bg-white/4 text-[9px] font-bold text-slate-550 dark:text-slate-400">{list.length}</span>
+              <div key={stage} className="bg-surface border border-line/60 dark:border-white/6 rounded-xl p-4 flex flex-col gap-3 min-h-[300px]">
+                <div className="flex items-center justify-between border-b border-line pb-2 mb-1">
+                  <h3 className="text-xs font-semibold text-foreground">{stage}</h3>
+                  <span className="px-1.5 py-0.5 rounded bg-white/4 text-[11px] font-semibold text-muted dark:text-muted">{list.length}</span>
                 </div>
 
                 <div className="flex-1 space-y-3">
@@ -368,21 +379,21 @@ export default function RecruitmentPage() {
                     <div
                       key={c._id}
                       onClick={() => handleOpenDetails(c)}
-                      className="p-3 bg-white border border-slate-200 dark:border-white/4 rounded-lg hover:border-white/12 hover:bg-white dark:bg-white/3 transition-all duration-200 cursor-pointer text-left space-y-2 group"
+                      className="p-3 bg-white border border-line rounded-lg hover:border-white/12 hover:bg-surface transition-all duration-200 cursor-pointer text-left space-y-2 group"
                     >
                       <div>
-                        <span className="font-bold text-xs text-slate-900 dark:text-slate-200 group-hover:text-slate-950 dark:group-hover:text-white transition-all block">{c.name}</span>
-                        <span className="text-[10px] text-slate-500 font-medium">{c.positionId?.name || "Posisi Lain"}</span>
+                        <span className="font-semibold text-xs text-foreground dark:text-foreground group-hover:text-foreground dark:group-hover:text-white transition-all block">{c.name}</span>
+                        <span className="text-xs text-muted font-medium">{c.positionId?.name || "Posisi Lain"}</span>
                       </div>
 
-                      <div className="flex justify-between items-center text-[9px]">
-                        <span className="capitalize text-slate-500 font-mono">Src: {c.source.replace(/_/g, " ")}</span>
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="capitalize text-muted font-mono">Src: {c.source.replace(/_/g, " ")}</span>
                         <span className={`px-1 rounded font-semibold capitalize ${
                           c.status === "passed"
-                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                            ? "bg-success-soft text-success dark:text-success"
                             : c.status === "rejected"
-                            ? "bg-red-500/10 text-red-700 dark:text-red-400"
-                            : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            ? "bg-danger-soft text-danger dark:text-danger"
+                            : "bg-warning-soft text-warning dark:text-warning"
                         }`}>
                           {c.status}
                         </span>
@@ -399,30 +410,34 @@ export default function RecruitmentPage() {
     ) : (
       <div className="space-y-4">
         {pipelinesLoading ? (
-          <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
-            <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
+          <div className="h-64 flex items-center justify-center text-muted dark:text-muted">
+            <Loader2 className="w-8 h-8 animate-spin text-foreground" />
           </div>
         ) : positions.length === 0 ? (
-          <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
-            <Briefcase className="w-8 h-8 mb-2 opacity-50 text-slate-600" />
+          <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
+            <Briefcase className="w-8 h-8 mb-2 opacity-50 text-muted" />
             <p className="text-sm font-medium">Jabatan tidak ditemukan</p>
             <p className="text-xs mt-1">Buat jabatan/posisi terlebih dahulu di menu divisi & jabatan.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {positions.map(pos => {
-              const pipe = pipelines.find(p => p.positionId?._id === pos._id || p.positionId === pos._id);
+              const pipe = pipelines.find((p) =>
+                typeof p.positionId === "object" && p.positionId !== null
+                  ? p.positionId._id === pos._id
+                  : p.positionId === pos._id
+              );
               const stages = pipe?.stages || DEFAULT_STAGES;
 
               return (
-                <div key={pos._id} className="p-5 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 rounded-xl flex flex-col justify-between gap-4">
+                <div key={pos._id} className="p-5 bg-surface border border-line/60 dark:border-white/6 rounded-xl flex flex-col justify-between gap-4">
                   <div className="space-y-2">
-                    <h3 className="font-bold text-sm text-slate-900 dark:text-slate-200">{pos.name}</h3>
-                    <div className="flex flex-wrap gap-1.5 items-center text-[10px] text-slate-550 dark:text-slate-400">
-                      <span className="font-semibold text-slate-700 dark:text-slate-350">Tahapan:</span>
+                    <h3 className="font-semibold text-sm text-foreground dark:text-foreground">{pos.name}</h3>
+                    <div className="flex flex-wrap gap-1.5 items-center text-xs text-muted dark:text-muted">
+                      <span className="font-semibold text-foreground dark:text-muted">Tahapan:</span>
                       {stages.map((st: string, idx: number) => (
                         <span key={st} className="flex items-center gap-1">
-                          <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/4 text-slate-800 dark:text-slate-300 font-semibold text-[9px]">{st}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-surface-2 dark:bg-white/4 text-foreground dark:text-muted font-semibold text-[11px]">{st}</span>
                           {idx < stages.length - 1 && <ChevronRight className="w-3 h-3 opacity-60" />}
                         </span>
                       ))}
@@ -437,7 +452,7 @@ export default function RecruitmentPage() {
                       setErrorMessage("");
                       setPipelineModalOpen(true);
                     }}
-                    className="w-fit px-3 py-1.5 text-xs font-semibold bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-100 rounded-lg cursor-pointer transition-all border border-slate-200 dark:border-white/10"
+                    className="w-fit px-3 py-1.5 text-xs font-semibold bg-primary text-primary-foreground hover:bg-surface-2 dark:hover:bg-surface-2 rounded-lg cursor-pointer transition-all border border-line"
                   >
                     Edit Tahapan Alur
                   </button>
@@ -459,53 +474,53 @@ export default function RecruitmentPage() {
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="w-full max-w-lg h-full bg-white dark:bg-[#0a0c14] border-l border-slate-200/60 dark:border-white/8 shadow-2xl relative z-10 p-6 flex flex-col justify-between overflow-y-auto"
+              className="w-full max-w-lg h-full bg-surface border-l border-line shadow-[var(--shadow-pop)] relative z-10 p-6 flex flex-col justify-between overflow-y-auto"
             >
               <div className="space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
+                <div className="flex items-center justify-between border-b border-line pb-4">
                   <div>
-                    <h2 className="text-base font-bold text-slate-900 dark:text-slate-200">Detail & Evaluasi Pelamar</h2>
-                    <p className="text-[10px] text-slate-550 dark:text-slate-400 mt-1">Update tahapan evaluasi rekrutmen kandidat secara berkala</p>
+                    <h2 className="text-base font-semibold text-foreground dark:text-foreground">Detail & Evaluasi Pelamar</h2>
+                    <p className="text-xs text-muted dark:text-muted mt-1">Update tahapan evaluasi rekrutmen kandidat secara berkala</p>
                   </div>
-                  <button onClick={() => setDetailsOpen(false)} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
+                  <button onClick={() => setDetailsOpen(false)} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
                     <X className="w-4 h-4" />
                   </button>
                 </div>
 
                 {errorMessage && (
-                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                  <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
                     <span>{errorMessage}</span>
                   </div>
                 )}
 
                 {/* Candidate Info */}
-                <div className="p-4 rounded-xl bg-white/1 border border-slate-200 dark:border-white/4 space-y-2 text-xs">
-                  <p className="font-bold text-slate-900 dark:text-slate-200 text-sm">{selectedCandidate.name}</p>
-                  <p className="text-slate-550 dark:text-slate-400">Email: {selectedCandidate.email}</p>
-                  <p className="text-slate-550 dark:text-slate-400">No. HP: {selectedCandidate.phone}</p>
-                  <p className="text-slate-550 dark:text-slate-400 font-semibold">Lamaran Lowongan: {selectedCandidate.positionId?.name || "-"}</p>
+                <div className="p-4 rounded-xl bg-white/1 border border-line space-y-2 text-xs">
+                  <p className="font-semibold text-foreground dark:text-foreground text-sm">{selectedCandidate.name}</p>
+                  <p className="text-muted dark:text-muted">Email: {selectedCandidate.email}</p>
+                  <p className="text-muted dark:text-muted">No. HP: {selectedCandidate.phone}</p>
+                  <p className="text-muted dark:text-muted font-semibold">Lamaran Lowongan: {selectedCandidate.positionId?.name || "-"}</p>
                   {selectedCandidate.cvUrl && (
-                    <a href={selectedCandidate.cvUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white underline font-medium mt-1">
+                    <a href={selectedCandidate.cvUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-foreground hover:text-foreground underline font-medium mt-1">
                       <FileText className="w-3.5 h-3.5" /> Lihat Berkas CV <ExternalLink className="w-3 h-3" />
                     </a>
                   )}
                 </div>
 
                 {/* Evaluator Update Form */}
-                <div className="space-y-4 text-xs border-t border-slate-200 dark:border-white/4 pt-4">
-                  <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Update Evaluasi Tahapan</h3>
+                <div className="space-y-4 text-xs border-t border-line pt-4">
+                  <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">Update Evaluasi Tahapan</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-slate-550 dark:text-slate-400 font-semibold">Tentukan Tahap</label>
-                      <select value={actionStage} onChange={e => setActionStage(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-[#0e1017] border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs">
+                      <label className="text-muted dark:text-muted font-semibold">Tentukan Tahap</label>
+                      <select value={actionStage} onChange={e => setActionStage(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
                         {DEFAULT_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-slate-550 dark:text-slate-400 font-semibold">Status Tahap</label>
-                      <select value={actionStatus} onChange={e => setActionStatus(e.target.value as any)} className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-[#0e1017] border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs">
+                      <label className="text-muted dark:text-muted font-semibold">Status Tahap</label>
+                      <select value={actionStatus} onChange={e => setActionStatus(e.target.value as "pending" | "in_progress" | "passed" | "rejected" | "on_hold")} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
                         <option value="pending">Pending</option>
                         <option value="in_progress">In Progress</option>
                         <option value="passed">Passed (Lolos)</option>
@@ -517,35 +532,39 @@ export default function RecruitmentPage() {
 
                   {actionStage === "Offering" && (
                     <div className="space-y-1">
-                      <label className="text-slate-550 dark:text-slate-400 font-semibold">Negosiasi Gaji Offering (Rupiah)</label>
-                      <input type="number" value={offeringSalary} onChange={e => setOfferingSalary(parseInt(e.target.value))} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                      <label className="text-muted dark:text-muted font-semibold">Negosiasi Gaji Offering (Rupiah)</label>
+                      <input type="number" value={offeringSalary} onChange={e => setOfferingSalary(Number.isFinite(e.target.valueAsNumber) ? e.target.valueAsNumber : 0)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                     </div>
                   )}
 
                   <div className="space-y-1">
-                    <label className="text-slate-550 dark:text-slate-400 font-semibold">Catatan Evaluasi / Interview</label>
-                    <textarea value={actionNotes} onChange={e => setActionNotes(e.target.value)} placeholder="Tulis hasil wawancara, catatan skor psikotes, dll..." rows={3} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs placeholder:text-slate-600" />
+                    <label className="text-muted dark:text-muted font-semibold">Catatan Evaluasi / Interview</label>
+                    <textarea value={actionNotes} onChange={e => setActionNotes(e.target.value)} placeholder="Tulis hasil wawancara, catatan skor psikotes, dll..." rows={3} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs placeholder:text-muted" />
                   </div>
 
-                  <button onClick={handleUpdateStage} disabled={submitting} className="px-4 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-100 hover:bg-white/4 cursor-pointer transition-all flex items-center gap-1.5 w-fit">
+                  <button onClick={handleUpdateStage} disabled={submitting} className="px-4 py-2 rounded-lg bg-surface border border-line text-xs font-semibold text-foreground hover:text-foreground hover:bg-white/4 cursor-pointer transition-all flex items-center gap-1.5 w-fit">
                     {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Simpan Evaluasi
                   </button>
                 </div>
 
                 {/* Candidate History / Timeline */}
-                <div className="space-y-4 border-t border-slate-200 dark:border-white/4 pt-4 text-xs">
-                  <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Candidate Timeline History</h3>
+                <div className="space-y-4 border-t border-line pt-4 text-xs">
+                  <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">Candidate Timeline History</h3>
                   {selectedCandidate.history.length === 0 ? (
-                    <p className="text-slate-500 italic">Belum ada riwayat timeline.</p>
+                    <p className="text-muted italic">Belum ada riwayat timeline.</p>
                   ) : (
-                    <div className="space-y-4 pl-2 border-l border-slate-200 dark:border-white/8">
+                    <div className="space-y-4 pl-2 border-l border-line">
                       {selectedCandidate.history.map((h, i) => (
                         <div key={i} className="relative pl-4 space-y-1">
-                          <div className="absolute left-[-21px] top-1 w-2.5 h-2.5 rounded-full bg-slate-900 dark:bg-white border border-[#0a0c14]" />
-                          <span className="font-bold text-slate-700 dark:text-slate-300 block">{h.stage} ({h.status})</span>
-                          <span className="text-[10px] text-slate-500 block">{new Date(h.createdAt).toLocaleString("id-ID")}</span>
-                          {h.notes && <p className="text-[11px] text-slate-550 dark:text-slate-400 italic">"{h.notes}"</p>}
+                          <div className="absolute left-[-21px] top-1 w-2.5 h-2.5 rounded-full bg-primary border border-line" />
+                          <span className="font-semibold text-foreground block">{h.stage} ({h.status})</span>
+                          <span className="text-xs text-muted block">{new Date(h.createdAt).toLocaleString("id-ID")}</span>
+                          {h.notes && (
+                            <p className="text-xs text-muted dark:text-muted italic">
+                              &ldquo;{h.notes}&rdquo;
+                            </p>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -554,11 +573,11 @@ export default function RecruitmentPage() {
               </div>
 
               {/* Action buttons footer */}
-              <div className="border-t border-slate-200 dark:border-white/4 pt-4 mt-6 flex items-center justify-between gap-3 bg-white dark:bg-[#0a0c14] relative z-20">
+              <div className="border-t border-line pt-4 mt-6 flex items-center justify-between gap-3 bg-surface relative z-20">
                 {selectedCandidate.currentStage === "Offering" && selectedCandidate.status === "passed" ? (
                   <button
                     onClick={handleOpenMigrate}
-                    className="px-4 py-2.5 rounded-lg bg-slate-900 dark:bg-white text-xs font-bold text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-100 flex items-center gap-1.5 active:scale-[0.98] transition-all border border-slate-900 dark:border-white shadow-xs cursor-pointer"
+                    className="px-4 py-2.5 rounded-lg bg-primary text-xs font-semibold text-primary-foreground hover:bg-surface-2 dark:hover:bg-surface-2 flex items-center gap-1.5 active:scale-[0.98] transition-all border border-line-strong dark:border-white cursor-pointer"
                   >
                     Onboard Karyawan Baru <ArrowRight className="w-4 h-4" />
                   </button>
@@ -568,7 +587,7 @@ export default function RecruitmentPage() {
                 
                 <button
                   onClick={() => setDetailsOpen(false)}
-                  className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
+                  className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground transition-all cursor-pointer"
                 >
                   Tutup
                 </button>
@@ -587,17 +606,17 @@ export default function RecruitmentPage() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
+              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
             >
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200">Tambah Pelamar Kerja Baru</h3>
-                <button onClick={() => setFormOpen(false)} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
+              <div className="flex items-center justify-between border-b border-line pb-4 mb-4">
+                <h3 className="text-sm font-semibold text-foreground dark:text-foreground">Tambah Pelamar Kerja Baru</h3>
+                <button onClick={() => setFormOpen(false)} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
               {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
+                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2 mb-4">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMessage}</span>
                 </div>
@@ -605,18 +624,18 @@ export default function RecruitmentPage() {
 
               <form onSubmit={handleAddSubmit} className="space-y-4 text-xs">
                 <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Nama Lengkap</label>
-                  <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Alice Johnson" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  <label className="text-foreground font-semibold">Nama Lengkap</label>
+                  <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Alice Johnson" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Alamat Email</label>
-                  <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="alice@example.com" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  <label className="text-foreground font-semibold">Alamat Email</label>
+                  <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="alice@example.com" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">No. Telepon / HP</label>
-                  <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} placeholder="08xxxxxxxx" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  <label className="text-foreground font-semibold">No. Telepon / HP</label>
+                  <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} placeholder="08xxxxxxxx" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                 </div>
 
                 <SearchSelect
@@ -627,9 +646,9 @@ export default function RecruitmentPage() {
                   placeholder="Pilih posisi..."
                 />
 
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
-                  <button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 transition-all">Batal</button>
-                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-6">
+                  <button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground transition-all">Batal</button>
+                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
                     {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Tambah Pelamar
                   </button>
@@ -649,17 +668,17 @@ export default function RecruitmentPage() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
+              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
             >
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200">Onboarding Karyawan Baru</h3>
-                <button onClick={() => setMigrateOpen(false)} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
+              <div className="flex items-center justify-between border-b border-line pb-4 mb-4">
+                <h3 className="text-sm font-semibold text-foreground dark:text-foreground">Onboarding Karyawan Baru</h3>
+                <button onClick={() => setMigrateOpen(false)} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
               {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
+                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2 mb-4">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMessage}</span>
                 </div>
@@ -683,13 +702,13 @@ export default function RecruitmentPage() {
                 />
 
                 <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Tanggal Mulai Kontrak Kerja</label>
-                  <input type="date" required value={joinDate} onChange={e => setJoinDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                  <label className="text-foreground font-semibold">Tanggal Mulai Kontrak Kerja</label>
+                  <input type="date" required value={joinDate} onChange={e => setJoinDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                 </div>
 
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
-                  <button type="button" onClick={() => setMigrateOpen(false)} className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 transition-all">Batal</button>
-                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-6">
+                  <button type="button" onClick={() => setMigrateOpen(false)} className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground transition-all">Batal</button>
+                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
                     {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Migrasikan & Onboard
                   </button>
@@ -709,17 +728,17 @@ export default function RecruitmentPage() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden flex flex-col gap-4 text-xs"
+              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden flex flex-col gap-4 text-xs"
             >
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-3">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200">Konfigurasi Alur Tahapan Rekrutmen</h3>
-                <button onClick={() => setPipelineModalOpen(false)} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
+              <div className="flex items-center justify-between border-b border-line pb-3">
+                <h3 className="text-sm font-semibold text-foreground dark:text-foreground">Konfigurasi Alur Tahapan Rekrutmen</h3>
+                <button onClick={() => setPipelineModalOpen(false)} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
               {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 flex items-center gap-2">
+                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMessage}</span>
                 </div>
@@ -727,11 +746,11 @@ export default function RecruitmentPage() {
 
               {/* Current Stages List */}
               <div className="space-y-2">
-                <label className="font-semibold text-slate-700 dark:text-slate-350">Tahapan Aktif (Urutan Alur):</label>
-                <div className="space-y-1.5 border border-slate-200 dark:border-white/6 rounded-lg p-3 max-h-56 overflow-y-auto bg-slate-50 dark:bg-white/2">
+                <label className="font-semibold text-foreground dark:text-muted">Tahapan Aktif (Urutan Alur):</label>
+                <div className="space-y-1.5 border border-line dark:border-white/6 rounded-lg p-3 max-h-56 overflow-y-auto bg-surface-2">
                   {pipelineStages.map((st, idx) => (
-                    <div key={st + idx} className="flex items-center justify-between p-2 rounded bg-white dark:bg-white/3 border border-slate-200 dark:border-white/4">
-                      <span className="font-semibold text-slate-900 dark:text-slate-200">{idx + 1}. {st}</span>
+                    <div key={st + idx} className="flex items-center justify-between p-2 rounded bg-surface border border-line">
+                      <span className="font-semibold text-foreground dark:text-foreground">{idx + 1}. {st}</span>
                       <div className="flex items-center gap-1.5">
                         {/* Move Up */}
                         <button
@@ -744,7 +763,7 @@ export default function RecruitmentPage() {
                             updated[idx - 1] = temp;
                             setPipelineStages(updated);
                           }}
-                          className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 disabled:opacity-30 cursor-pointer text-slate-550 dark:text-slate-400"
+                          className="p-1 rounded hover:bg-surface-2 disabled:opacity-30 cursor-pointer text-muted dark:text-muted"
                         >
                           ▲
                         </button>
@@ -759,7 +778,7 @@ export default function RecruitmentPage() {
                             updated[idx + 1] = temp;
                             setPipelineStages(updated);
                           }}
-                          className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 disabled:opacity-30 cursor-pointer text-slate-550 dark:text-slate-400"
+                          className="p-1 rounded hover:bg-surface-2 disabled:opacity-30 cursor-pointer text-muted dark:text-muted"
                         >
                           ▼
                         </button>
@@ -769,7 +788,7 @@ export default function RecruitmentPage() {
                           onClick={() => {
                             setPipelineStages(pipelineStages.filter((_, i) => i !== idx));
                           }}
-                          className="p-1 rounded text-red-500 hover:bg-red-550/10 cursor-pointer"
+                          className="p-1 rounded text-danger hover:bg-danger-soft cursor-pointer"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
@@ -777,21 +796,21 @@ export default function RecruitmentPage() {
                     </div>
                   ))}
                   {pipelineStages.length === 0 && (
-                    <p className="text-center py-4 text-slate-400 text-[10px]">Belum ada tahapan ditentukan</p>
+                    <p className="text-center py-4 text-subtle text-[11px]">Belum ada tahapan ditentukan</p>
                   )}
                 </div>
               </div>
 
               {/* Add New Stage */}
-              <div className="space-y-2 border-t border-slate-200 dark:border-white/4 pt-3">
-                <label className="font-semibold text-slate-700 dark:text-slate-350">Tambah Tahapan Baru:</label>
+              <div className="space-y-2 border-t border-line pt-3">
+                <label className="font-semibold text-foreground dark:text-muted">Tambah Tahapan Baru:</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={newStageInput}
                     onChange={e => setNewStageInput(e.target.value)}
                     placeholder="Contoh: Tes Psikotes, BI Checking"
-                    className="flex-1 px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
+                    className="flex-1 px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs"
                   />
                   <button
                     type="button"
@@ -802,20 +821,20 @@ export default function RecruitmentPage() {
                         setNewStageInput("");
                       }
                     }}
-                    className="px-3 py-2 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-lg font-semibold hover:bg-slate-800 dark:hover:bg-slate-100 cursor-pointer"
+                    className="px-3 py-2 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-surface-2 dark:hover:bg-surface-2 cursor-pointer"
                   >
                     Tambah
                   </button>
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-2">
-                <button type="button" onClick={() => setPipelineModalOpen(false)} className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 transition-all">Batal</button>
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-2">
+                <button type="button" onClick={() => setPipelineModalOpen(false)} className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground transition-all">Batal</button>
                 <button
                   type="button"
                   onClick={handleSavePipeline}
                   disabled={submitting}
-                  className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
                 >
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Simpan Alur

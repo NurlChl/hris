@@ -9,8 +9,8 @@ try {
   if (typeof dns.setServers === "function") {
     dns.setServers(["8.8.8.8", "1.1.1.1"]);
   }
-} catch (e) {
-  // Ignore if dns.setServers is restricted in the execution environment
+} catch {
+  // dns.setServers is restricted in some sandboxes; the platform resolver is fine.
 }
 
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -26,11 +26,16 @@ interface MongooseCache {
 
 // Global is used here to maintain a cached connection across hot-reloads in development
 // and prevent multiple connections in serverless environments.
-let cached: MongooseCache = (global as any).mongoose;
+// The connection is cached on globalThis so Next.js hot reloads (and warm
+// serverless invocations) reuse one pool instead of opening a new connection
+// per module evaluation.
+const globalWithMongoose = globalThis as typeof globalThis & {
+  __hrisMongoose?: MongooseCache;
+};
 
-if (!cached) {
-  cached = (global as any).mongoose = { conn: null, promise: null };
-}
+const cached: MongooseCache =
+  globalWithMongoose.__hrisMongoose ??
+  (globalWithMongoose.__hrisMongoose = { conn: null, promise: null });
 
 export async function connectToDatabase() {
   if (!MONGODB_URI) {

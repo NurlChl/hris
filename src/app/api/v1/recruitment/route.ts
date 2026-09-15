@@ -15,6 +15,18 @@ export const GET = wrapRouteHandler(async (req) => {
     return apiError("UNAUTHORIZED", "Anda harus login untuk mengakses data ini", null, 401);
   }
 
+  // Candidate records carry CVs, contact details, and offered salaries. The
+  // previous version let any signed-in account read all of them.
+  const perm = await checkPermission(session.user.id, "recruitment", "read");
+  if (!perm.allowed) {
+    return apiError(
+      "FORBIDDEN",
+      "Anda tidak memiliki izin untuk melihat data rekrutmen",
+      null,
+      403
+    );
+  }
+
   await connectToDatabase();
 
   const url = new URL(req.url);
@@ -27,19 +39,30 @@ export const GET = wrapRouteHandler(async (req) => {
     // List candidates
     const candidates = await Candidate.find({})
       .populate("positionId")
-      .sort({ updatedAt: -1 });
+      .sort({ updatedAt: -1 })
+      .limit(500)
+      .lean();
 
-    const decorated = [];
-    for (const c of candidates) {
-      const history = await CandidateStageHistory.find({ candidateId: c._id })
-        .populate("interviewerId")
-        .sort({ createdAt: -1 });
-      
-      decorated.push({
-        ...c.toObject(),
-        history
-      });
+    // One query for every candidate's history instead of one query per
+    // candidate inside a loop.
+    const histories = await CandidateStageHistory.find({
+      candidateId: { $in: candidates.map((c) => c._id) },
+    })
+      .populate("interviewerId", "name employeeId")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const byCandidate = new Map<string, unknown[]>();
+    for (const h of histories) {
+      const key = String(h.candidateId);
+      if (!byCandidate.has(key)) byCandidate.set(key, []);
+      byCandidate.get(key)!.push(h);
     }
+
+    const decorated = candidates.map((c) => ({
+      ...c,
+      history: byCandidate.get(String(c._id)) ?? [],
+    }));
 
     return apiSuccess(decorated, "Berhasil memuat data pelamar kerja");
   }

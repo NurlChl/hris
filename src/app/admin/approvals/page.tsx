@@ -1,16 +1,42 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { 
-  FileCheck2, ShieldCheck, CheckCircle2, Ban, X, Loader2, AlertCircle, 
-  Hourglass, MessageSquare, ClipboardCheck, CornerDownRight
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  CalendarDays,
+  Check,
+  ClipboardCheck,
+  FileClock,
+  History,
+  Inbox,
+  Paperclip,
+  Repeat,
+  X,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  EmptyState,
+  ErrorState,
+  Field,
+  Modal,
+  SkeletonList,
+  StatusBadge,
+  Tabs,
+  Textarea,
+  cn,
+} from "@/components/ui";
+import { useToast } from "@/components/ui/Toast";
+import { api, errorMessage } from "@/lib/client-api";
+import { formatDateTime, formatRelative } from "@/lib/time";
 
-interface StepStatus {
+interface Step {
   stepNumber: number;
   approverRole: string;
-  status: "pending" | "approved" | "rejected";
+  status: string;
   comment?: string;
   actionedAt?: string;
 }
@@ -18,266 +44,301 @@ interface StepStatus {
 interface ApprovalItem {
   _id: string;
   refType: "leave" | "correction" | "holiday_swap";
-  refId: string;
+  refTypeLabel: string;
+  status: string;
   currentStep: number;
-  status: "pending" | "approved" | "rejected";
+  activeApproverRole: string | null;
+  canAct: boolean;
   requesterName: string;
   requesterNip: string;
   createdAt: string;
-  steps: StepStatus[];
-  details?: any;
+  updatedAt: string;
+  steps: Step[];
+  details: {
+    title: string;
+    period: string;
+    duration: string;
+    reason: string;
+    evidenceUrl: string;
+  };
 }
 
+const TYPE_ICON = {
+  leave: CalendarDays,
+  correction: FileClock,
+  holiday_swap: Repeat,
+} as const;
+
 export default function ApprovalsPage() {
-  const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
+  const toast = useToast();
+  const [view, setView] = useState<"inbox" | "history">("inbox");
+  const [items, setItems] = useState<ApprovalItem[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Review Modal State
-  const [modalOpen, setModalOpen] = useState(false);
-  const [selectedApproval, setSelectedApproval] = useState<ApprovalItem | null>(null);
+  const [error, setError] = useState("");
+  const [decision, setDecision] = useState<{ item: ApprovalItem; action: "approve" | "reject" } | null>(
+    null
+  );
   const [comment, setComment] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchApprovals();
-  }, []);
-
-  const fetchApprovals = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      const res = await fetch("/api/v1/approvals");
-      const data = await res.json();
-      if (data.success) {
-        setApprovals(data.data || []);
-      }
+      const res = await api.get<ApprovalItem[]>(`/api/v1/approvals?view=${view}`);
+      setItems(res.data ?? []);
     } catch (err) {
-      console.error("Gagal memuat persetujuan:", err);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, [view]);
 
-  const handleOpenReview = (item: ApprovalItem) => {
-    setSelectedApproval(item);
-    setComment("");
-    setErrorMessage("");
-    setSuccessMessage("");
-    setModalOpen(true);
-  };
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const handleCloseReview = () => setModalOpen(false);
-
-  const handleAction = async (action: "approve" | "reject") => {
-    if (!selectedApproval) return;
-    setSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
+  const submit = async () => {
+    if (!decision) return;
+    setSaving(true);
     try {
-      const response = await fetch("/api/v1/approvals", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instanceId: selectedApproval._id,
-          action,
-          comment,
-        }),
+      const res = await api.post("/api/v1/approvals", {
+        instanceId: decision.item._id,
+        action: decision.action,
+        comment: comment.trim() || undefined,
       });
-
-      const data = await response.json();
-      if (data.success) {
-        setSuccessMessage(data.message || "Tindakan berhasil diproses!");
-        fetchApprovals();
-        setTimeout(() => setModalOpen(false), 1500);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal memproses tindakan");
-      }
+      toast.success(decision.action === "approve" ? "Disetujui" : "Ditolak", res.message);
+      setDecision(null);
+      setComment("");
+      await load();
     } catch (err) {
-      setErrorMessage("Terjadi kesalahan koneksi server");
+      toast.error("Gagal memproses", errorMessage(err));
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
+  const actionable = items.filter((i) => i.canAct).length;
+
   return (
-    <div className="space-y-6 font-sans">
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Antrean Persetujuan</h1>
-          <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">Review dan tindak lanjuti pengajuan izin/cuti, koreksi absensi, dan jadwal tukar libur karyawan</p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-[26px] md:text-[30px] text-heading">Persetujuan</h1>
+        <p className="text-sm text-muted mt-2 leading-relaxed">
+          Antrean pengajuan cuti, koreksi absen, dan tukar libur yang menunggu keputusan Anda.
+        </p>
+      </header>
+
+      <Tabs
+        value={view}
+        onChange={setView}
+        tabs={[
+          { id: "inbox", label: "Menunggu Keputusan", count: actionable, icon: Inbox },
+          { id: "history", label: "Riwayat", icon: History },
+        ]}
+      />
+
+      {error && <ErrorState message={error} onRetry={load} />}
 
       {loading ? (
-        <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
-          <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
-        </div>
-      ) : approvals.length === 0 ? (
-        <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
-          <FileCheck2 className="w-8 h-8 mb-2 opacity-50 text-slate-600" />
-          <p className="text-sm font-medium">Antrean persetujuan kosong</p>
-          <p className="text-xs mt-1">Semua pengajuan yang membutuhkan persetujuan peran Anda saat ini sudah bersih.</p>
-        </div>
+        <SkeletonList rows={3} />
+      ) : items.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={ClipboardCheck}
+            title={view === "inbox" ? "Tidak ada pengajuan menunggu" : "Belum ada riwayat"}
+            description={
+              view === "inbox"
+                ? "Semua pengajuan sudah diproses. Antrean baru akan muncul di sini secara otomatis."
+                : "Pengajuan yang sudah disetujui atau ditolak akan tercatat di sini."
+            }
+          />
+        </Card>
       ) : (
         <div className="space-y-4">
-          {approvals.map((item) => (
-            <div
-              key={item._id}
-              className="bg-white border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-5 hover:border-white/12 hover:bg-white dark:bg-white/3 transition-all duration-300 flex flex-col md:flex-row md:items-center md:justify-between gap-4"
-            >
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-slate-900 dark:text-slate-200 text-sm">{item.requesterName}</span>
-                  <span className="text-[10px] text-slate-500 font-mono">({item.requesterNip})</span>
-                </div>
-                
-                <div className="flex flex-wrap gap-2 text-xs text-slate-550 dark:text-slate-400 items-center">
-                  <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-semibold text-[9px] uppercase">
-                    {item.refType === "leave" ? "Cuti / Izin" : item.refType === "correction" ? "Koreksi Absen" : item.refType}
-                  </span>
-                  <span>&bull;</span>
-                  <span>Diajukan: {new Date(item.createdAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}</span>
-                </div>
-
-                {/* Stepper display of approval roles */}
-                <div className="flex flex-wrap gap-3 pt-2">
-                  {item.steps.map((st, i) => (
-                    <div key={st.stepNumber} className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                      {i > 0 && <CornerDownRight className="w-3.5 h-3.5 text-slate-750 dark:text-slate-400" />}
-                      <span className={`px-1.5 py-0.5 rounded font-bold border ${
-                        st.status === "approved"
-                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
-                          : st.status === "rejected"
-                          ? "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20"
-                          : st.stepNumber === item.currentStep
-                          ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-200 dark:border-white/10 animate-pulse"
-                          : "bg-slate-50 dark:bg-white/2 border-slate-200/60 dark:border-white/4 text-slate-550 dark:text-slate-400"
-                      }`}>
-                        {st.approverRole}
+          {items.map((item) => {
+            const Icon = TYPE_ICON[item.refType] ?? CalendarDays;
+            return (
+              <Card key={item._id}>
+                <CardHeader
+                  icon={Icon}
+                  title={
+                    <span className="flex flex-wrap items-center gap-2">
+                      {item.requesterName}
+                      <span className="text-[11px] font-normal text-subtle font-mono">
+                        {item.requesterNip}
                       </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                    </span>
+                  }
+                  description={`${item.refTypeLabel} · diajukan ${formatRelative(item.createdAt)}`}
+                  actions={
+                    item.canAct ? (
+                      <>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          icon={X}
+                          onClick={() => {
+                            setComment("");
+                            setDecision({ item, action: "reject" });
+                          }}
+                        >
+                          Tolak
+                        </Button>
+                        <Button
+                          variant="success"
+                          size="sm"
+                          icon={Check}
+                          onClick={() => {
+                            setComment("");
+                            setDecision({ item, action: "approve" });
+                          }}
+                        >
+                          Setujui
+                        </Button>
+                      </>
+                    ) : (
+                      <StatusBadge status={item.status} />
+                    )
+                  }
+                />
+                <CardBody className="space-y-4">
+                  <dl className="grid sm:grid-cols-3 gap-4">
+                    <Detail label="Jenis" value={item.details.title} />
+                    <Detail label="Periode" value={item.details.period} />
+                    <Detail label="Durasi" value={item.details.duration} />
+                  </dl>
 
-              <button
-                onClick={() => handleOpenReview(item)}
-                className="px-4 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-100 hover:bg-white/4 transition-all cursor-pointer w-fit shrink-0 self-end md:self-center"
-              >
-                Tinjau Pengajuan
-              </button>
-            </div>
-          ))}
+                  <div>
+                    <p className="eyebrow mb-1">
+                      Alasan pemohon
+                    </p>
+                    <p className="text-sm text-foreground/90 leading-relaxed">{item.details.reason}</p>
+                    {item.details.evidenceUrl && (
+                      <a
+                        href={item.details.evidenceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 mt-2 text-xs font-semibold text-primary hover:underline"
+                      >
+                        <Paperclip className="w-3.5 h-3.5" />
+                        Buka lampiran bukti
+                      </a>
+                    )}
+                  </div>
+
+                  <StepTrail steps={item.steps} currentStep={item.currentStep} />
+
+                  {item.canAct && item.activeApproverRole && (
+                    <Alert tone="info">
+                      Pengajuan ini menunggu keputusan sebagai <strong>{item.activeApproverRole}</strong>.
+                      Setelah Anda menyetujui, pengajuan diteruskan ke approver berikutnya bila ada.
+                    </Alert>
+                  )}
+                </CardBody>
+              </Card>
+            );
+          })}
         </div>
       )}
 
-      {/* Review Modal Dialog */}
-      <AnimatePresence>
-        {modalOpen && selectedApproval && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={handleCloseReview} className="absolute inset-0 bg-black" />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 shadow-2xl rounded-2xl w-full max-w-md relative z-10 p-6 overflow-hidden"
+      <Modal
+        open={Boolean(decision)}
+        onClose={() => setDecision(null)}
+        title={decision?.action === "approve" ? "Setujui pengajuan" : "Tolak pengajuan"}
+        description={
+          decision
+            ? `${decision.item.refTypeLabel} dari ${decision.item.requesterName} — ${decision.item.details.period}`
+            : ""
+        }
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setDecision(null)} disabled={saving}>
+              Batal
+            </Button>
+            <Button
+              variant={decision?.action === "approve" ? "success" : "danger"}
+              size="sm"
+              loading={saving}
+              disabled={decision?.action === "reject" && comment.trim().length < 5}
+              onClick={submit}
             >
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200">Proses Persetujuan Pengajuan</h3>
-                <button onClick={handleCloseReview} className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+              {decision?.action === "approve" ? "Ya, setujui" : "Ya, tolak"}
+            </Button>
+          </>
+        }
+      >
+        <Field
+          label={decision?.action === "approve" ? "Catatan (opsional)" : "Alasan penolakan"}
+          required={decision?.action === "reject"}
+          hint={
+            decision?.action === "approve"
+              ? "Catatan akan terlihat oleh pemohon dan approver berikutnya."
+              : "Wajib diisi minimal 5 karakter. Pemohon akan membaca alasan ini."
+          }
+        >
+          <Textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            maxLength={1000}
+            placeholder={
+              decision?.action === "approve"
+                ? "Contoh: Disetujui, pastikan serah terima tugas ke rekan tim."
+                : "Contoh: Bertepatan dengan tutup buku bulanan, mohon ajukan ulang setelah tanggal 5."
+            }
+          />
+        </Field>
+      </Modal>
+    </div>
+  );
+}
 
-              {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="eyebrow">{label}</dt>
+      <dd className="text-sm font-medium mt-0.5 break-words">{value}</dd>
+    </div>
+  );
+}
 
-              {successMessage && (
-                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs flex items-center gap-2 mb-4">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{successMessage}</span>
-                </div>
-              )}
-
-              <div className="space-y-4 text-xs text-slate-700 dark:text-slate-300">
-                <div className="p-4 rounded-xl bg-white/1 border border-slate-200 dark:border-white/4 space-y-2">
-                  <p className="font-semibold text-[10px] text-slate-500 uppercase tracking-wider">Detail Pengaju</p>
-                  <p className="text-sm font-bold text-slate-900 dark:text-slate-200">{selectedApproval.requesterName}</p>
-                  <p className="text-xs text-slate-550 dark:text-slate-400 font-mono">NIP: {selectedApproval.requesterNip}</p>
-                  <p className="text-xs text-slate-550 dark:text-slate-400 font-medium">Jenis Transaksi: <span className="font-bold capitalize bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded border border-slate-200 dark:border-white/8">{selectedApproval.refType === "correction" ? "Koreksi Absen" : selectedApproval.refType}</span></p>
-                </div>
-
-                {selectedApproval.details && (
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-white/2 border border-slate-200 dark:border-white/4 space-y-2">
-                    <p className="font-semibold text-[10px] text-slate-500 uppercase tracking-wider">Detail Pengajuan</p>
-                    {selectedApproval.refType === "leave" ? (
-                      <>
-                        <p><strong className="text-slate-900 dark:text-slate-200">Jenis Cuti:</strong> {selectedApproval.details.leaveTypeName}</p>
-                        <p><strong className="text-slate-900 dark:text-slate-200">Mulai:</strong> {new Date(selectedApproval.details.startDate).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}</p>
-                        <p><strong className="text-slate-900 dark:text-slate-200">Selesai:</strong> {new Date(selectedApproval.details.endDate).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}</p>
-                        <p><strong className="text-slate-900 dark:text-slate-200">Alasan:</strong> {selectedApproval.details.reason}</p>
-                      </>
-                    ) : selectedApproval.refType === "correction" ? (
-                      <>
-                        <p><strong className="text-slate-900 dark:text-slate-200">Tanggal Absen:</strong> {new Date(selectedApproval.details.date).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}</p>
-                        <p><strong className="text-slate-900 dark:text-slate-200">Koreksi Jam:</strong> {selectedApproval.details.clockInTime} - {selectedApproval.details.clockOutTime}</p>
-                        <p><strong className="text-slate-900 dark:text-slate-200">Kategori:</strong> <span className="capitalize">{selectedApproval.details.reasonType?.replace(/_/g, " ")}</span></p>
-                        <p><strong className="text-slate-900 dark:text-slate-200">Alasan:</strong> {selectedApproval.details.reasonNote}</p>
-                      </>
-                    ) : null}
-                    {selectedApproval.details.evidenceUrl && (
-                      <p className="pt-1">
-                        <a href={selectedApproval.details.evidenceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline font-semibold flex items-center gap-1">
-                          &bull; Lihat Dokumen Bukti
-                        </a>
-                      </p>
-                    )}
-                  </div>
+/** Horizontal trail showing where the request sits in its approval chain. */
+function StepTrail({ steps, currentStep }: { steps: Step[]; currentStep: number }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-1 gap-y-2 pt-3 border-t border-line">
+      {steps
+        .slice()
+        .sort((a, b) => a.stepNumber - b.stepNumber)
+        .map((s, i) => {
+          const isCurrent = s.stepNumber === currentStep && s.status === "pending";
+          return (
+            <React.Fragment key={s.stepNumber}>
+              {i > 0 && <span className="w-4 h-px bg-line" aria-hidden />}
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold border",
+                  s.status === "approved" && "bg-success-soft text-success border-success/20",
+                  s.status === "rejected" && "bg-danger-soft text-danger border-danger/20",
+                  s.status === "pending" && isCurrent && "bg-primary-soft text-primary border-primary/30",
+                  s.status === "pending" && !isCurrent && "bg-surface-2 text-subtle border-line"
                 )}
-
-                <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold flex items-center gap-1.5">
-                    <MessageSquare className="w-3.5 h-3.5 text-slate-700 dark:text-slate-300" />
-                    Catatan / Komentar Peninjau (Opsional)
-                  </label>
-                  <textarea
-                    value={comment}
-                    onChange={e => setComment(e.target.value)}
-                    placeholder="Tulis alasan persetujuan atau penolakan..."
-                    rows={3}
-                    className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder:text-slate-600"
-                  />
-                </div>
-
-                <div className="flex gap-4 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
-                  <button
-                    onClick={() => handleAction("reject")}
-                    disabled={submitting}
-                    className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs font-bold text-white shadow shadow-red-500/20 active:scale-[0.98] cursor-pointer transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-                  >
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
-                    Tolak Pengajuan
-                  </button>
-                  <button
-                    onClick={() => handleAction("approve")}
-                    disabled={submitting}
-                    className="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white shadow shadow-emerald-500/20 active:scale-[0.98] cursor-pointer transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-                  >
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
-                    Setujui Langkah
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+                title={
+                  s.actionedAt
+                    ? `${s.status} pada ${formatDateTime(s.actionedAt)}${s.comment ? ` — "${s.comment}"` : ""}`
+                    : undefined
+                }
+              >
+                {s.status === "approved" && <Check className="w-3 h-3" />}
+                {s.status === "rejected" && <X className="w-3 h-3" />}
+                {s.approverRole}
+              </span>
+            </React.Fragment>
+          );
+        })}
+      <Badge tone="neutral" className="ml-auto">
+        Langkah {currentStep} dari {steps.length}
+      </Badge>
     </div>
   );
 }

@@ -2,12 +2,12 @@ import NextAuth, { DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import User from "@/models/User";
-import Role from "@/models/Role";
 import Employee from "@/models/Employee";
 import { connectToDatabase } from "@/lib/db";
+import { getSettings } from "@/lib/settings";
+import { logActivity } from "@/lib/audit/logger";
 import { authConfig } from "./auth.config";
 
-// Extend NextAuth types to include custom session properties
 declare module "next-auth" {
   interface Session {
     user: {
@@ -16,7 +16,9 @@ declare module "next-auth" {
       employeeId: string | null;
       branchId?: string | null;
       divisionId?: string | null;
-    } & DefaultSession["user"]
+      employeeName?: string | null;
+      mustChangePassword?: boolean;
+    } & DefaultSession["user"];
   }
 
   interface User {
@@ -25,85 +27,124 @@ declare module "next-auth" {
     employeeId?: string | null;
     branchId?: string | null;
     divisionId?: string | null;
+    employeeName?: string | null;
+    mustChangePassword?: boolean;
   }
 }
 
+/**
+ * Every failure path returns the same `null`, and the login page shows one
+ * generic message. Distinguishing "unknown email" from "wrong password" would
+ * turn the form into an account-enumeration oracle.
+ *
+ * Nothing here logs the submitted email or password — the previous
+ * implementation printed both to the server console on every attempt.
+ */
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   providers: [
     Credentials({
       name: "Credentials",
       credentials: {
-        email: { label: "Email", type: "email", placeholder: "karyawan@perusahaan.com" },
+        email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        console.log("[AUTH] Authorize started for:", credentials?.email);
-        if (!credentials?.email || !credentials?.password) {
-          console.log("[AUTH] Missing credentials");
-          return null;
-        }
+        const email = String(credentials?.email ?? "").trim().toLowerCase();
+        const password = String(credentials?.password ?? "");
+        if (!email || !password) return null;
 
         try {
           await connectToDatabase();
-          console.log("[AUTH] Connected to Database");
+          const settings = await getSettings();
+          const maxAttempts = Number(settings.login_max_attempts) || 5;
+          const lockoutMinutes = Number(settings.login_lockout_minutes) || 15;
 
-          // Find user by email and populate role
-          const user = await User.findOne({ email: credentials.email }).populate("roleId");
-          if (!user) {
-            console.log("[AUTH] User not found in database for email:", credentials.email);
+          const user = await User.findOne({ email }).populate("roleId");
+
+          // Spend comparable time on the unknown-email path so response timing
+          // does not reveal whether the account exists.
+          if (!user || !user.passwordHash) {
+            await bcrypt.compare(password, "$2a$10$invalidsaltinvalidsaltinvalidsaltinvalidsaltinvalidsa");
             return null;
           }
-          console.log("[AUTH] User found:", user.email, "with roleId:", user.roleId);
 
-          // Verify password
-          const isValid = await bcrypt.compare(credentials.password as string, user.passwordHash);
-          console.log("[AUTH] Password verification result:", isValid);
+          if (user.isActive === false) return null;
+
+          if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+            return null;
+          }
+
+          const isValid = await bcrypt.compare(password, user.passwordHash);
+
           if (!isValid) {
-            console.log("[AUTH] Password hash comparison failed");
+            user.failedLoginAttempts = (user.failedLoginAttempts ?? 0) + 1;
+            if (user.failedLoginAttempts >= maxAttempts) {
+              user.lockedUntil = new Date(Date.now() + lockoutMinutes * 60_000);
+              user.failedLoginAttempts = 0;
+              void logActivity({
+                userId: user._id.toString(),
+                action: "ACCOUNT_LOCKED",
+                module: "auth",
+                after: { lockedUntil: user.lockedUntil },
+              });
+            }
+            await user.save();
             return null;
           }
 
-          // If employee account, fetch employee info (branch, division, status)
-          let employeeId = null;
-          let branchId = null;
-          let divisionId = null;
+          // Employee-linked accounts inherit their posting from the employee record.
+          let employeeId: string | null = null;
+          let branchId: string | null = null;
+          let divisionId: string | null = null;
+          let employeeName: string | null = null;
 
           if (user.employeeId) {
-            const employee = await Employee.findById(user.employeeId);
-            if (employee) {
-              if (employee.status !== "active" && employee.status !== "onboarding") {
-                console.log("[AUTH] Employee is inactive, blocking login");
-                return null;
-              }
-              employeeId = employee._id.toString();
-              branchId = employee.branchId?.toString() || null;
-              divisionId = employee.divisionId?.toString() || null;
+            const employee = await Employee.findById(user.employeeId).select(
+              "name status branchId divisionId"
+            );
+            if (!employee) return null;
+            if (employee.status !== "active" && employee.status !== "onboarding") {
+              return null; // suspended / resigned employees cannot sign in
             }
+            employeeId = employee._id.toString();
+            employeeName = employee.name;
+            branchId = employee.branchId?.toString() ?? null;
+            divisionId = employee.divisionId?.toString() ?? null;
           }
 
-          const role = user.roleId as any;
-          if (!role) {
-            console.log("[AUTH] User role could not be resolved");
-            return null;
-          }
+          const role = user.roleId as unknown as { name?: string } | null;
+          if (!role?.name) return null;
 
-          console.log("[AUTH] Authorize success! Returning session user with role:", role.name);
+          user.failedLoginAttempts = 0;
+          user.lockedUntil = null;
+          user.lastLoginAt = new Date();
+          await user.save();
+
+          void logActivity({
+            userId: user._id.toString(),
+            action: "LOGIN",
+            module: "auth",
+            after: { role: role.name },
+          });
+
           return {
             id: user._id.toString(),
             email: user.email,
-            name: role.name, // Return the role name as name
+            name: employeeName ?? role.name,
             role: role.name,
             employeeId,
             branchId,
             divisionId,
+            employeeName,
+            mustChangePassword: Boolean(user.mustChangePassword),
           };
-        } catch (error: any) {
-          console.error("[AUTH] Unexpected error in authorize callback:", error.message);
+        } catch (error) {
+          console.error("[AUTH] authorize failed:", (error as Error).message);
           return null;
         }
       },
     }),
   ],
-  secret: process.env.NEXTAUTH_SECRET || "default-very-long-secret-key-for-jwt-signing-and-auth",
+  secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
 });

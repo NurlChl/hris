@@ -1,5 +1,4 @@
 import User from "@/models/User";
-import Role from "@/models/Role";
 import RolePermission from "@/models/RolePermission";
 import { connectToDatabase } from "../db";
 
@@ -8,12 +7,63 @@ export interface PermissionResult {
   scope: "all" | "branch" | "division" | "self";
 }
 
+/** Denied with the narrowest possible scope — the safe default everywhere. */
+const DENY: PermissionResult = { allowed: false, scope: "self" };
+
 /**
- * Validates if a user has permission to perform a specific action in a module.
- * 
- * @param userId The ID of the User
- * @param module The module name (e.g. 'attendance', 'leave', 'payroll', 'recruitment', 'settings')
- * @param action The action type (e.g. 'read', 'write', 'delete', 'approve', 'export')
+ * Per-user permission cache.
+ *
+ * `checkPermission` runs on every authenticated request, sometimes twice, and
+ * each miss costs two round trips. A short TTL keeps the hot path cheap while
+ * still letting a CMS permission change take effect within seconds; the roles
+ * endpoint clears the cache outright on save so the change is immediate for
+ * anyone testing it.
+ */
+interface CacheEntry {
+  at: number;
+  roleName: string;
+  permissions: Map<string, { actions: string[]; scope: string }>;
+}
+
+const cache = new Map<string, CacheEntry>();
+const TTL_MS = 20_000;
+const MAX_ENTRIES = 2_000;
+
+/** Drops a user's cached permissions (or all of them). */
+export function invalidatePermissionCache(userId?: string) {
+  if (userId) cache.delete(userId);
+  else cache.clear();
+}
+
+async function loadPermissions(userId: string): Promise<CacheEntry | null> {
+  await connectToDatabase();
+
+  const user = await User.findById(userId)
+    .populate("roleId", "name")
+    .select("roleId isActive")
+    .lean<{ roleId?: { _id: unknown; name?: string }; isActive?: boolean } | null>();
+
+  // A deactivated account keeps a valid JWT until it expires, so the permission
+  // check is the second line of defence after `authorize`.
+  if (!user || user.isActive === false || !user.roleId?.name) return null;
+
+  const rows = await RolePermission.find({ roleId: user.roleId._id })
+    .select("module actions scope")
+    .lean<Array<{ module: string; actions: string[]; scope: string }>>();
+
+  return {
+    at: Date.now(),
+    roleName: user.roleId.name,
+    permissions: new Map(rows.map((r) => [r.module, { actions: r.actions, scope: r.scope }])),
+  };
+}
+
+/**
+ * Resolves whether a user may perform `action` on `module`, and how wide a slice
+ * of data that grant covers.
+ *
+ * The matrix lives in the `role_permissions` collection rather than in code, so
+ * changes made in the CMS apply without a redeploy.
  */
 export async function checkPermission(
   userId: string,
@@ -21,45 +71,40 @@ export async function checkPermission(
   action: string
 ): Promise<PermissionResult> {
   try {
-    await connectToDatabase();
+    let entry = cache.get(userId);
 
-    // 1. Fetch user & populate role
-    const user = await User.findById(userId).populate("roleId");
-    if (!user || !user.roleId) {
-      return { allowed: false, scope: "self" };
+    if (!entry || Date.now() - entry.at > TTL_MS) {
+      const loaded = await loadPermissions(userId);
+      if (!loaded) {
+        cache.delete(userId);
+        return DENY;
+      }
+      // Simple bound: drop the whole map rather than track LRU order, since a
+      // rebuild is two queries and the cache refills immediately.
+      if (cache.size >= MAX_ENTRIES) cache.clear();
+      cache.set(userId, loaded);
+      entry = loaded;
     }
 
-    // Role type definition check
-    const role = user.roleId as any;
-    
-    // 2. Superadmin has absolute permissions
-    if (role.name === "SUPERADMIN") {
+    // Superadmin is absolute and deliberately bypasses the table — the roles
+    // endpoint refuses to edit its matrix for exactly this reason.
+    if (entry.roleName === "SUPERADMIN") {
       return { allowed: true, scope: "all" };
     }
 
-    // 3. Query dynamic permissions table
-    const permission = await RolePermission.findOne({
-      roleId: role._id,
-      module: module,
-    });
+    const permission = entry.permissions.get(module);
+    if (!permission || !permission.actions.includes(action)) return DENY;
 
-    if (!permission) {
-      return { allowed: false, scope: "self" };
-    }
-
-    // 4. Check if requested action is authorized
-    const isActionAllowed = permission.actions.includes(action);
-    
-    if (!isActionAllowed) {
-      return { allowed: false, scope: "self" };
-    }
-
-    return {
-      allowed: true,
-      scope: permission.scope as any,
-    };
+    return { allowed: true, scope: permission.scope as PermissionResult["scope"] };
   } catch (err) {
-    console.error("RBAC permission check error:", err);
-    return { allowed: false, scope: "self" };
+    // Failing closed is the only safe behaviour: an unreachable database must
+    // not be read as "everyone is allowed".
+    console.error("[RBAC] permission check failed:", (err as Error).message);
+    return DENY;
   }
+}
+
+/** Convenience for call sites that only need a yes/no. */
+export async function can(userId: string, module: string, action: string): Promise<boolean> {
+  return (await checkPermission(userId, module, action)).allowed;
 }

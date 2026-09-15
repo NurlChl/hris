@@ -1,134 +1,218 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
-import { connectToDatabase } from "@/lib/db";
+import { z } from "zod";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import {
+  requireUser,
+  requireEmployee,
+  parseBody,
+  enforceRateLimit,
+  BadRequest,
+  Conflict,
+  Forbidden,
+  NotFound,
+  scopeFilter,
+  pagination,
+} from "@/lib/guard";
+import { checkPermission } from "@/lib/rbac";
+import { RATE_RULES } from "@/lib/rate-limit";
 import { calculateDistanceMeters } from "@/lib/geo";
-import { storageProvider } from "@/lib/storage";
+import { storageProvider, decodeDataUrl } from "@/lib/storage";
 import { logActivity } from "@/lib/audit/logger";
+import { getSettings } from "@/lib/settings";
+import {
+  wibDateKey,
+  wibStartOfDay,
+  wibEndOfDay,
+  wibStartOfMonth,
+  wibEndOfMonth,
+  wibTimeOnDay,
+  wibPeriodKey,
+} from "@/lib/time";
+import { resolveSchedule, holidayMap } from "@/lib/hr/calendar";
 import Attendance from "@/models/Attendance";
 import Employee from "@/models/Employee";
 import Branch from "@/models/Branch";
-import EmployeeSchedule from "@/models/EmployeeSchedule";
-import WorkSchedule from "@/models/WorkSchedule";
-import Setting from "@/models/Setting";
+import LeaveRequest from "@/models/LeaveRequest";
+
+const ACTIONS = ["clock_in", "break_out", "break_in", "clock_out"] as const;
+type Action = (typeof ACTIONS)[number];
+
+const ACTION_LABEL: Record<Action, string> = {
+  clock_in: "Absen Masuk",
+  break_out: "Mulai Istirahat",
+  break_in: "Selesai Istirahat",
+  clock_out: "Absen Pulang",
+};
+
+/* ------------------------------------------------------------------ */
+/* GET — history + the settings the portal needs to render its buttons  */
+/* ------------------------------------------------------------------ */
 
 export const GET = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk mengakses data ini", null, 401);
-  }
+  const ctx = await requireUser(req);
+  const url = new URL(req.url);
+  const period = url.searchParams.get("period") || wibPeriodKey();
+  const requestedEmployeeId = url.searchParams.get("employeeId");
+  const { page, limit, skip } = pagination(req, 62, 200);
 
-  await connectToDatabase();
-  
-  // Fetch current month attendances for current employee
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
-  const filter: Record<string, any> = {
-    date: { $gte: startOfMonth, $lte: endOfMonth }
+  const filter: Record<string, unknown> = {
+    date: { $gte: wibStartOfMonth(period), $lte: wibEndOfMonth(period) },
   };
 
-  if (session.user.role === "SUPERADMIN" || session.user.role === "HRD" || session.user.role === "AUDIT") {
-    // If admin is requesting, they might want all or filtered by employeeId query
-    const url = new URL(req.url);
-    const qEmpId = url.searchParams.get("employeeId");
-    if (qEmpId) {
-      filter.employeeId = qEmpId;
+  if (requestedEmployeeId && requestedEmployeeId !== ctx.user.employeeId) {
+    // Reading somebody else's attendance is a privileged action, checked
+    // against the database rather than a hardcoded role list.
+    const perm = await checkPermission(ctx.user.id, "attendance", "read");
+    if (!perm.allowed || perm.scope === "self") {
+      throw Forbidden("Anda tidak memiliki izin melihat presensi karyawan lain.");
     }
+    Object.assign(filter, scopeFilter({ ...ctx, permission: perm }), {
+      employeeId: requestedEmployeeId,
+    });
+  } else if (!requestedEmployeeId && url.searchParams.get("scope") === "all") {
+    const perm = await checkPermission(ctx.user.id, "attendance", "read");
+    if (!perm.allowed || perm.scope === "self") {
+      throw Forbidden("Anda tidak memiliki izin melihat presensi seluruh karyawan.");
+    }
+    Object.assign(filter, scopeFilter({ ...ctx, permission: perm }));
   } else {
-    // Regular employees can only view their own logs
-    if (!session.user.employeeId) {
-      return apiSuccess([], "Belum ada riwayat absensi");
+    if (!ctx.user.employeeId) {
+      return apiSuccess({ logs: [], settings: await attendanceSettings(), total: 0 });
     }
-    filter.employeeId = session.user.employeeId;
+    filter.employeeId = ctx.user.employeeId;
   }
 
-  const logs = await Attendance.find(filter)
-    .populate({
-      path: "employeeId",
-      populate: { path: "branchId" }
-    })
-    .sort({ date: -1 });
+  const [logs, total] = await Promise.all([
+    Attendance.find(filter)
+      .populate({ path: "employeeId", select: "name employeeId branchId divisionId", populate: { path: "branchId", select: "name" } })
+      .sort({ date: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    Attendance.countDocuments(filter),
+  ]);
 
-  const settingsKeys = [
-    "require_selfie_clock_in",
-    "require_selfie_break_out",
-    "require_selfie_break_in",
-    "require_selfie_clock_out",
-    "enable_break_attendance"
-  ];
-  const settingsList = await Setting.find({ key: { $in: settingsKeys } });
-  const settingsMap = settingsList.reduce((acc, curr) => {
-    acc[curr.key] = curr.value;
-    return acc;
-  }, {} as Record<string, any>);
+  // Selfies must not be handed out as raw paths — mint a short-lived signed URL
+  // per photo instead, so a leaked response body expires on its own.
+  const withSignedPhotos = await Promise.all(
+    logs.map(async (log) => ({
+      ...log,
+      photoUrl: await Promise.all(
+        (log.photoUrl ?? []).map((key: string) => storageProvider.getSignedUrl(key, 900))
+      ),
+    }))
+  );
 
-  const finalSettings = {
-    require_selfie_clock_in: settingsMap.require_selfie_clock_in !== undefined ? (settingsMap.require_selfie_clock_in === true || settingsMap.require_selfie_clock_in === "true") : true,
-    require_selfie_break_out: settingsMap.require_selfie_break_out !== undefined ? (settingsMap.require_selfie_break_out === true || settingsMap.require_selfie_break_out === "true") : false,
-    require_selfie_break_in: settingsMap.require_selfie_break_in !== undefined ? (settingsMap.require_selfie_break_in === true || settingsMap.require_selfie_break_in === "true") : false,
-    require_selfie_clock_out: settingsMap.require_selfie_clock_out !== undefined ? (settingsMap.require_selfie_clock_out === true || settingsMap.require_selfie_clock_out === "true") : true,
-    enable_break_attendance: settingsMap.enable_break_attendance !== undefined ? (settingsMap.enable_break_attendance === true || settingsMap.enable_break_attendance === "true") : true,
+  return apiSuccess(
+    { logs: withSignedPhotos, settings: await attendanceSettings(), period },
+    "Berhasil memuat riwayat presensi",
+    { page, limit, total }
+  );
+});
+
+async function attendanceSettings() {
+  const s = await getSettings();
+  return {
+    require_selfie_clock_in: Boolean(s.require_selfie_clock_in),
+    require_selfie_break_out: Boolean(s.require_selfie_break_out),
+    require_selfie_break_in: Boolean(s.require_selfie_break_in),
+    require_selfie_clock_out: Boolean(s.require_selfie_clock_out),
+    enable_break_attendance: Boolean(s.enable_break_attendance),
+    allow_location_override: Boolean(s.allow_location_override),
+    location_override_min_note: Number(s.location_override_min_note),
   };
+}
 
-  return apiSuccess({ logs, settings: finalSettings }, "Berhasil memuat histori absensi");
+/* ------------------------------------------------------------------ */
+/* POST — record one attendance tap                                     */
+/* ------------------------------------------------------------------ */
+
+const attendanceSchema = z.object({
+  action: z.enum(ACTIONS),
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  accuracy: z.number().nonnegative().optional(),
+  photo: z.string().optional(),
+  isManualFallback: z.boolean().optional(),
+  isLocationOverride: z.boolean().optional(),
+  note: z.string().max(500).optional(),
 });
 
 export const POST = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user || !session.user.employeeId) {
-    return apiError("UNAUTHORIZED", "Hanya akun karyawan yang dapat melakukan absensi", null, 401);
+  const ctx = await requireEmployee(req);
+  enforceRateLimit("attendance", ctx.employeeId, RATE_RULES.write);
+
+  const body = await parseBody(req, attendanceSchema);
+  const settings = await getSettings();
+  const action = body.action;
+
+  const now = new Date();
+  const dayKey = wibDateKey(now);
+  const dayStart = wibStartOfDay(dayKey);
+
+  /* --- 1. Selfie requirement -------------------------------------- */
+  const selfieRequired = Boolean(settings[`require_selfie_${action}`]);
+  if (selfieRequired && !body.photo) {
+    throw BadRequest(
+      `Foto selfie wajib disertakan untuk ${ACTION_LABEL[action]}. Izinkan akses kamera lalu ambil foto terlebih dahulu.`
+    );
   }
 
-  const body = await req.json();
-  const { action, lat, lng, photo, isManualFallback, isLocationOverride, note } = body;
-
-  if (!action || !["clock_in", "break_out", "break_in", "clock_out"].includes(action)) {
-    return apiError("BAD_REQUEST", "Aksi absensi tidak valid");
+  /* --- 2. Break steps only exist when breaks are enabled ----------- */
+  if ((action === "break_out" || action === "break_in") && !settings.enable_break_attendance) {
+    throw BadRequest("Absen istirahat sedang dinonaktifkan oleh HRD.");
   }
 
-  if (lat === undefined || lng === undefined) {
-    return apiError("BAD_REQUEST", "Koordinat GPS wajib disediakan");
+  /* --- 3. Employee + branch --------------------------------------- */
+  const employee = await Employee.findById(ctx.employeeId).populate("branchId");
+  if (!employee) throw NotFound("Data karyawan tidak ditemukan.");
+  if (employee.status !== "active" && employee.status !== "onboarding") {
+    throw Forbidden("Status kepegawaian Anda tidak aktif, sehingga presensi tidak dapat dicatat.");
   }
 
-  await connectToDatabase();
+  const assignedBranch = employee.branchId as unknown as {
+    _id: unknown;
+    name: string;
+    lat: number;
+    lng: number;
+    radiusMeter: number;
+    workHours?: { start?: string; end?: string };
+  } | null;
 
-  // 1. Fetch require_selfie settings dynamically
-  const settingKey = `require_selfie_${action}`;
-  const selfieSetting = await Setting.findOne({ key: settingKey });
-  const isSelfieRequired = selfieSetting ? (selfieSetting.value === true || selfieSetting.value === "true") : (action === "clock_in" || action === "clock_out");
-
-  if (isSelfieRequired && !photo) {
-    return apiError("BAD_REQUEST", "Foto verifikasi wajah selfie wajib disediakan untuk tindakan ini");
-  }
-
-  // 2. Fetch Employee Profile details
-  const employeeId = session.user.employeeId;
-  const employee = await Employee.findById(employeeId).populate("branchId");
-  if (!employee) {
-    return apiError("NOT_FOUND", "Data karyawan tidak ditemukan");
-  }
-
-  const assignedBranch = employee.branchId as any;
   if (!assignedBranch) {
-    return apiError("BAD_REQUEST", "Cabang kantor penempatan karyawan belum diset oleh HRD");
+    throw BadRequest(
+      "Cabang penempatan Anda belum diatur oleh HRD, sehingga radius presensi tidak dapat diperiksa. Hubungi HRD."
+    );
   }
 
-  // 3. Validate Geolocation Radius Check
+  /* --- 4. Existing record + step ordering -------------------------- */
+  // Ordering is enforced server-side: hiding a button in the UI is not a rule.
+  const existing = await Attendance.findOne({
+    employeeId: ctx.employeeId,
+    date: { $gte: dayStart, $lte: wibEndOfDay(dayKey) },
+  });
+
+  assertSequence(action, existing, Boolean(settings.enable_break_attendance));
+
+  /* --- 5. Geofence ------------------------------------------------- */
   let activeBranch = assignedBranch;
   let isCrossBranch = false;
-
-  // Calculate distance to assigned branch
-  let distance = calculateDistanceMeters(lat, lng, assignedBranch.lat, assignedBranch.lng);
-  let isWithinRadius = distance <= assignedBranch.radiusMeter;
+  let distance = calculateDistanceMeters(
+    body.lat,
+    body.lng,
+    assignedBranch.lat,
+    assignedBranch.lng
+  );
+  const defaultRadius = Number(settings.default_geo_radius);
+  let isWithinRadius = distance <= (assignedBranch.radiusMeter || defaultRadius);
 
   if (!isWithinRadius) {
-    // Check if within radius of other office branches (cross-branch check)
-    const branches = await Branch.find({ _id: { $ne: assignedBranch._id } });
-    for (const br of branches) {
-      const d = calculateDistanceMeters(lat, lng, br.lat, br.lng);
-      if (d <= br.radiusMeter) {
-        activeBranch = br;
+    const others = await Branch.find({ _id: { $ne: assignedBranch._id } }).lean<
+      Array<{ _id: unknown; name: string; lat: number; lng: number; radiusMeter: number }>
+    >();
+    for (const br of others) {
+      const d = calculateDistanceMeters(body.lat, body.lng, br.lat, br.lng);
+      if (d <= (br.radiusMeter || defaultRadius)) {
+        activeBranch = br as typeof assignedBranch;
         distance = d;
         isWithinRadius = true;
         isCrossBranch = true;
@@ -137,152 +221,242 @@ export const POST = wrapRouteHandler(async (req) => {
     }
   }
 
-  // Handle Geofence Rejection
-  if (!isWithinRadius && !isLocationOverride) {
-    return apiError(
-      "GEOFENCE_REJECTED",
-      `Absen ditolak. Anda berada di luar radius kantor (${Math.round(distance)} meter dari ${assignedBranch.name}).`
-    );
+  // An approved WFH / dinas-luar leave covering today lifts the radius check —
+  // this is the exemption the spec describes, and it is checked here rather
+  // than trusted from the client.
+  let remoteApproved = false;
+  if (!isWithinRadius) {
+    const approvedRemote = await LeaveRequest.findOne({
+      employeeId: ctx.employeeId,
+      status: "approved",
+      startDate: { $lte: wibEndOfDay(dayKey) },
+      endDate: { $gte: dayStart },
+    })
+      .populate("leaveTypeId", "name allowsRemoteAttendance")
+      .lean<{ leaveTypeId?: { name?: string; allowsRemoteAttendance?: boolean } } | null>();
+
+    const typeName = approvedRemote?.leaveTypeId?.name?.toLowerCase() ?? "";
+    remoteApproved =
+      approvedRemote?.leaveTypeId?.allowsRemoteAttendance === true ||
+      /wfh|dinas luar|work from home|remote/.test(typeName);
   }
 
-  // 4. Process Photo Upload to Storage Adapter if provided
-  let photoUrl = "";
-  if (photo) {
-    const base64Data = photo.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(base64Data, "base64");
-    
-    const todayStr = new Date().toISOString().split("T")[0];
-    const relativePath = `attendances/${employeeId}/${todayStr}-${action}.jpg`;
-    photoUrl = await storageProvider.upload(buffer, relativePath, "image/jpeg");
-  }
+  const usingOverride = Boolean(body.isLocationOverride) && !isWithinRadius && !remoteApproved;
 
-  // 4. Fetch daily WorkSchedule assignment
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date();
-  endOfDay.setHours(23, 59, 59, 999);
-
-  const scheduleAssign = await EmployeeSchedule.findOne({
-    employeeId,
-    date: { $gte: startOfDay, $lte: endOfDay }
-  }).populate("scheduleId");
-
-  let clockInScheduleTime = assignedBranch.workHours.start; // fallback to branch default
-  let gracePeriod = 0;
-
-  if (scheduleAssign && scheduleAssign.scheduleId) {
-    const s = scheduleAssign.scheduleId as any;
-    clockInScheduleTime = s.clockIn;
-    gracePeriod = s.gracePeriodMinutes || 0;
-  } else {
-    // Query global grace period setting
-    const graceSetting = await Setting.findOne({ key: "grace_period_minutes" });
-    if (graceSetting) {
-      gracePeriod = graceSetting.value || 0;
+  if (usingOverride) {
+    if (!settings.allow_location_override) {
+      throw Forbidden(
+        "Menu \"Kendala Lokasi\" sedang dinonaktifkan oleh HRD. Silakan absen dari dalam area kantor."
+      );
+    }
+    const minNote = Number(settings.location_override_min_note);
+    if (!body.note || body.note.trim().length < minNote) {
+      throw BadRequest(
+        `Alasan kendala lokasi wajib diisi minimal ${minNote} karakter agar HRD dapat meninjau pengajuan Anda.`
+      );
     }
   }
 
-  const nowTime = new Date();
+  if (!isWithinRadius && !remoteApproved && !usingOverride) {
+    throw Object.assign(
+      BadRequest(
+        `Presensi ditolak: Anda berada ${Math.round(distance)} meter dari ${assignedBranch.name}, ` +
+          `di luar radius ${assignedBranch.radiusMeter || defaultRadius} meter. ` +
+          `Jika GPS perangkat bermasalah padahal Anda berada di kantor, gunakan menu "Kendala Lokasi".`
+      ),
+      { code: "GEOFENCE_REJECTED" }
+    );
+  }
 
-  // 5. Determine Lateness
+  /* --- 6. Photo ----------------------------------------------------- */
+  let photoKey = "";
+  if (body.photo) {
+    const { buffer, ext } = decodeDataUrl(body.photo, ["image/jpeg", "image/png", "image/webp"]);
+    // Timestamped so a retap never silently overwrites the earlier evidence.
+    photoKey = await storageProvider.upload(
+      buffer,
+      `attendances/${ctx.employeeId}/${dayKey}-${action}-${now.getTime()}${ext}`,
+      "image/jpeg"
+    );
+  }
+
+  /* --- 7. Lateness -------------------------------------------------- */
+  const schedule = await resolveSchedule(ctx.employeeId, dayKey, assignedBranch);
   let isLate = false;
   let lateMinutes = 0;
 
   if (action === "clock_in") {
-    const [schedHour, schedMin] = clockInScheduleTime.split(":").map(Number);
-    const schedDate = new Date();
-    schedDate.setHours(schedHour, schedMin, 0, 0);
-
-    // Apply grace period
-    const schedWithGrace = new Date(schedDate.getTime() + gracePeriod * 60 * 1000);
-    
-    if (nowTime.getTime() > schedWithGrace.getTime()) {
+    const scheduledAt = wibTimeOnDay(dayKey, schedule.clockIn);
+    const deadline = new Date(scheduledAt.getTime() + schedule.gracePeriodMinutes * 60_000);
+    if (now.getTime() > deadline.getTime()) {
       isLate = true;
-      lateMinutes = Math.round((nowTime.getTime() - schedDate.getTime()) / (60 * 1000));
+      // Counted from the scheduled time, not from the end of the grace period:
+      // grace forgives being marked late, it does not erase the minutes.
+      lateMinutes = Math.round((now.getTime() - scheduledAt.getTime()) / 60_000);
     }
   }
 
-  // 6. Save/Update Attendance record
-  let attendanceRecord = await Attendance.findOne({
-    employeeId,
-    date: { $gte: startOfDay, $lte: endOfDay }
-  });
+  /* --- 8. Early clock-out flag -------------------------------------- */
+  let isEarlyLeave = false;
+  let earlyLeaveMinutes = 0;
+  if (action === "clock_out") {
+    const scheduledOut = wibTimeOnDay(dayKey, schedule.clockOut);
+    if (now.getTime() < scheduledOut.getTime()) {
+      isEarlyLeave = true;
+      earlyLeaveMinutes = Math.round((scheduledOut.getTime() - now.getTime()) / 60_000);
+    }
+  }
 
-  if (attendanceRecord) {
-    // Update existing day entry
-    if (action === "clock_in") {
-      attendanceRecord.clockIn = nowTime;
-      attendanceRecord.isLate = isLate;
-      attendanceRecord.lateMinutes = lateMinutes;
-    } else if (action === "break_out") {
-      attendanceRecord.breakOut = nowTime;
-    } else if (action === "break_in") {
-      attendanceRecord.breakIn = nowTime;
-    } else if (action === "clock_out") {
-      attendanceRecord.clockOut = nowTime;
-    }
-    
-    if (photoUrl && !attendanceRecord.photoUrl.includes(photoUrl)) {
-      attendanceRecord.photoUrl.push(photoUrl);
-    }
-    
-    attendanceRecord.gpsLat = lat;
-    attendanceRecord.gpsLng = lng;
-    attendanceRecord.isManualFallback = isManualFallback || attendanceRecord.isManualFallback;
-    attendanceRecord.isCrossBranch = isCrossBranch || attendanceRecord.isCrossBranch;
-    attendanceRecord.isLocationOverride = isLocationOverride || attendanceRecord.isLocationOverride;
-    if (note) attendanceRecord.note = note;
-    
-    await attendanceRecord.save();
+  /* --- 9. Persist ---------------------------------------------------- */
+  const holidays = await holidayMap(dayKey, dayKey);
+  const record =
+    existing ??
+    new Attendance({
+      employeeId: ctx.employeeId,
+      date: dayStart,
+      photoUrl: [],
+      gpsLat: body.lat,
+      gpsLng: body.lng,
+    });
+
+  if (action === "clock_in") {
+    record.clockIn = now;
+    record.isLate = isLate;
+    record.lateMinutes = lateMinutes;
+    record.scheduleClockIn = schedule.clockIn;
+    record.scheduleClockOut = schedule.clockOut;
+  } else if (action === "break_out") {
+    record.breakOut = now;
+  } else if (action === "break_in") {
+    record.breakIn = now;
   } else {
-    // Create new day entry
-    attendanceRecord = await Attendance.create({
-      employeeId,
-      date: startOfDay,
-      clockIn: action === "clock_in" ? nowTime : undefined,
-      breakOut: action === "break_out" ? nowTime : undefined,
-      breakIn: action === "break_in" ? nowTime : undefined,
-      clockOut: action === "clock_out" ? nowTime : undefined,
-      photoUrl: photoUrl ? [photoUrl] : [],
-      gpsLat: lat,
-      gpsLng: lng,
+    record.clockOut = now;
+    record.isEarlyLeave = isEarlyLeave;
+    record.earlyLeaveMinutes = earlyLeaveMinutes;
+  }
+
+  if (photoKey) record.photoUrl.push(photoKey);
+  record.gpsLat = body.lat;
+  record.gpsLng = body.lng;
+  record.gpsAccuracy = body.accuracy ?? record.gpsAccuracy;
+  record.branchId = (activeBranch as { _id: unknown })._id;
+  record.distanceMeter = Math.round(distance);
+  record.isManualFallback = Boolean(body.isManualFallback) || record.isManualFallback;
+  record.isCrossBranch = isCrossBranch || record.isCrossBranch;
+  record.isLocationOverride = usingOverride || record.isLocationOverride;
+  record.isRemoteApproved = remoteApproved || record.isRemoteApproved;
+  record.isHoliday = holidays.has(dayKey);
+  if (body.note) record.note = body.note.trim();
+  record.needsReview =
+    record.isLocationOverride || record.isCrossBranch || record.isManualFallback;
+
+  await record.save();
+
+  void logActivity({
+    userId: ctx.user.id,
+    action: action.toUpperCase(),
+    module: "attendance",
+    after: {
+      date: dayKey,
+      action,
+      branch: activeBranch.name,
+      distanceMeter: Math.round(distance),
       isLate,
       lateMinutes,
-      isManualFallback: !!isManualFallback,
-      isCrossBranch: !!isCrossBranch,
-      isLocationOverride: !!isLocationOverride,
-      note: note || "",
-    });
-  }
-
-  // 7. Log to AuditLog
-  const auditActionMap: Record<string, string> = {
-    clock_in: "CLOCK_IN",
-    break_out: "BREAK_OUT",
-    break_in: "BREAK_IN",
-    clock_out: "CLOCK_OUT"
-  };
-
-  await logActivity({
-    userId: session.user.id,
-    action: auditActionMap[action] || "ATTENDANCE_RECORD",
-    module: "attendance",
-    before: null,
-    after: attendanceRecord.toObject(),
-    ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-    userAgent: req.headers.get("user-agent") || "",
+      isLocationOverride: usingOverride,
+      isCrossBranch,
+    },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
   });
 
-  let msg = "Berhasil mencatat absensi";
-  if (action === "clock_in") {
-    msg = `Berhasil Absen Masuk${isLate ? ` (Terlambat ${lateMinutes} menit)` : ""}`;
-  } else if (action === "break_out") {
-    msg = "Berhasil Absen Mulai Istirahat. Selamat beristirahat!";
-  } else if (action === "break_in") {
-    msg = "Berhasil Absen Selesai Istirahat. Selamat kembali bekerja!";
-  } else if (action === "clock_out") {
-    msg = "Berhasil Absen Pulang. Hati-hati di jalan!";
+  /* --- 10. Message -------------------------------------------------- */
+  let message: string;
+  switch (action) {
+    case "clock_in":
+      message = isLate
+        ? `Absen masuk tercatat pukul ${fmt(now)} — terlambat ${lateMinutes} menit dari jadwal ${schedule.clockIn}.`
+        : `Absen masuk tercatat pukul ${fmt(now)}. Selamat bekerja!`;
+      break;
+    case "break_out":
+      message = `Istirahat dimulai pukul ${fmt(now)}. Selamat beristirahat!`;
+      break;
+    case "break_in":
+      message = `Kembali bekerja pukul ${fmt(now)}. Semangat!`;
+      break;
+    default:
+      message = isEarlyLeave
+        ? `Absen pulang tercatat pukul ${fmt(now)} — ${earlyLeaveMinutes} menit lebih awal dari jadwal ${schedule.clockOut}.`
+        : `Absen pulang tercatat pukul ${fmt(now)}. Hati-hati di jalan!`;
   }
 
-  return apiSuccess(attendanceRecord, msg);
+  if (isCrossBranch) message += ` Tercatat di ${activeBranch.name} (lintas cabang) dan akan ditinjau HRD.`;
+  if (usingOverride) message += " Ditandai sebagai kendala lokasi dan menunggu peninjauan HRD.";
+
+  return apiSuccess({ attendance: record.toObject(), schedule }, message);
 });
+
+function fmt(d: Date) {
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+}
+
+/**
+ * Rejects taps that do not make sense for the day so far — clocking out before
+ * clocking in, clocking in twice, or ending a break that never started. Without
+ * this the endpoint silently overwrote earlier timestamps.
+ */
+function assertSequence(
+  action: Action,
+  existing: {
+    clockIn?: Date | null;
+    breakOut?: Date | null;
+    breakIn?: Date | null;
+    clockOut?: Date | null;
+  } | null,
+  breaksEnabled: boolean
+) {
+  const clockIn = existing?.clockIn;
+  const breakOut = existing?.breakOut;
+  const breakIn = existing?.breakIn;
+  const clockOut = existing?.clockOut;
+
+  if (clockOut && action !== "clock_out") {
+    throw Conflict("Anda sudah absen pulang hari ini. Gunakan Koreksi Absen bila ada yang keliru.");
+  }
+
+  switch (action) {
+    case "clock_in":
+      if (clockIn) {
+        throw Conflict(
+          `Anda sudah absen masuk hari ini pukul ${fmt(new Date(clockIn))}. Ajukan Koreksi Absen bila jamnya keliru.`
+        );
+      }
+      break;
+
+    case "break_out":
+      if (!clockIn) throw Conflict("Absen masuk dulu sebelum memulai istirahat.");
+      if (breakOut) throw Conflict("Istirahat hari ini sudah tercatat dimulai.");
+      break;
+
+    case "break_in":
+      if (!clockIn) throw Conflict("Absen masuk dulu sebelum mencatat selesai istirahat.");
+      if (!breakOut) throw Conflict("Catat mulai istirahat terlebih dahulu.");
+      if (breakIn) throw Conflict("Selesai istirahat hari ini sudah tercatat.");
+      break;
+
+    case "clock_out":
+      if (!clockIn) throw Conflict("Anda belum absen masuk hari ini, sehingga absen pulang tidak dapat dicatat.");
+      if (clockOut) {
+        throw Conflict(`Anda sudah absen pulang hari ini pukul ${fmt(new Date(clockOut))}.`);
+      }
+      if (breaksEnabled && breakOut && !breakIn) {
+        throw Conflict("Catat selesai istirahat terlebih dahulu sebelum absen pulang.");
+      }
+      break;
+  }
+}

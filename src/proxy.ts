@@ -1,50 +1,85 @@
 import NextAuth from "next-auth";
+import { NextResponse } from "next/server";
 import { authConfig } from "./auth.config";
 
 const { auth } = NextAuth(authConfig);
 
+/** Roles allowed anywhere under /admin. */
+const ADMIN_ROLES = new Set(["SUPERADMIN", "DIREKSI", "HRD", "AUDIT", "GA", "SPV"]);
+
+/**
+ * Admin sections that only a subset of admin roles may open. Route handlers
+ * re-check permissions from the database; this map only avoids showing a page
+ * that would be empty or immediately rejected.
+ */
+const SECTION_ROLES: Array<{ prefix: string; roles: string[] }> = [
+  { prefix: "/admin/settings", roles: ["SUPERADMIN", "HRD"] },
+  { prefix: "/admin/audit", roles: ["SUPERADMIN", "AUDIT", "DIREKSI"] },
+  { prefix: "/admin/payroll", roles: ["SUPERADMIN", "HRD", "AUDIT", "DIREKSI"] },
+  { prefix: "/admin/employees", roles: ["SUPERADMIN", "HRD", "AUDIT", "DIREKSI"] },
+  { prefix: "/admin/recruitment", roles: ["SUPERADMIN", "HRD", "DIREKSI"] },
+  { prefix: "/admin/vacancies", roles: ["SUPERADMIN", "HRD", "DIREKSI"] },
+  { prefix: "/admin/branches", roles: ["SUPERADMIN", "HRD", "GA"] },
+  { prefix: "/admin/departments", roles: ["SUPERADMIN", "HRD"] },
+];
+
+/** Where a given role lands after signing in. */
+function landingFor(role: string | undefined): string {
+  if (role && ADMIN_ROLES.has(role)) return "/admin";
+  return "/portal/attendance";
+}
+
 export const proxy = auth((req) => {
-  const isLoggedIn = !!req.auth;
   const { nextUrl } = req;
+  const path = nextUrl.pathname;
+  const isLoggedIn = Boolean(req.auth?.user);
+  const role = req.auth?.user?.role;
+  const mustChangePassword = Boolean(req.auth?.user?.mustChangePassword);
 
-  const isOnAdmin = nextUrl.pathname.startsWith("/admin");
-  const isOnPortal = nextUrl.pathname.startsWith("/portal");
-  const isOnLogin = nextUrl.pathname.startsWith("/auth/login");
-  const isOnAdminLogin = nextUrl.pathname.startsWith("/auth/admin");
+  const isOnAdmin = path.startsWith("/admin");
+  const isOnPortal = path.startsWith("/portal");
+  const isOnAuthPage =
+    path.startsWith("/auth/login") ||
+    path.startsWith("/auth/admin") ||
+    path.startsWith("/auth/forgot-password");
 
-  if (isOnAdmin) {
-    if (!isLoggedIn) {
-      const loginUrl = new URL("/auth/login", nextUrl);
-      loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
-      return Response.redirect(loginUrl);
-    }
+  // --- Protected areas require a session --------------------------------
+  if ((isOnAdmin || isOnPortal) && !isLoggedIn) {
+    const loginUrl = new URL(isOnAdmin ? "/auth/admin" : "/auth/login", nextUrl);
+    loginUrl.searchParams.set("callbackUrl", path + nextUrl.search);
+    return NextResponse.redirect(loginUrl);
+  }
 
-    const userRole = req.auth?.user?.role;
-    if (userRole === "STAFF") {
-      // Staff cannot access admin area, redirect to employee portal
-      return Response.redirect(new URL("/portal/attendance", nextUrl));
+  // --- First-login password change is mandatory -------------------------
+  // Everything except the profile page (where the form lives) is blocked so a
+  // shared default password cannot be left in place.
+  if (isLoggedIn && mustChangePassword && (isOnAdmin || isOnPortal)) {
+    if (!path.startsWith("/portal/profile")) {
+      const url = new URL("/portal/profile", nextUrl);
+      url.searchParams.set("force_password", "1");
+      return NextResponse.redirect(url);
     }
   }
 
-  if (isOnPortal) {
-    if (!isLoggedIn) {
-      const loginUrl = new URL("/auth/login", nextUrl);
-      loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
-      return Response.redirect(loginUrl);
+  // --- Admin area role gate ---------------------------------------------
+  if (isOnAdmin && isLoggedIn) {
+    if (!role || !ADMIN_ROLES.has(role)) {
+      return NextResponse.redirect(new URL("/portal/attendance", nextUrl));
+    }
+    const section = SECTION_ROLES.find((s) => path.startsWith(s.prefix));
+    if (section && !section.roles.includes(role)) {
+      const url = new URL("/admin", nextUrl);
+      url.searchParams.set("denied", section.prefix.replace("/admin/", ""));
+      return NextResponse.redirect(url);
     }
   }
 
-  // Redirect logged-in users away from login pages to their respective dashboards
-  if (isLoggedIn && (isOnLogin || isOnAdminLogin)) {
-    const userRole = req.auth?.user?.role;
-    if (userRole === "STAFF") {
-      return Response.redirect(new URL("/portal/attendance", nextUrl));
-    } else {
-      return Response.redirect(new URL("/admin", nextUrl));
-    }
+  // --- Signed-in users should not sit on a login page --------------------
+  if (isLoggedIn && isOnAuthPage) {
+    return NextResponse.redirect(new URL(landingFor(role), nextUrl));
   }
 
-  return undefined; // Let Next.js handle it
+  return NextResponse.next();
 });
 
 export const config = {
@@ -52,6 +87,7 @@ export const config = {
     "/admin/:path*",
     "/portal/:path*",
     "/auth/login",
-    "/auth/admin"
-  ]
+    "/auth/admin",
+    "/auth/forgot-password",
+  ],
 };

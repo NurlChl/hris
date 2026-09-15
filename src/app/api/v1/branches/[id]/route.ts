@@ -1,43 +1,42 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
-import { checkPermission } from "@/lib/rbac";
+import { wrapRouteHandler, apiSuccess, type RouteContext } from "@/lib/api";
+import { requirePermission, BadRequest, Conflict, NotFound } from "@/lib/guard";
 import { logActivity } from "@/lib/audit/logger";
 import Branch from "@/models/Branch";
-import { connectToDatabase } from "@/lib/db";
+import Employee from "@/models/Employee";
 
-export const DELETE = wrapRouteHandler(async (req, { params }) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk melakukan aksi ini", null, 401);
-  }
+type Ctx = RouteContext<{ id: string }>;
 
-  const perm = await checkPermission(session.user.id, "attendance", "write");
-  if (!perm.allowed) {
-    return apiError("FORBIDDEN", "Anda tidak memiliki izin untuk menghapus cabang", null, 403);
-  }
+export const DELETE = wrapRouteHandler<Ctx>(async (req, ctxParams) => {
+  const ctx = await requirePermission(req, "settings", "delete");
+  const { id } = await ctxParams.params;
+  if (!id) throw BadRequest("ID cabang wajib disediakan.");
 
-  const { id } = await params;
-  if (!id) {
-    return apiError("BAD_REQUEST", "ID cabang wajib disediakan");
-  }
-
-  await connectToDatabase();
   const branch = await Branch.findById(id);
-  if (!branch) {
-    return apiError("NOT_FOUND", "Cabang tidak ditemukan");
+  if (!branch) throw NotFound("Cabang tidak ditemukan.");
+
+  // Deleting a branch that employees are posted to would break their geofence
+  // check on the next clock-in, with an error that gives no hint why.
+  const assigned = await Employee.countDocuments({
+    branchId: id,
+    status: { $in: ["active", "onboarding"] },
+  });
+  if (assigned > 0) {
+    throw Conflict(
+      `Cabang ${branch.name} masih menjadi penempatan ${assigned} karyawan aktif. ` +
+        `Pindahkan karyawan tersebut ke cabang lain sebelum menghapus.`
+    );
   }
 
-  await Branch.findByIdAndDelete(id);
+  await branch.deleteOne();
 
-  await logActivity({
-    userId: session.user.id,
+  void logActivity({
+    userId: ctx.user.id,
     action: "DELETE_BRANCH",
-    module: "attendance",
+    module: "settings",
     before: branch.toObject(),
-    after: null,
-    ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-    userAgent: req.headers.get("user-agent") || "",
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
   });
 
-  return apiSuccess({ id }, "Berhasil menghapus cabang");
+  return apiSuccess({ id }, `Cabang ${branch.name} dihapus.`);
 });

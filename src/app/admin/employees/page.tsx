@@ -1,11 +1,32 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { 
   Users, UserPlus, Trash2, Edit, X, Loader2, AlertCircle, Search, Mail, Phone,
   Building2, Briefcase, MapPin, CreditCard, ShieldCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+/**
+ * A reference the API returns populated on list responses and as a bare id on
+ * others. The form needs the id, the table needs the name, so both forms are
+ * spelled out and read through the helpers below.
+ */
+type Ref = { _id: string; name: string } | string | null | undefined;
+
+/** One entry from the public Indonesian region API. */
+type Region = { id: string; name: string };
+
+/** Id of a reference in either form. */
+function refId(ref: Ref): string {
+  if (!ref) return "";
+  return typeof ref === "string" ? ref : ref._id;
+}
+
+/** Name of a reference, empty when the API returned only an id. */
+function refName(ref: Ref): string {
+  return typeof ref === "object" && ref !== null ? ref.name : "";
+}
 
 interface SearchSelectProps {
   label: string;
@@ -39,29 +60,29 @@ function SearchSelect({ label, value, onChange, options, placeholder = "Pilih...
 
   return (
     <div className="space-y-1 relative w-full" ref={dropdownRef}>
-      <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1 text-[11px]">{label}</label>
+      <label className="font-semibold text-foreground block mb-1 text-[11px]">{label}</label>
       <button
         type="button"
         disabled={disabled}
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 text-left min-h-[34px] disabled:opacity-50 cursor-pointer"
+        className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary text-left min-h-[34px] disabled:opacity-50 cursor-pointer"
       >
         <span className="truncate">{selectedOpt ? selectedOpt.label : placeholder}</span>
-        <span className="text-[9px] text-slate-400">▼</span>
+        <span className="text-[11px] text-subtle">▼</span>
       </button>
 
       {open && (
-        <div className="absolute z-50 w-full mt-1 bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 rounded-lg shadow-xl p-1.5 space-y-1.5 max-h-56 overflow-hidden flex flex-col">
+        <div className="absolute z-50 w-full mt-1 bg-surface border border-line rounded-lg shadow-[var(--shadow-pop)] p-1.5 space-y-1.5 max-h-56 overflow-hidden flex flex-col">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Cari..."
-            className="w-full px-2.5 py-1.5 rounded bg-slate-50 dark:bg-white/3 border border-slate-200 dark:border-white/8 text-xs text-slate-900 dark:text-slate-200 focus:outline-none placeholder:text-slate-400"
+            className="w-full px-2.5 py-1.5 rounded bg-surface-2 border border-line text-xs text-foreground dark:text-foreground focus:outline-none placeholder:text-subtle"
           />
           <div className="space-y-0.5 overflow-y-auto max-h-40">
             {filtered.length === 0 ? (
-              <div className="p-2 text-slate-400 text-center text-[10px]">Tidak ditemukan</div>
+              <div className="p-2 text-subtle text-center text-[11px]">Tidak ditemukan</div>
             ) : (
               filtered.map(opt => (
                 <button
@@ -74,8 +95,8 @@ function SearchSelect({ label, value, onChange, options, placeholder = "Pilih...
                   }}
                   className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-all cursor-pointer ${
                     opt.value === value 
-                      ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold" 
-                      : "hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-slate-300"
+                      ? "bg-primary text-primary-foreground font-semibold" 
+                      : "hover:bg-surface-2 text-foreground"
                   }`}
                 >
                   {opt.label}
@@ -114,15 +135,35 @@ interface Employee {
   bpjsKesehatan?: string;
   bpjsKetenagakerjaan?: string;
   bankAccount: { bankName: string; accountNumber: string; accountHolder: string; };
-  branchId: any;
-  divisionId: any;
-  positionId: any;
-  supervisorId?: any;
-  storeManagerId?: any;
-  areaManagerId?: any;
+  branchId: Ref;
+  divisionId: Ref;
+  positionId: Ref;
+  supervisorId?: Ref;
+  storeManagerId?: Ref;
+  areaManagerId?: Ref;
   joinDate: string | Date;
   employmentStatus: "probation" | "pkwt" | "pkwtt" | "outsource";
   status: "active" | "onboarding" | "suspended" | "resigned";
+}
+
+/**
+ * Region lists come through our own API rather than straight from the upstream
+ * service, so the browser never talks to a third-party host and the CSP stays
+ * at connect-src 'self'. Failures resolve to an empty list: a missing dropdown
+ * is better than a form that refuses to open.
+ */
+async function loadRegions(
+  level: "provinces" | "regencies" | "districts",
+  parent?: string
+): Promise<Region[]> {
+  const qs = parent ? `?level=${level}&parent=${encodeURIComponent(parent)}` : `?level=${level}`;
+  try {
+    const res = await fetch(`/api/v1/regions${qs}`);
+    const data = await res.json();
+    return data.success ? (data.data as Region[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 export default function EmployeesPage() {
@@ -193,10 +234,7 @@ export default function EmployeesPage() {
 
   // Load provinces on mount
   useEffect(() => {
-    fetch("https://www.emsifa.com/api-wilayah-indonesia/api/provinces.json")
-      .then(res => res.json())
-      .then(data => setProvinces(data || []))
-      .catch(err => console.error("Error load provinces:", err));
+    void loadRegions("provinces").then(setProvinces);
   }, []);
 
   // Fetch cities for KTP
@@ -205,10 +243,7 @@ export default function EmployeesPage() {
       setKtpCities([]);
       return;
     }
-    fetch(`https://www.emsifa.com/api-wilayah-indonesia/api/regencies/${selectedKtpProvinceId}.json`)
-      .then(res => res.json())
-      .then(data => setKtpCities(data || []))
-      .catch(err => console.error("Error load KTP cities:", err));
+    void loadRegions("regencies", selectedKtpProvinceId).then(setKtpCities);
   }, [selectedKtpProvinceId]);
 
   // Fetch districts for KTP
@@ -217,10 +252,7 @@ export default function EmployeesPage() {
       setKtpDistricts([]);
       return;
     }
-    fetch(`https://www.emsifa.com/api-wilayah-indonesia/api/districts/${selectedKtpCityId}.json`)
-      .then(res => res.json())
-      .then(data => setKtpDistricts(data || []))
-      .catch(err => console.error("Error load KTP districts:", err));
+    void loadRegions("districts", selectedKtpCityId).then(setKtpDistricts);
   }, [selectedKtpCityId]);
 
   // Fetch cities for Domicile
@@ -229,10 +261,7 @@ export default function EmployeesPage() {
       setDomicileCities([]);
       return;
     }
-    fetch(`https://www.emsifa.com/api-wilayah-indonesia/api/regencies/${selectedDomicileProvinceId}.json`)
-      .then(res => res.json())
-      .then(data => setDomicileCities(data || []))
-      .catch(err => console.error("Error load domicile cities:", err));
+    void loadRegions("regencies", selectedDomicileProvinceId).then(setDomicileCities);
   }, [selectedDomicileProvinceId]);
 
   // Fetch districts for Domicile
@@ -241,10 +270,7 @@ export default function EmployeesPage() {
       setDomicileDistricts([]);
       return;
     }
-    fetch(`https://www.emsifa.com/api-wilayah-indonesia/api/districts/${selectedDomicileCityId}.json`)
-      .then(res => res.json())
-      .then(data => setDomicileDistricts(data || []))
-      .catch(err => console.error("Error load domicile districts:", err));
+    void loadRegions("districts", selectedDomicileCityId).then(setDomicileDistricts);
   }, [selectedDomicileCityId]);
 
   // Find matching IDs when form is opened with an employee
@@ -253,47 +279,30 @@ export default function EmployeesPage() {
       const ktpProv = provinces.find(p => p.name.toLowerCase() === ktpProvince.toLowerCase());
       if (ktpProv) {
         setSelectedKtpProvinceId(ktpProv.id);
-        fetch(`https://www.emsifa.com/api-wilayah-indonesia/api/regencies/${ktpProv.id}.json`)
-          .then(res => res.json())
-          .then(cities => {
-            setKtpCities(cities || []);
-            const ktpC = cities?.find((c: any) => c.name.toLowerCase() === ktpCity.toLowerCase());
-            if (ktpC) {
-              setSelectedKtpCityId(ktpC.id);
-              fetch(`https://www.emsifa.com/api-wilayah-indonesia/api/districts/${ktpC.id}.json`)
-                .then(res => res.json())
-                .then(districts => setKtpDistricts(districts || []))
-                .catch(e => console.error(e));
-            }
-          });
+        void loadRegions("regencies", ktpProv.id).then((cities) => {
+          setKtpCities(cities);
+          const ktpC = cities.find((c) => c.name.toLowerCase() === ktpCity.toLowerCase());
+          if (!ktpC) return;
+          setSelectedKtpCityId(ktpC.id);
+          void loadRegions("districts", ktpC.id).then(setKtpDistricts);
+        });
       }
 
       const domProv = provinces.find(p => p.name.toLowerCase() === domicileProvince.toLowerCase());
       if (domProv) {
         setSelectedDomicileProvinceId(domProv.id);
-        fetch(`https://www.emsifa.com/api-wilayah-indonesia/api/regencies/${domProv.id}.json`)
-          .then(res => res.json())
-          .then(cities => {
-            setDomicileCities(cities || []);
-            const domC = cities?.find((c: any) => c.name.toLowerCase() === domicileCity.toLowerCase());
-            if (domC) {
-              setSelectedDomicileCityId(domC.id);
-              fetch(`https://www.emsifa.com/api-wilayah-indonesia/api/districts/${domC.id}.json`)
-                .then(res => res.json())
-                .then(districts => setDomicileDistricts(districts || []))
-                .catch(e => console.error(e));
-            }
-          });
+        void loadRegions("regencies", domProv.id).then((cities) => {
+          setDomicileCities(cities);
+          const domC = cities.find((c) => c.name.toLowerCase() === domicileCity.toLowerCase());
+          if (!domC) return;
+          setSelectedDomicileCityId(domC.id);
+          void loadRegions("districts", domC.id).then(setDomicileDistricts);
+        });
       }
     }
   }, [formOpen, selectedId, provinces]);
 
-  useEffect(() => {
-    fetchMetadata();
-    fetchEmployees();
-  }, []);
-
-  const fetchMetadata = async () => {
+  const fetchMetadata = useCallback(async () => {
     try {
       const [rBranch, rDiv, rPos, rRole] = await Promise.all([
         fetch("/api/v1/branches"),
@@ -310,13 +319,15 @@ export default function EmployeesPage() {
       if (dBranch.success) setBranches(dBranch.data);
       if (dDiv.success) setDivisions(dDiv.data);
       if (dPos.success) setPositions(dPos.data);
-      if (dRole.success) setRoles(dRole.data);
+      // /api/v1/roles now returns { roles, modules, actions, scopes } so the
+      // Settings screen can render the permission matrix from the same call.
+      if (dRole.success) setRoles(dRole.data.roles ?? dRole.data);
     } catch (err) {
       console.error("Gagal memuat meta:", err);
     }
-  };
+  }, []);
 
-  const fetchEmployees = async () => {
+  const fetchEmployees = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/v1/employees");
@@ -329,7 +340,12 @@ export default function EmployeesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void fetchMetadata();
+    void fetchEmployees();
+  }, [fetchMetadata, fetchEmployees]);
 
   const handleOpenForm = (emp?: Employee) => {
     if (emp) {
@@ -359,12 +375,12 @@ export default function EmployeesPage() {
       setBankName(emp.bankAccount.bankName);
       setBankAccountNumber(emp.bankAccount.accountNumber || "");
       setBankAccountHolder(emp.bankAccount.accountHolder);
-      setBranchId(emp.branchId?._id || emp.branchId || "");
-      setDivisionId(emp.divisionId?._id || emp.divisionId || "");
-      setPositionId(emp.positionId?._id || emp.positionId || "");
-      setSupervisorId(emp.supervisorId?._id || emp.supervisorId || "");
-      setStoreManagerId(emp.storeManagerId?._id || emp.storeManagerId || "");
-      setAreaManagerId(emp.areaManagerId?._id || emp.areaManagerId || "");
+      setBranchId(refId(emp.branchId));
+      setDivisionId(refId(emp.divisionId));
+      setPositionId(refId(emp.positionId));
+      setSupervisorId(refId(emp.supervisorId));
+      setStoreManagerId(refId(emp.storeManagerId));
+      setAreaManagerId(refId(emp.areaManagerId));
       setJoinDate(emp.joinDate ? new Date(emp.joinDate).toISOString().split("T")[0] : "");
       setEmploymentStatus(emp.employmentStatus);
       setStatus(emp.status);
@@ -499,14 +515,14 @@ export default function EmployeesPage() {
 
   return (
     <div className="space-y-6 font-sans">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 dark:border-white/4 pb-4 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4 gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Manajemen Karyawan</h1>
-          <p className="text-xs text-slate-500 dark:text-slate-550 dark:text-slate-400 mt-1">Registrasi karyawan, perbarui biodata, penempatan jabatan, dan info rekening bank</p>
+          <h1 className="text-xl font-semibold text-foreground dark:text-foreground">Manajemen Karyawan</h1>
+          <p className="text-xs text-muted mt-1">Registrasi karyawan, perbarui biodata, penempatan jabatan, dan info rekening bank</p>
         </div>
         <button
           onClick={() => handleOpenForm()}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-sm font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 active:scale-[0.98] transition-all w-fit"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-sm font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all w-fit"
         >
           <UserPlus className="w-4 h-4" />
           Tambah Karyawan
@@ -515,31 +531,31 @@ export default function EmployeesPage() {
 
       {/* Toolbar */}
       <div className="flex items-center relative w-full sm:max-w-xs">
-        <Search className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+        <Search className="absolute left-3 top-3 w-4 h-4 text-muted" />
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Cari nama, NIP, email..."
-          className="w-full pl-10 pr-4 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-600"
+          className="w-full pl-10 pr-4 py-2 rounded-lg bg-surface border border-line text-xs text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-muted"
         />
       </div>
 
       {loading ? (
-        <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
-          <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
+        <div className="h-64 flex items-center justify-center text-muted dark:text-muted">
+          <Loader2 className="w-8 h-8 animate-spin text-foreground" />
         </div>
       ) : filteredEmployees.length === 0 ? (
-        <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
+        <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
           <Users className="w-8 h-8 mb-2 opacity-50" />
           <p className="text-sm font-medium">Karyawan tidak ditemukan</p>
           <p className="text-xs mt-1">Silakan sesuaikan filter pencarian atau buat registrasi karyawan baru.</p>
         </div>
       ) : (
-        <div className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl overflow-hidden overflow-x-auto">
+        <div className="bg-surface border border-line/60 dark:border-white/6 rounded-xl overflow-hidden overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse min-w-[900px]">
             <thead>
-              <tr className="border-b border-slate-200 dark:border-white/8 bg-white dark:bg-white/2 text-slate-550 dark:text-slate-400">
+              <tr className="border-b border-line bg-surface text-muted dark:text-muted">
                 <th className="p-4 font-semibold">NIP / Karyawan</th>
                 <th className="p-4 font-semibold">Kontak</th>
                 <th className="p-4 font-semibold">Penempatan</th>
@@ -550,57 +566,57 @@ export default function EmployeesPage() {
             </thead>
             <tbody>
               {filteredEmployees.map((emp) => (
-                <tr key={emp._id} className="border-b border-slate-200 dark:border-white/4 hover:bg-white/1 transition-all">
+                <tr key={emp._id} className="border-b border-line hover:bg-white/1 transition-all">
                   <td className="p-4">
                     <div>
-                      <span className="font-mono text-[10px] text-slate-500 block">{emp.employeeId}</span>
-                      <span className="font-bold text-slate-900 dark:text-slate-200 text-sm">{emp.name}</span>
+                      <span className="font-mono text-xs text-muted block">{emp.employeeId}</span>
+                      <span className="font-semibold text-foreground dark:text-foreground text-sm">{emp.name}</span>
                     </div>
                   </td>
                   <td className="p-4 space-y-1">
-                    <div className="flex items-center gap-1.5 text-slate-550 dark:text-slate-400">
-                      <Mail className="w-3.5 h-3.5 text-slate-600" />
+                    <div className="flex items-center gap-1.5 text-muted dark:text-muted">
+                      <Mail className="w-3.5 h-3.5 text-muted" />
                       <span>{emp.officeEmail}</span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-slate-550 dark:text-slate-400">
-                      <Phone className="w-3.5 h-3.5 text-slate-600" />
+                    <div className="flex items-center gap-1.5 text-muted dark:text-muted">
+                      <Phone className="w-3.5 h-3.5 text-muted" />
                       <span>{emp.phone}</span>
                     </div>
                   </td>
                   <td className="p-4 space-y-1">
-                    <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
-                      <Building2 className="w-3.5 h-3.5 text-slate-600" />
-                      <span>{emp.branchId?.name || "No Branch"}</span>
+                    <div className="flex items-center gap-1.5 text-foreground">
+                      <Building2 className="w-3.5 h-3.5 text-muted" />
+                      <span>{refName(emp.branchId) || "Tanpa cabang"}</span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-slate-550 dark:text-slate-400">
-                      <Briefcase className="w-3.5 h-3.5 text-slate-600" />
-                      <span>{emp.divisionId?.name || "No Div"} - {emp.positionId?.name || "No Pos"}</span>
+                    <div className="flex items-center gap-1.5 text-muted dark:text-muted">
+                      <Briefcase className="w-3.5 h-3.5 text-muted" />
+                      <span>{refName(emp.divisionId) || "Tanpa divisi"} &middot; {refName(emp.positionId) || "Tanpa jabatan"}</span>
                     </div>
                   </td>
                   <td className="p-4">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
                       emp.status === "active"
-                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
+                        ? "bg-success-soft text-success dark:text-success border-success/20"
                         : emp.status === "onboarding"
-                        ? "bg-slate-100 dark:bg-white/5 text-slate-800 dark:text-slate-350 border-slate-200 dark:border-white/8"
-                        : "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20"
+                        ? "bg-surface-2 text-foreground dark:text-muted border-line"
+                        : "bg-danger-soft text-danger dark:text-danger border-danger/20"
                     }`}>
                       {emp.status}
                     </span>
                   </td>
-                  <td className="p-4 text-slate-550 dark:text-slate-400">
+                  <td className="p-4 text-muted dark:text-muted">
                     {new Date(emp.joinDate).toLocaleDateString("id-ID", { year: "numeric", month: "short", day: "numeric" })}
                   </td>
                   <td className="p-4 text-right flex items-center justify-end gap-1 mt-1.5">
                     <button
                       onClick={() => handleOpenForm(emp)}
-                      className="p-1.5 rounded hover:bg-white/4 text-slate-550 dark:text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
+                      className="p-1.5 rounded hover:bg-white/4 text-muted dark:text-muted hover:text-foreground transition-all cursor-pointer"
                     >
                       <Edit className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteEmployee(emp._id!)}
-                      className="p-1.5 rounded hover:bg-red-500/5 text-slate-550 dark:text-slate-400 hover:text-red-400 transition-all cursor-pointer"
+                      className="p-1.5 rounded hover:bg-danger-soft text-muted dark:text-muted hover:text-danger transition-all cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -628,99 +644,99 @@ export default function EmployeesPage() {
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="w-full max-w-2xl h-full bg-white dark:bg-[#0a0c14] border-l border-slate-200/60 dark:border-white/8 shadow-2xl relative z-10 p-6 flex flex-col justify-between overflow-y-auto"
+              className="w-full max-w-2xl h-full bg-surface border-l border-line shadow-[var(--shadow-pop)] relative z-10 p-6 flex flex-col justify-between overflow-y-auto"
             >
               <div className="space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
-                  <h2 className="text-base font-bold text-slate-900 dark:text-slate-200">
+                <div className="flex items-center justify-between border-b border-line pb-4">
+                  <h2 className="text-base font-semibold text-foreground dark:text-foreground">
                     {selectedId ? "Edit Profil Karyawan" : "Registrasi Karyawan Baru"}
                   </h2>
                   <button
                     onClick={handleCloseForm}
-                    className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer"
+                    className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 </div>
 
                 {errorMessage && (
-                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                  <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
                     <span>{errorMessage}</span>
                   </div>
                 )}
 
-                <form id="employee-form" onSubmit={handleSubmit} className="space-y-6 text-xs text-slate-700 dark:text-slate-300">
+                <form id="employee-form" onSubmit={handleSubmit} className="space-y-6 text-xs text-foreground">
                   {/* Bagian 1: Data Diri */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-slate-200 dark:border-white/4">
+                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <Users className="w-4 h-4" /> Data Diri Karyawan
                     </h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Nama Lengkap (Sesuai KTP)</label>
-                        <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. John Doe" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. John Doe" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Nomor NIK KTP (Enkripsi)</label>
-                        <input type="text" required value={nik} onChange={e => setNik(e.target.value)} placeholder="16 digit NIK" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={nik} onChange={e => setNik(e.target.value)} placeholder="16 digit NIK" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Tempat Lahir</label>
-                        <input type="text" required value={birthPlace} onChange={e => setBirthPlace(e.target.value)} placeholder="e.g. Jakarta" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={birthPlace} onChange={e => setBirthPlace(e.target.value)} placeholder="e.g. Jakarta" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Tanggal Lahir</label>
-                        <input type="date" required value={birthDate} onChange={e => setBirthDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="date" required value={birthDate} onChange={e => setBirthDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Gender</label>
-                        <select value={gender} onChange={e => setGender(e.target.value as any)} className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-[#0e1017] border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs">
+                        <select value={gender} onChange={e => setGender(e.target.value as "male" | "female")} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
                           <option value="male">Laki-Laki</option>
                           <option value="female">Perempuan</option>
                         </select>
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Agama</label>
-                        <input type="text" required value={religion} onChange={e => setReligion(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={religion} onChange={e => setReligion(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Pernikahan</label>
-                        <input type="text" required value={maritalStatus} onChange={e => setMaritalStatus(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={maritalStatus} onChange={e => setMaritalStatus(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                     </div>
                   </div>
 
                   {/* Bagian 2: Kontak */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-slate-200 dark:border-white/4">
+                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <Phone className="w-4 h-4" /> Kontak & Akun
                     </h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">No. HP / WhatsApp</label>
-                        <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} placeholder="08xxxxxx" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} placeholder="08xxxxxx" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Email Pribadi</label>
-                        <input type="email" required value={personalEmail} onChange={e => setPersonalEmail(e.target.value)} placeholder="john@gmail.com" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="email" required value={personalEmail} onChange={e => setPersonalEmail(e.target.value)} placeholder="john@gmail.com" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4 mt-3">
                       <div className="space-y-1">
                         <label className="font-semibold">Email Kantor (Email Login)</label>
-                        <input type="email" required value={officeEmail} onChange={e => setOfficeEmail(e.target.value)} placeholder="john@perusahaan.com" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="email" required value={officeEmail} onChange={e => setOfficeEmail(e.target.value)} placeholder="john@perusahaan.com" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold flex items-center justify-between">
                           <span>{selectedId ? "Kata Sandi Baru" : "Kata Sandi Akun"}</span>
-                          <span className="text-[10px] text-slate-450 dark:text-slate-500 font-normal">
+                          <span className="text-xs text-muted dark:text-subtle font-normal">
                             {selectedId ? "(Kosongkan jika tidak diubah)" : "(Kosongkan untuk default)"}
                           </span>
                         </label>
@@ -729,7 +745,7 @@ export default function EmployeesPage() {
                           value={password}
                           onChange={e => setPassword(e.target.value)}
                           placeholder={selectedId ? "Ubah kata sandi..." : "Tentukan kata sandi login..."}
-                          className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs"
+                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs"
                         />
                       </div>
                     </div>
@@ -737,15 +753,15 @@ export default function EmployeesPage() {
 
                   {/* Bagian 3: Alamat */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-slate-200 dark:border-white/4">
+                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <MapPin className="w-4 h-4" /> Alamat Lengkap
                     </h3>
                     <div className="space-y-4">
-                      <div className="p-3 bg-slate-50 dark:bg-white/2 rounded-xl border border-slate-200 dark:border-white/4 space-y-3">
-                        <span className="font-bold text-slate-700 dark:text-slate-300 text-xs uppercase tracking-wider block border-b border-slate-200 dark:border-white/4 pb-1">Alamat Sesuai KTP</span>
+                      <div className="p-3 bg-surface-2 rounded-[var(--radius)] border border-line space-y-3">
+                        <span className="font-semibold text-foreground text-xs uppercase tracking-wider block border-b border-line pb-1">Alamat Sesuai KTP</span>
                         <div className="space-y-1">
-                          <label className="font-semibold block text-[11px] mb-1 text-slate-700 dark:text-slate-350">Jalan / RT / RW</label>
-                          <input type="text" required value={ktpStreet} onChange={e => setKtpStreet(e.target.value)} placeholder="Nama Jalan, No. Rumah, RT/RW" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs" />
+                          <label className="font-semibold block text-[11px] mb-1 text-foreground dark:text-muted">Jalan / RT / RW</label>
+                          <input type="text" required value={ktpStreet} onChange={e => setKtpStreet(e.target.value)} placeholder="Nama Jalan, No. Rumah, RT/RW" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs" />
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <SearchSelect
@@ -790,11 +806,11 @@ export default function EmployeesPage() {
                         </div>
                       </div>
 
-                      <div className="p-3 bg-slate-50 dark:bg-white/2 rounded-xl border border-slate-200/60 dark:border-white/4 space-y-3">
-                        <span className="font-bold text-slate-700 dark:text-slate-300 text-xs uppercase tracking-wider block border-b border-slate-200 dark:border-white/4 pb-1">Alamat Domisili Aktif</span>
+                      <div className="p-3 bg-surface-2 rounded-[var(--radius)] border border-line space-y-3">
+                        <span className="font-semibold text-foreground text-xs uppercase tracking-wider block border-b border-line pb-1">Alamat Domisili Aktif</span>
                         <div className="space-y-1">
-                          <label className="font-semibold block text-[11px] mb-1 text-slate-700 dark:text-slate-350">Jalan / RT / RW</label>
-                          <input type="text" required value={domicileStreet} onChange={e => setDomicileStreet(e.target.value)} placeholder="Nama Jalan, No. Rumah, RT/RW" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs" />
+                          <label className="font-semibold block text-[11px] mb-1 text-foreground dark:text-muted">Jalan / RT / RW</label>
+                          <input type="text" required value={domicileStreet} onChange={e => setDomicileStreet(e.target.value)} placeholder="Nama Jalan, No. Rumah, RT/RW" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs" />
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <SearchSelect
@@ -843,39 +859,39 @@ export default function EmployeesPage() {
 
                   {/* Bagian 4: Finansial */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-slate-200 dark:border-white/4">
+                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <CreditCard className="w-4 h-4" /> Akun Keuangan & Rekening Bank
                     </h3>
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">NPWP (Enkripsi)</label>
-                        <input type="text" required value={npwp} onChange={e => setNpwp(e.target.value)} placeholder="No. NPWP" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={npwp} onChange={e => setNpwp(e.target.value)} placeholder="No. NPWP" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Pajak</label>
-                        <input type="text" required value={taxStatus} onChange={e => setTaxStatus(e.target.value)} placeholder="TK/0, K/0, K/1" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={taxStatus} onChange={e => setTaxStatus(e.target.value)} placeholder="TK/0, K/0, K/1" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Nama Bank</label>
-                        <input type="text" required value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. Bank Mandiri" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. Bank Mandiri" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">No Rekening (Enkripsi)</label>
-                        <input type="text" required value={bankAccountNumber} onChange={e => setBankAccountNumber(e.target.value)} placeholder="No Rekening" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={bankAccountNumber} onChange={e => setBankAccountNumber(e.target.value)} placeholder="No Rekening" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Atas Nama</label>
-                        <input type="text" required value={bankAccountHolder} onChange={e => setBankAccountHolder(e.target.value)} placeholder="Sesuai buku tabungan" className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="text" required value={bankAccountHolder} onChange={e => setBankAccountHolder(e.target.value)} placeholder="Sesuai buku tabungan" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                     </div>
                   </div>
 
                   {/* Bagian 5: Penempatan */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-slate-200 dark:border-white/4">
+                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <Briefcase className="w-4 h-4" /> Penempatan Kerja & Jabatan
                     </h3>
                     <div className="grid grid-cols-3 gap-4 items-end">
@@ -929,11 +945,11 @@ export default function EmployeesPage() {
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Tanggal Mulai Kerja (Join Date)</label>
-                        <input type="date" required value={joinDate} onChange={e => setJoinDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs" />
+                        <input type="date" required value={joinDate} onChange={e => setJoinDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Kepegawaian</label>
-                        <select value={employmentStatus} onChange={e => setEmploymentStatus(e.target.value as any)} className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-[#0e1017] border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs">
+                        <select value={employmentStatus} onChange={e => setEmploymentStatus(e.target.value as "probation" | "pkwt" | "pkwtt" | "outsource")} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
                           <option value="probation">Probation</option>
                           <option value="pkwt">PKWT</option>
                           <option value="pkwtt">PKWTT</option>
@@ -942,7 +958,7 @@ export default function EmployeesPage() {
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Aktivitas Karyawan</label>
-                        <select value={status} onChange={e => setStatus(e.target.value as any)} className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-[#0e1017] border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-xs">
+                        <select value={status} onChange={e => setStatus(e.target.value as "active" | "onboarding" | "suspended" | "resigned")} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
                           <option value="onboarding">Onboarding</option>
                           <option value="active">Active</option>
                           <option value="suspended">Suspended</option>
@@ -953,7 +969,7 @@ export default function EmployeesPage() {
 
                     {!selectedId && (
                       <div className="space-y-1">
-                        <h4 className="text-[10px] font-bold text-slate-550 dark:text-slate-400 uppercase tracking-wider mt-4 flex items-center gap-1.5 pb-1 border-b border-slate-200 dark:border-white/4">
+                        <h4 className="text-[11px] font-semibold text-muted dark:text-muted uppercase tracking-wider mt-4 flex items-center gap-1.5 pb-1 border-b border-line">
                           <ShieldCheck className="w-4 h-4" /> Kredensial Login
                         </h4>
                         <div className="space-y-1 mt-2">
@@ -967,8 +983,8 @@ export default function EmployeesPage() {
                             ]}
                             placeholder="Pilih Role..."
                           />
-                          <p className="text-[10px] text-slate-500 italic mt-1">
-                            * Karyawan yang diberi role akan dibuatkan akun login otomatis dengan email kantor dan default password: <span className="font-mono text-slate-550 dark:text-slate-400">password123</span>.
+                          <p className="text-xs text-muted italic mt-1">
+                            * Karyawan yang diberi role akan dibuatkan akun login otomatis dengan email kantor dan default password: <span className="font-mono text-muted dark:text-muted">password123</span>.
                           </p>
                         </div>
                       </div>
@@ -977,11 +993,11 @@ export default function EmployeesPage() {
                 </form>
               </div>
 
-              <div className="border-t border-slate-200 dark:border-white/4 pt-4 mt-6 flex items-center justify-end gap-3 bg-white dark:bg-[#0a0c14] relative z-20">
+              <div className="border-t border-line pt-4 mt-6 flex items-center justify-end gap-3 bg-surface relative z-20">
                 <button
                   type="button"
                   onClick={handleCloseForm}
-                  className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 hover:bg-white dark:bg-white/2 cursor-pointer transition-all"
+                  className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all"
                 >
                   Batal
                 </button>
@@ -989,7 +1005,7 @@ export default function EmployeesPage() {
                   type="submit"
                   form="employee-form"
                   disabled={submitting}
-                  className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
                 >
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Simpan Karyawan

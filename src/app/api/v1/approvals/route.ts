@@ -1,295 +1,345 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
-import { checkPermission } from "@/lib/rbac";
+import { z } from "zod";
+import mongoose from "mongoose";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import { requireUser, parseBody, BadRequest, NotFound } from "@/lib/guard";
 import { logActivity } from "@/lib/audit/logger";
+import { decide, type RefType, REF_TYPE_LABEL } from "@/lib/approval/engine";
+import { formatDate, wibStartOfDay, wibTimeOnDay } from "@/lib/time";
+import { storageProvider } from "@/lib/storage";
 import ApprovalInstance from "@/models/ApprovalInstance";
 import LeaveRequest from "@/models/LeaveRequest";
+import LeaveType from "@/models/LeaveType";
 import LeaveBalance from "@/models/LeaveBalance";
-import Employee from "@/models/Employee";
-import User from "@/models/User";
-import Role from "@/models/Role";
 import Attendance from "@/models/Attendance";
 import AttendanceCorrection from "@/models/AttendanceCorrection";
-import { sendEmail, sendWhatsapp } from "@/lib/notification/notificationService";
-import { connectToDatabase } from "@/lib/db";
+import HolidaySwapRequest from "@/models/HolidaySwapRequest";
+import Employee from "@/models/Employee";
+import { CORRECTION_REASON_LABELS } from "@/lib/hr/labels";
+
+/* ------------------------------------------------------------------ */
+/* GET — the approver's queue                                           */
+/* ------------------------------------------------------------------ */
 
 export const GET = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk mengakses data ini", null, 401);
-  }
+  const ctx = await requireUser(req);
+  const url = new URL(req.url);
+  const view = url.searchParams.get("view") ?? "inbox"; // inbox | history
 
-  await connectToDatabase();
+  const roles = ctx.user.role === "SUPERADMIN" ? null : [ctx.user.role];
 
-  const userRole = session.user.role;
-  const userEmpId = session.user.employeeId;
-
-  // Query approval instances that are pending and require user's role approval
-  const filter: Record<string, any> = {
-    status: "pending",
-    "stepsStatus": {
-      $elemMatch: {
-        status: "pending",
-        approverRole: userRole
-      }
-    }
-  };
+  const filter: Record<string, unknown> =
+    view === "history"
+      ? { status: { $in: ["approved", "rejected"] } }
+      : {
+          status: "pending",
+          ...(roles
+            ? { stepsStatus: { $elemMatch: { status: "pending", approverRole: { $in: roles } } } }
+            : {}),
+        };
 
   const instances = await ApprovalInstance.find(filter)
-    .populate("history.userId")
-    .sort({ createdAt: -1 });
+    .sort({ updatedAt: -1 })
+    .limit(view === "history" ? 100 : 300)
+    .lean<
+      Array<{
+        _id: mongoose.Types.ObjectId;
+        refType: string;
+        refId: mongoose.Types.ObjectId;
+        currentStep: number;
+        status: string;
+        stepsStatus: Array<{ stepNumber: number; approverRole: string; status: string; comment?: string; actionedAt?: Date }>;
+        history: Array<{ action: string; comment?: string; timestamp: Date }>;
+        createdAt: Date;
+        updatedAt: Date;
+      }>
+    >();
 
-  // Filter instances by department scope if SPV
-  const filtered = [];
+  // Batch-load each referenced request type once instead of querying per row —
+  // the previous implementation issued two queries inside the loop (N+1).
+  const byType: Record<string, mongoose.Types.ObjectId[]> = {};
+  for (const inst of instances) (byType[inst.refType] ??= []).push(inst.refId);
+
+  const [leaves, corrections, swaps] = await Promise.all([
+    byType.leave?.length
+      ? LeaveRequest.find({ _id: { $in: byType.leave } })
+          .populate("employeeId", "name employeeId divisionId branchId")
+          .populate("leaveTypeId", "name")
+          .lean()
+      : [],
+    byType.correction?.length
+      ? AttendanceCorrection.find({ _id: { $in: byType.correction } })
+          .populate("employeeId", "name employeeId divisionId branchId")
+          .lean()
+      : [],
+    byType.holiday_swap?.length
+      ? HolidaySwapRequest.find({ _id: { $in: byType.holiday_swap } })
+          .populate("employeeId", "name employeeId divisionId branchId")
+          .lean()
+      : [],
+  ]);
+
+  const index = new Map<string, Record<string, unknown>>();
+  for (const doc of [...leaves, ...corrections, ...swaps] as Array<Record<string, unknown>>) {
+    index.set(String(doc._id), doc);
+  }
+
+  const items = [];
   for (const inst of instances) {
-    // Determine active step
-    const activeStep = inst.stepsStatus.find((s: any) => s.status === "pending");
-    if (!activeStep || activeStep.approverRole !== userRole) continue;
+    const source = index.get(String(inst.refId));
+    if (!source) continue;
 
-    // Fetch original request details to inspect department of submitter
-    let requesterDeptId = null;
-    let employeeProfile = null;
-    let details: any = null;
+    const employee = source.employeeId as
+      | { _id: mongoose.Types.ObjectId; name: string; employeeId: string; divisionId?: mongoose.Types.ObjectId }
+      | undefined;
 
-    if (inst.refType === "leave") {
-      const request = await LeaveRequest.findById(inst.refId).populate("employeeId").populate("leaveTypeId");
-      if (request && request.employeeId) {
-        employeeProfile = request.employeeId as any;
-        requesterDeptId = employeeProfile.divisionId?.toString();
-        details = {
-          startDate: request.startDate,
-          endDate: request.endDate,
-          leaveTypeName: (request.leaveTypeId as any)?.name || "Izin/Cuti",
-          reason: request.reason,
-          evidenceUrl: request.evidenceUrl
-        };
-      }
-    } else if (inst.refType === "correction") {
-      const request = await AttendanceCorrection.findById(inst.refId).populate("employeeId");
-      if (request && request.employeeId) {
-        employeeProfile = request.employeeId as any;
-        requesterDeptId = employeeProfile.divisionId?.toString();
-        details = {
-          date: request.date,
-          clockInTime: request.clockInTime,
-          clockOutTime: request.clockOutTime,
-          reasonType: request.reasonType,
-          reasonNote: request.reasonNote,
-          evidenceUrl: request.evidenceUrl
-        };
-      }
-    }
+    const activeStep = inst.stepsStatus.find((s) => s.status === "pending" && s.stepNumber === inst.currentStep);
 
-    if (userRole === "SPV" && requesterDeptId && session.user.divisionId !== requesterDeptId) {
-      // SPV can only see approvals within their own division
+    // An SPV only ever sees their own division's queue.
+    if (
+      view === "inbox" &&
+      ctx.user.role === "SPV" &&
+      employee?.divisionId &&
+      ctx.user.divisionId !== employee.divisionId.toString()
+    ) {
       continue;
     }
 
-    filtered.push({
+    items.push({
       _id: inst._id,
       refType: inst.refType,
+      refTypeLabel: REF_TYPE_LABEL[inst.refType as RefType] ?? inst.refType,
       refId: inst.refId,
-      currentStep: inst.currentStep,
       status: inst.status,
-      requesterName: employeeProfile?.name || "Karyawan",
-      requesterNip: employeeProfile?.employeeId || "-",
+      currentStep: inst.currentStep,
+      activeApproverRole: activeStep?.approverRole ?? null,
+      canAct: view === "inbox" && (ctx.user.role === "SUPERADMIN" || activeStep?.approverRole === ctx.user.role),
+      requesterName: employee?.name ?? "Karyawan",
+      requesterNip: employee?.employeeId ?? "-",
       createdAt: inst.createdAt,
+      updatedAt: inst.updatedAt,
       steps: inst.stepsStatus,
-      details
+      history: inst.history,
+      details: await describe(inst.refType as RefType, source),
     });
   }
 
-  return apiSuccess(filtered, "Berhasil memuat antrean persetujuan");
+  return apiSuccess(items, "Berhasil memuat antrean persetujuan");
+});
+
+async function describe(refType: RefType, doc: Record<string, unknown>) {
+  if (refType === "leave") {
+    const evidence = doc.evidenceUrl as string;
+    return {
+      title: (doc.leaveTypeId as { name?: string } | undefined)?.name ?? "Izin/Cuti",
+      period: `${formatDate(doc.startDate as Date)} – ${formatDate(doc.endDate as Date)}`,
+      duration: `${doc.chargedDays ?? "-"} hari kerja`,
+      reason: doc.reason as string,
+      evidenceUrl: evidence ? await storageProvider.getSignedUrl(evidence, 900) : "",
+    };
+  }
+  if (refType === "correction") {
+    const evidence = doc.evidenceUrl as string;
+    return {
+      title: doc.isOverQuota ? "Koreksi Absen (melebihi kuota)" : "Koreksi Absen",
+      period: formatDate(doc.date as Date),
+      duration: `${doc.clockInTime} – ${doc.clockOutTime}`,
+      reason: `${CORRECTION_REASON_LABELS[doc.reasonType as string] ?? doc.reasonType}: ${doc.reasonNote}`,
+      evidenceUrl: evidence ? await storageProvider.getSignedUrl(evidence, 900) : "",
+    };
+  }
+  return {
+    title: "Tukar Libur",
+    period: `Masuk ${formatDate(doc.holidayDate as Date)} → libur ${formatDate(doc.replacementDate as Date)}`,
+    duration: doc.isHalfDay ? `Setengah hari (${doc.session})` : "Sehari penuh",
+    reason: (doc.reason as string) || "-",
+    evidenceUrl: "",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* POST — approve / reject                                              */
+/* ------------------------------------------------------------------ */
+
+const decisionSchema = z.object({
+  instanceId: z.string().regex(/^[0-9a-fA-F]{24}$/, "ID persetujuan tidak valid"),
+  action: z.enum(["approve", "reject"]),
+  comment: z.string().trim().max(1000).optional(),
 });
 
 export const POST = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk melakukan aksi ini", null, 401);
+  const ctx = await requireUser(req);
+  const body = await parseBody(req, decisionSchema);
+
+  // A rejection without a reason is unusable for the employee receiving it.
+  if (body.action === "reject" && (!body.comment || body.comment.length < 5)) {
+    throw BadRequest("Alasan penolakan wajib diisi minimal 5 karakter agar pemohon memahami keputusannya.");
   }
 
-  const { instanceId, action, comment } = await req.json(); // action: 'approve' | 'reject'
+  const instance = await ApprovalInstance.findById(body.instanceId).lean<{
+    refType: string;
+    refId: mongoose.Types.ObjectId;
+  } | null>();
+  if (!instance) throw NotFound("Data persetujuan tidak ditemukan.");
 
-  if (!instanceId || !action || !["approve", "reject"].includes(action)) {
-    return apiError("BAD_REQUEST", "Parameter instanceId dan action ('approve'/'reject') wajib diisi");
-  }
+  const refType = instance.refType as RefType;
+  const { employeeId, summary } = await loadRef(refType, instance.refId);
 
-  await connectToDatabase();
+  const result = await decide({
+    instanceId: body.instanceId,
+    userId: ctx.user.id,
+    userRole: ctx.user.role,
+    action: body.action,
+    comment: body.comment,
+    employeeId,
+    summary,
+    onFinalized: async (status) => {
+      await finalize(refType, instance.refId, status, body.comment ?? "");
+    },
+  });
 
-  const inst = await ApprovalInstance.findById(instanceId);
-  if (!inst) {
-    return apiError("NOT_FOUND", "Persetujuan tidak ditemukan");
-  }
+  void logActivity({
+    userId: ctx.user.id,
+    action: body.action === "approve" ? "APPROVE_REQUEST" : "REJECT_REQUEST",
+    module: refType,
+    after: { instanceId: body.instanceId, result: result.status, comment: body.comment },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
 
-  if (inst.status !== "pending") {
-    return apiError("BAD_REQUEST", "Persetujuan ini sudah selesai diproses");
-  }
-
-  // Find active step
-  const activeStepIdx = inst.stepsStatus.findIndex((s: any) => s.status === "pending" && s.stepNumber === inst.currentStep);
-  if (activeStepIdx === -1) {
-    return apiError("BAD_REQUEST", "Tidak ada langkah persetujuan yang aktif");
-  }
-
-  const activeStep = inst.stepsStatus[activeStepIdx];
-
-  // Verify if current user's role matches active step approver role
-  if (session.user.role !== activeStep.approverRole) {
-    return apiError("FORBIDDEN", `Langkah ini memerlukan persetujuan peran ${activeStep.approverRole}`, null, 403);
-  }
-
-  const now = new Date();
-  
-  if (action === "reject") {
-    // 1. Mark current step as rejected
-    inst.stepsStatus[activeStepIdx].status = "rejected";
-    inst.stepsStatus[activeStepIdx].actionedBy = session.user.id as any;
-    inst.stepsStatus[activeStepIdx].actionedAt = now;
-    inst.stepsStatus[activeStepIdx].comment = comment;
-
-    // 2. Mark entire instance as rejected
-    inst.status = "rejected";
-    inst.history.push({
-      action: "REJECTED",
-      userId: session.user.id as any,
-      timestamp: now,
-      comment
-    });
-
-    await inst.save();
-
-    // 3. Update referenced request & Notify Employee
-    if (inst.refType === "leave") {
-      await LeaveRequest.findByIdAndUpdate(inst.refId, { status: "rejected" });
-      
-      // Return leave balance allocation back (refund days)
-      const leaveReq = await LeaveRequest.findById(inst.refId).populate("employeeId");
-      if (leaveReq) {
-        const diffTime = Math.abs(leaveReq.endDate.getTime() - leaveReq.startDate.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-        
-        await LeaveBalance.findOneAndUpdate(
-          { employeeId: leaveReq.employeeId, leaveTypeId: leaveReq.leaveTypeId, year: new Date(leaveReq.startDate).getFullYear() },
-          { $inc: { pendingDays: -diffDays, remainingDays: diffDays } }
-        );
-
-        // Notify submitter employee
-        const emp = leaveReq.employeeId as any;
-        if (emp) {
-          if (emp.personalEmail) {
-            sendEmail({
-              to: emp.personalEmail,
-              subject: "Pengajuan Cuti Anda Ditolak",
-              html: `<p>Halo <strong>${emp.name}</strong>,</p><p>Pengajuan cuti Anda telah ditolak oleh peninjau dengan catatan: "${comment || '-'}".</p>`
-            }).catch(console.error);
-          }
-          if (emp.phone) {
-            sendWhatsapp({
-              to: emp.phone,
-              message: `Halo ${emp.name}, pengajuan cuti Anda ditolak dengan catatan: "${comment || '-'}".`
-            }).catch(console.error);
-          }
-        }
-      }
-    } else if (inst.refType === "correction") {
-      await AttendanceCorrection.findByIdAndUpdate(inst.refId, { status: "rejected" });
-    }
-
-    await logActivity({
-      userId: session.user.id,
-      action: "REJECT_APPROVAL",
-      module: inst.refType,
-      before: null,
-      after: inst.toObject(),
-      ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-      userAgent: req.headers.get("user-agent") || "",
-    });
-
-    return apiSuccess(inst, "Pengajuan berhasil ditolak");
-  } else {
-    // Action is Approve
-    // 1. Mark current step as approved
-    inst.stepsStatus[activeStepIdx].status = "approved";
-    inst.stepsStatus[activeStepIdx].actionedBy = session.user.id as any;
-    inst.stepsStatus[activeStepIdx].actionedAt = now;
-    inst.stepsStatus[activeStepIdx].comment = comment;
-
-    inst.history.push({
-      action: "APPROVED",
-      userId: session.user.id as any,
-      timestamp: now,
-      comment
-    });
-
-    // 2. Check if there are subsequent steps
-    const hasNextStep = inst.stepsStatus.some((s: any) => s.stepNumber > inst.currentStep);
-
-    if (hasNextStep) {
-      inst.currentStep += 1;
-    } else {
-      // Complete flow
-      inst.status = "approved";
-      
-      // Update referenced request document to approved
-      if (inst.refType === "leave") {
-        await LeaveRequest.findByIdAndUpdate(inst.refId, { status: "approved" });
-        
-        // Finalize leave balance allocation
-        const leaveReq = await LeaveRequest.findById(inst.refId);
-        if (leaveReq) {
-          const diffTime = Math.abs(leaveReq.endDate.getTime() - leaveReq.startDate.getTime());
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-          
-          await LeaveBalance.findOneAndUpdate(
-            { employeeId: leaveReq.employeeId, leaveTypeId: leaveReq.leaveTypeId, year: new Date(leaveReq.startDate).getFullYear() },
-            { $inc: { pendingDays: -diffDays, usedDays: diffDays } }
-          );
-        }
-      } else if (inst.refType === "correction") {
-        await AttendanceCorrection.findByIdAndUpdate(inst.refId, { status: "approved" });
-        
-        const corr = await AttendanceCorrection.findById(inst.refId);
-        if (corr) {
-          const targetDate = new Date(corr.date);
-          targetDate.setHours(0, 0, 0, 0);
-
-          const [inH, inM] = corr.clockInTime.split(":").map(Number);
-          const clockInDate = new Date(targetDate);
-          clockInDate.setHours(inH, inM, 0, 0);
-
-          const [outH, outM] = corr.clockOutTime.split(":").map(Number);
-          const clockOutDate = new Date(targetDate);
-          clockOutDate.setHours(outH, outM, 0, 0);
-
-          await Attendance.findOneAndUpdate(
-            { employeeId: corr.employeeId, date: targetDate },
-            {
-              clockIn: clockInDate,
-              clockOut: clockOutDate,
-              isLate: false,
-              lateMinutes: 0,
-              gpsLat: -6.2088,
-              gpsLng: 106.8456,
-              note: `Koreksi Absen disetujui: ${corr.reasonNote}`
-            },
-            { upsert: true, new: true }
-          );
-        }
-      }
-    }
-
-    await inst.save();
-
-    await logActivity({
-      userId: session.user.id,
-      action: "APPROVE_APPROVAL",
-      module: inst.refType,
-      before: null,
-      after: inst.toObject(),
-      ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-      userAgent: req.headers.get("user-agent") || "",
-    });
-
-    return apiSuccess(inst, hasNextStep ? "Berhasil menyetujui langkah. Pengajuan diteruskan ke approver berikutnya." : "Pengajuan disetujui sepenuhnya.");
-  }
+  return apiSuccess(result, result.message);
 });
+
+async function loadRef(refType: RefType, refId: mongoose.Types.ObjectId) {
+  if (refType === "leave") {
+    const doc = await LeaveRequest.findById(refId).populate("leaveTypeId", "name").lean<{
+      employeeId: mongoose.Types.ObjectId;
+      startDate: Date;
+      endDate: Date;
+      chargedDays: number;
+      leaveTypeId?: { name?: string };
+    } | null>();
+    if (!doc) throw NotFound("Pengajuan cuti tidak ditemukan.");
+    return {
+      employeeId: doc.employeeId,
+      summary: `${doc.leaveTypeId?.name ?? "Cuti"} ${formatDate(doc.startDate)} – ${formatDate(doc.endDate)} (${doc.chargedDays} hari)`,
+    };
+  }
+  if (refType === "correction") {
+    const doc = await AttendanceCorrection.findById(refId).lean<{
+      employeeId: mongoose.Types.ObjectId;
+      date: Date;
+      clockInTime: string;
+      clockOutTime: string;
+    } | null>();
+    if (!doc) throw NotFound("Pengajuan koreksi tidak ditemukan.");
+    return {
+      employeeId: doc.employeeId,
+      summary: `Koreksi absen ${formatDate(doc.date)} (${doc.clockInTime}–${doc.clockOutTime})`,
+    };
+  }
+  const doc = await HolidaySwapRequest.findById(refId).lean<{
+    employeeId: mongoose.Types.ObjectId;
+    holidayDate: Date;
+    replacementDate: Date;
+  } | null>();
+  if (!doc) throw NotFound("Pengajuan tukar libur tidak ditemukan.");
+  return {
+    employeeId: doc.employeeId,
+    summary: `Tukar libur ${formatDate(doc.holidayDate)} ke ${formatDate(doc.replacementDate)}`,
+  };
+}
+
+/**
+ * Applies the real-world effect of a completed decision.
+ * Runs only once, when the flow reaches a terminal state.
+ */
+async function finalize(
+  refType: RefType,
+  refId: mongoose.Types.ObjectId,
+  status: "approved" | "rejected",
+  comment: string
+) {
+  if (refType === "leave") {
+    const leaveReq = await LeaveRequest.findById(refId);
+    if (!leaveReq || leaveReq.status !== "pending") return;
+
+    leaveReq.status = status;
+    await leaveReq.save();
+
+    const leaveType = await LeaveType.findById(leaveReq.leaveTypeId).lean<{ deductsBalance?: boolean } | null>();
+    if (leaveType?.deductsBalance !== false) {
+      const days = leaveReq.chargedDays ?? 0;
+      // Approved: the reserved days become used. Rejected: they go back to the
+      // employee. Either way `pendingDays` must be released exactly once.
+      await LeaveBalance.updateOne(
+        {
+          employeeId: leaveReq.employeeId,
+          leaveTypeId: leaveReq.leaveTypeId,
+          year: new Date(leaveReq.startDate).getFullYear(),
+        },
+        status === "approved"
+          ? { $inc: { pendingDays: -days, usedDays: days } }
+          : { $inc: { pendingDays: -days, remainingDays: days } }
+      );
+    }
+    return;
+  }
+
+  if (refType === "correction") {
+    const correction = await AttendanceCorrection.findById(refId);
+    if (!correction || correction.status !== "pending") return;
+
+    correction.status = status;
+    await correction.save();
+    if (status !== "approved") return;
+
+    const dayStart = wibStartOfDay(correction.date);
+    const existing = await Attendance.findOne({
+      employeeId: correction.employeeId,
+      date: dayStart,
+    });
+
+    const patch: Record<string, unknown> = {
+      clockIn: wibTimeOnDay(correction.date, correction.clockInTime),
+      clockOut: wibTimeOnDay(correction.date, correction.clockOutTime),
+      isLate: false,
+      lateMinutes: 0,
+      isEarlyLeave: false,
+      earlyLeaveMinutes: 0,
+      needsReview: false,
+      note: `Koreksi absen disetujui${comment ? ` — ${comment}` : ""}. Alasan pemohon: ${correction.reasonNote}`,
+    };
+    if (correction.breakOutTime) patch.breakOut = wibTimeOnDay(correction.date, correction.breakOutTime);
+    if (correction.breakInTime) patch.breakIn = wibTimeOnDay(correction.date, correction.breakInTime);
+
+    if (existing) {
+      // Keep the original GPS evidence; a correction fixes times, not location.
+      Object.assign(existing, patch);
+      await existing.save();
+    } else {
+      // No tap at all that day. Create the record from the employee's branch
+      // coordinates rather than the hardcoded Jakarta monument the previous
+      // implementation used, which made every corrected day look like a
+      // Monas check-in.
+      const employee = await Employee.findById(correction.employeeId)
+        .populate("branchId", "lat lng")
+        .lean<{ branchId?: { _id: mongoose.Types.ObjectId; lat: number; lng: number } } | null>();
+
+      await Attendance.create({
+        employeeId: correction.employeeId,
+        date: dayStart,
+        gpsLat: employee?.branchId?.lat ?? 0,
+        gpsLng: employee?.branchId?.lng ?? 0,
+        branchId: employee?.branchId?._id,
+        photoUrl: [],
+        isManualFallback: true,
+        ...patch,
+      });
+    }
+    return;
+  }
+
+  if (refType === "holiday_swap") {
+    await HolidaySwapRequest.updateOne({ _id: refId, status: "pending" }, { status });
+  }
+}

@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# uploaded files — kept outside public/ so nothing is served statically
+/storage/
 
 # vercel
 .vercel

@@ -1,29 +1,84 @@
 export interface StorageProvider {
   /**
-   * Uploads a file to the configured storage destination.
-   * @param file The file Buffer or Blob to upload
-   * @param path The target relative path/filename (e.g. 'avatars/john-doe.png')
-   * @param mimeType Optional mime-type of the file
-   * @returns The relative or absolute URL/path to access the uploaded file
+   * Persists a file and returns its **storage key** — a provider-independent
+   * relative path such as `attendances/<employeeId>/2026-07-07-clock_in.jpg`.
+   *
+   * The key is what gets written to MongoDB. It is intentionally *not* a URL:
+   * URLs are minted on read via `getUrl`/`getSignedUrl`, so swapping
+   * STORAGE_PROVIDER never invalidates stored records.
    */
-  upload(file: Buffer | Blob, path: string, mimeType?: string): Promise<string>;
+  upload(file: Buffer | Blob, key: string, mimeType?: string): Promise<string>;
+
+  /** A URL for a non-sensitive asset (still access-controlled for local disk). */
+  getUrl(key: string): string;
 
   /**
-   * Retrieves a public URL for the file.
-   * @param path The relative path of the file
+   * A short-lived signed URL for sensitive files (KTP, NPWP, slip gaji, foto
+   * presensi). Never expose a permanent public URL for these.
    */
-  getUrl(path: string): string;
+  getSignedUrl(key: string, expiresInSeconds?: number): Promise<string>;
 
-  /**
-   * Generates a signed, short-lived secure URL for accessing sensitive files (e.g. NPWP, slip gaji).
-   * @param path The relative path of the file
-   * @param expiresInSeconds Duration of validity in seconds (default 900 seconds / 15 minutes)
-   */
-  getSignedUrl(path: string, expiresInSeconds?: number): Promise<string>;
+  delete(key: string): Promise<void>;
 
-  /**
-   * Deletes a file from storage.
-   * @param path The relative path of the file to delete
-   */
-  delete(path: string): Promise<void>;
+  /** Reads a file back — used by the authenticated download route. */
+  read(key: string): Promise<{ buffer: Buffer; contentType: string }>;
 }
+
+/**
+ * Normalises anything we might find in the database into a storage key.
+ *
+ * Records written before files were moved out of `public/` hold values like
+ * `/uploads/payrolls/<id>/2026-07.html`; new records hold the bare key. Both
+ * must resolve to the same file.
+ */
+export function toStorageKey(value: string): string {
+  if (!value) return "";
+  let key = value.trim();
+  try {
+    // Tolerate a full URL or an already-signed link being passed back in.
+    if (key.startsWith("http://") || key.startsWith("https://")) {
+      key = new URL(key).pathname;
+    } else if (key.startsWith("/api/v1/storage/")) {
+      const qs = key.split("?")[1] ?? "";
+      const p = new URLSearchParams(qs).get("key") ?? new URLSearchParams(qs).get("path");
+      if (p) key = p;
+    }
+  } catch {
+    /* fall through to prefix stripping */
+  }
+  key = key.replace(/^\/+/, "");
+  if (key.startsWith("uploads/")) key = key.slice("uploads/".length);
+  return key;
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".pdf": "application/pdf",
+  ".html": "text/html; charset=utf-8",
+  ".csv": "text/csv; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+export function contentTypeForKey(key: string): string {
+  const dot = key.lastIndexOf(".");
+  if (dot === -1) return "application/octet-stream";
+  return MIME_BY_EXT[key.slice(dot).toLowerCase()] ?? "application/octet-stream";
+}
+
+/** Upload types we accept, mapped to the extension we will store them under. */
+export const ALLOWED_UPLOAD_MIME: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "application/pdf": ".pdf",
+};
+
+export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8 MB

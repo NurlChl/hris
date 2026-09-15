@@ -2,19 +2,33 @@ import mongoose, { Schema, Document } from "mongoose";
 
 export interface IVerificationCode extends Document {
   email: string;
-  code: string; // 6-digit code
+  /** SHA-256 of the code — the plaintext OTP is only ever in the email. */
+  codeHash: string;
   purpose: "reset_password" | "change_password";
   expires: Date;
+  /** Wrong guesses so far; the code is burned once this hits the cap. */
+  attempts: number;
 }
 
-const VerificationCodeSchema = new Schema<IVerificationCode>({
-  email: { type: String, required: true, index: true },
-  code: { type: String, required: true },
-  purpose: { type: String, enum: ["reset_password", "change_password"], required: true },
-  expires: { type: Date, required: true },
-});
+const VerificationCodeSchema = new Schema<IVerificationCode>(
+  {
+    email: { type: String, required: true, index: true, lowercase: true, trim: true },
+    codeHash: { type: String, required: true },
+    purpose: {
+      type: String,
+      enum: ["reset_password", "change_password"],
+      required: true,
+    },
+    expires: { type: Date, required: true },
+    attempts: { type: Number, default: 0 },
+  },
+  { timestamps: true }
+);
 
-// Automatically expire the document after expiration date passes
+// Mongo removes the document the moment it expires, so a stale code can never
+// be replayed even if the application forgets to clean up.
 VerificationCodeSchema.index({ expires: 1 }, { expireAfterSeconds: 0 });
+VerificationCodeSchema.index({ email: 1, purpose: 1 }, { unique: true });
 
-export default mongoose.models.VerificationCode || mongoose.model<IVerificationCode>("VerificationCode", VerificationCodeSchema);
+export default mongoose.models.VerificationCode ||
+  mongoose.model<IVerificationCode>("VerificationCode", VerificationCodeSchema);

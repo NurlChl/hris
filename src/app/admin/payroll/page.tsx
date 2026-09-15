@@ -1,11 +1,30 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { 
-  CreditCard, Calendar, Users, Loader2, CheckCircle2, AlertCircle, FileText, 
-  ExternalLink, Printer, Settings
-} from "lucide-react";
-import { motion } from "framer-motion";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { CalendarDays, FileText, Printer, ReceiptText, Trash2, Users, Wallet } from "lucide-react";
+import {
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  Field,
+  Input,
+  PageHeader,
+  SkeletonList,
+  StatCard,
+  StatusBadge,
+  TableWrap,
+  Td,
+  Th,
+  Tr,
+} from "@/components/ui";
+import { useToast } from "@/components/ui/Toast";
+import { api, errorMessage } from "@/lib/client-api";
+import { formatPeriod, formatRupiah, wibPeriodKey } from "@/lib/time";
 
 interface Employee {
   _id: string;
@@ -15,258 +34,365 @@ interface Employee {
 
 interface PayrollRecord {
   _id: string;
-  employeeId: { _id: string; name: string; employeeId: string; } | null;
+  employeeId: { _id: string; name: string; employeeId: string } | null;
   period: string;
   basicSalary: number;
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
-  fileUrl: string;
   status: string;
 }
 
+/** Per-employee failure returned alongside the successes by POST /payroll. */
+interface RunFailure {
+  id: string;
+  name?: string;
+  message: string;
+}
+
 export default function PayrollPage() {
-  const [period, setPeriod] = useState("2026-07");
+  const toast = useToast();
+
+  const [period, setPeriod] = useState(wibPeriodKey());
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
-  const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [failures, setFailures] = useState<RunFailure[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState<PayrollRecord | null>(null);
 
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
-
-  useEffect(() => {
-    fetchMetadata();
-    fetchPayrolls();
-  }, [period]);
-
-  const fetchMetadata = async () => {
-    try {
-      const res = await fetch("/api/v1/employees");
-      const data = await res.json();
-      if (data.success) {
-        setEmployees(data.data || []);
-      }
-    } catch (err) {
-      console.error("Gagal memuat karyawan:", err);
-    }
-  };
-
-  const fetchPayrolls = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
+    setError("");
     try {
-      const res = await fetch(`/api/v1/payroll?period=${period}`);
-      const data = await res.json();
-      if (data.success) {
-        setPayrolls(data.data || []);
-      }
+      const [emp, pay] = await Promise.all([
+        api.get<Employee[]>("/api/v1/employees?status=active&limit=500"),
+        api.get<PayrollRecord[]>("/api/v1/payroll?period=" + period),
+      ]);
+      setEmployees(emp.data ?? []);
+      setPayrolls(pay.data ?? []);
     } catch (err) {
-      console.error("Gagal memuat payroll:", err);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, [period]);
 
-  const handleSelectEmployee = (id: string) => {
-    if (selectedEmployees.includes(id)) {
-      setSelectedEmployees(selectedEmployees.filter(eId => eId !== id));
-    } else {
-      setSelectedEmployees([...selectedEmployees, id]);
-    }
-  };
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const handleSelectAll = () => {
-    if (selectedEmployees.length === employees.length) {
-      setSelectedEmployees([]);
-    } else {
-      setSelectedEmployees(employees.map(e => e._id));
-    }
-  };
+  /* Employees who already have a slip this period are listed apart from the
+     rest rather than silently skipped, so the queue always says who is left. */
+  const doneIds = useMemo(
+    () => new Set(payrolls.map((p) => p.employeeId?._id).filter(Boolean) as string[]),
+    [payrolls]
+  );
+  const pending = employees.filter((e) => !doneIds.has(e._id));
 
-  const handleProcessPayroll = async () => {
-    if (selectedEmployees.length === 0) {
-      setErrorMessage("Silakan pilih minimal satu karyawan untuk diproses");
-      return;
-    }
+  const totals = useMemo(
+    () => ({
+      count: payrolls.length,
+      net: payrolls.reduce((n, p) => n + (p.netSalary || 0), 0),
+      deductions: payrolls.reduce((n, p) => n + (p.totalDeductions || 0), 0),
+    }),
+    [payrolls]
+  );
+
+  const toggle = (id: string) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const allSelected = pending.length > 0 && selected.length === pending.length;
+
+  const run = async () => {
+    if (!selected.length) return;
     setSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
+    setFailures([]);
     try {
-      const res = await fetch("/api/v1/payroll", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          period,
-          employeeIds: selectedEmployees
-        }),
+      const res = await api.post<{ results: unknown[]; errors: RunFailure[] }>("/api/v1/payroll", {
+        period,
+        employeeIds: selected,
       });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMessage(data.message || "Slip gaji berhasil diproses!");
-        fetchPayrolls();
-        setSelectedEmployees([]);
+      const made = res.data?.results?.length ?? 0;
+      const failed = res.data?.errors ?? [];
+      setFailures(failed);
+      setSelected([]);
+
+      // A run that creates some slips and rejects others is neither a success
+      // nor an error, and the reason for each rejection has to outlive the
+      // reload that follows — hence the list below the form.
+      if (made && failed.length) {
+        toast.warning(
+          made + " slip dibuat, " + failed.length + " gagal",
+          "Alasan setiap kegagalan tercantum di bawah formulir."
+        );
+      } else if (made) {
+        toast.success(made + " slip gaji dibuat", "Periode " + formatPeriod(period) + ".");
       } else {
-        setErrorMessage(data.error?.message || "Gagal memproses slip gaji");
+        toast.error(
+          "Tidak ada slip gaji yang dibuat",
+          "Alasan kegagalan tercantum di bawah formulir."
+        );
       }
+      await load();
     } catch (err) {
-      setErrorMessage("Terjadi kesalahan koneksi server");
+      toast.error("Gagal memproses slip gaji", errorMessage(err));
     } finally {
       setSubmitting(false);
     }
   };
 
+  const remove = async () => {
+    if (!deleting) return;
+    try {
+      await api.delete("/api/v1/payroll?id=" + deleting._id);
+      toast.success(
+        "Draf dihapus",
+        (deleting.employeeId?.name ?? "Karyawan") + " dikeluarkan dari periode ini."
+      );
+      setDeleting(null);
+      await load();
+    } catch (err) {
+      toast.error("Gagal menghapus draf", errorMessage(err));
+    }
+  };
+
   return (
-    <div className="space-y-6 font-sans">
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Manajemen Gaji & Slip Gaji</h1>
-          <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">Proses slip gaji bulanan, kalkulasikan BPJS, lembur, pajak PPh 21, dan denda telat otomatis</p>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        eyebrow="Payroll"
+        title="Slip Gaji"
+        description="Terbitkan slip gaji bulanan. Lembur, potongan keterlambatan, alpha, BPJS, dan PPh 21 dihitung dari data presensi memakai tarif yang diatur di Pengaturan."
+        actions={
+          <Link href="/admin/payroll/templates">
+            <Button variant="secondary" icon={FileText}>
+              Template slip gaji
+            </Button>
+          </Link>
+        }
+      />
 
-      {errorMessage && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{errorMessage}</span>
+      {payrolls.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-3 mb-6">
+          <StatCard
+            label="Slip terbit"
+            value={totals.count}
+            hint={"Periode " + formatPeriod(period)}
+            icon={ReceiptText}
+          />
+          <StatCard
+            label="Total dibayarkan"
+            value={formatRupiah(totals.net)}
+            hint="Jumlah gaji bersih seluruh slip periode ini"
+            icon={Wallet}
+            tone="success"
+          />
+          <StatCard
+            label="Total potongan"
+            value={formatRupiah(totals.deductions)}
+            hint="Keterlambatan, alpha, BPJS, dan PPh 21"
+            icon={CalendarDays}
+            tone="warning"
+          />
         </div>
       )}
 
-      {successMessage && (
-        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>{successMessage}</span>
-        </div>
-      )}
+      {error && <ErrorState message={error} onRetry={load} />}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        {/* Left Column - Select Employees Form */}
-        <div className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-6 space-y-4">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-200 dark:border-white/4 flex items-center gap-1.5">
-            <Calendar className="w-4.5 h-4.5 text-slate-700 dark:text-slate-300" /> Pilih Periode & Karyawan
-          </h2>
+      <div className="grid gap-6 lg:grid-cols-[360px_1fr] items-start">
+        {/* ---------------- run a period ---------------- */}
+        <div className="space-y-5">
+          <Card>
+            <CardHeader title="Periode & karyawan" icon={CalendarDays} />
+            <CardBody className="space-y-5">
+              <Field label="Periode gaji" required htmlFor="pr-period">
+                <Input
+                  id="pr-period"
+                  type="month"
+                  value={period}
+                  onChange={(e) => {
+                    setPeriod(e.target.value);
+                    setSelected([]);
+                    setFailures([]);
+                  }}
+                />
+              </Field>
 
-          <div className="space-y-3 text-xs">
-            <div className="space-y-1">
-              <label className="font-semibold text-slate-700 dark:text-slate-300">Periode Gaji</label>
-              <input
-                type="month"
-                required
-                value={period}
-                onChange={e => setPeriod(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300 mt-4">
-                <span>Daftar Karyawan ({employees.length})</span>
-                <button
-                  type="button"
-                  onClick={handleSelectAll}
-                  className="text-slate-700 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white text-[10px] underline cursor-pointer"
-                >
-                  {selectedEmployees.length === employees.length ? "Batal Semua" : "Pilih Semua"}
-                </button>
-              </div>
-
-              <div className="max-h-60 overflow-y-auto border border-slate-200 dark:border-white/8 rounded-lg p-2 space-y-1 bg-white/1">
-                {employees.map(emp => {
-                  const isChecked = selectedEmployees.includes(emp._id);
-                  return (
-                    <div
-                      key={emp._id}
-                      onClick={() => handleSelectEmployee(emp._id)}
-                      className="flex items-center gap-2 p-1.5 rounded hover:bg-white/4 cursor-pointer text-[11px]"
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] font-medium text-foreground">
+                    Belum punya slip ({pending.length})
+                  </span>
+                  {pending.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelected(allSelected ? [] : pending.map((e) => e._id))}
+                      className="text-[13px] text-primary hover:underline"
                     >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => {}} // handled by div click
-                        className="w-3.5 h-3.5 rounded border-slate-200 dark:border-white/8 accent-blue-500 cursor-pointer"
-                      />
-                      <span className="text-slate-700 dark:text-slate-300">{emp.name} ({emp.employeeId})</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+                      {allSelected ? "Kosongkan pilihan" : "Pilih semua"}
+                    </button>
+                  )}
+                </div>
 
-            <button
-              onClick={handleProcessPayroll}
-              disabled={submitting || selectedEmployees.length === 0}
-              className="w-full mt-4 py-2.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
-            >
-              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Settings className="w-3.5 h-3.5" />}
-              Proses Slip Gaji ({selectedEmployees.length})
-            </button>
-          </div>
+                {pending.length === 0 ? (
+                  <p className="text-[13px] text-muted leading-relaxed rounded-[var(--radius-control)] bg-surface-2 p-3.5">
+                    {employees.length === 0
+                      ? "Belum ada karyawan aktif yang bisa diproses."
+                      : "Seluruh " +
+                        employees.length +
+                        " karyawan aktif sudah memiliki slip gaji untuk " +
+                        formatPeriod(period) +
+                        "."}
+                  </p>
+                ) : (
+                  <div className="max-h-64 overflow-y-auto rounded-[var(--radius-control)] border border-line divide-y divide-[var(--border)]">
+                    {pending.map((emp) => (
+                      <label
+                        key={emp._id}
+                        className="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer hover:bg-surface-2 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(emp._id)}
+                          onChange={() => toggle(emp._id)}
+                          className="w-4 h-4 rounded border-line accent-[var(--primary)] cursor-pointer"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-[13px] text-foreground truncate">
+                            {emp.name}
+                          </span>
+                          <span className="block text-xs text-subtle">{emp.employeeId}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <Button
+                className="w-full"
+                icon={ReceiptText}
+                loading={submitting}
+                disabled={selected.length === 0}
+                onClick={run}
+              >
+                Proses {selected.length || ""} slip gaji
+              </Button>
+            </CardBody>
+          </Card>
+
+          {failures.length > 0 && (
+            <Card>
+              <CardHeader
+                title={"Gagal diproses (" + failures.length + ")"}
+                description="Perbaiki penyebabnya, lalu jalankan ulang untuk karyawan tersebut."
+              />
+              <CardBody className="space-y-3">
+                {failures.map((f) => (
+                  <div
+                    key={f.id}
+                    className="rounded-[var(--radius-control)] bg-danger-soft border border-danger/20 p-3.5"
+                  >
+                    <p className="text-[13px] font-medium text-foreground">
+                      {f.name ?? employees.find((e) => e._id === f.id)?.name ?? "Karyawan"}
+                    </p>
+                    <p className="text-[13px] text-muted leading-relaxed mt-1">{f.message}</p>
+                  </div>
+                ))}
+              </CardBody>
+            </Card>
+          )}
         </div>
 
-        {/* Right Column - Slips logs table */}
-        <div className="lg:col-span-2 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-6 space-y-4">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-200 dark:border-white/4 flex items-center gap-1.5">
-            <CreditCard className="w-4.5 h-4.5 text-purple-500" /> Riwayat Slip Gaji Terbit
-          </h2>
-
-          {loading ? (
-            <div className="h-48 flex items-center justify-center text-slate-550 dark:text-slate-400">
-              <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
-            </div>
-          ) : payrolls.length === 0 ? (
-            <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500 text-xs">
-              <CreditCard className="w-8 h-8 mb-2 opacity-50 text-slate-600" />
-              Belum ada slip gaji yang diproses untuk periode ini.
-            </div>
-          ) : (
-            <div className="overflow-x-auto overflow-y-hidden">
-              <table className="w-full text-left text-xs border-collapse min-w-[500px]">
+        {/* ---------------- what has been issued ---------------- */}
+        <Card>
+          <CardHeader title="Slip gaji terbit" description={formatPeriod(period)} icon={Users} />
+          <CardBody>
+            {loading ? (
+              <SkeletonList rows={4} />
+            ) : payrolls.length === 0 ? (
+              <EmptyState
+                icon={ReceiptText}
+                title="Belum ada slip gaji periode ini"
+                description="Pilih karyawan di sebelah kiri, lalu proses untuk menerbitkan slip gaji beserta perhitungan lembur, potongan, dan pajaknya."
+              />
+            ) : (
+              <TableWrap>
                 <thead>
-                  <tr className="border-b border-slate-200 dark:border-white/8 bg-white dark:bg-white/2 text-slate-550 dark:text-slate-400">
-                    <th className="p-3 font-semibold">Karyawan</th>
-                    <th className="p-3 font-semibold">Gaji Bersih</th>
-                    <th className="p-3 font-semibold">Status</th>
-                    <th className="p-3 font-semibold text-right">Slip</th>
+                  <tr>
+                    <Th>Karyawan</Th>
+                    <Th className="text-right">Penghasilan</Th>
+                    <Th className="text-right">Potongan</Th>
+                    <Th className="text-right">Gaji bersih</Th>
+                    <Th>Status</Th>
+                    <Th className="text-right">Aksi</Th>
                   </tr>
                 </thead>
                 <tbody>
-                  {payrolls.map(pr => (
-                    <tr key={pr._id} className="border-b border-slate-200 dark:border-white/4 hover:bg-white/1 transition-all">
-                      <td className="p-3">
-                        <div>
-                          <span className="font-bold text-slate-900 dark:text-slate-200">{pr.employeeId?.name || "Karyawan Terhapus"}</span>
-                          <span className="block text-[10px] text-slate-500">{pr.employeeId?.employeeId || "-"}</span>
-                        </div>
-                      </td>
-                      <td className="p-3 text-slate-900 dark:text-slate-200 font-semibold">
-                        Rp {pr.netSalary.toLocaleString()}
-                      </td>
-                      <td className="p-3">
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 font-semibold text-[9px] uppercase">
-                          {pr.status}
+                  {payrolls.map((pr) => (
+                    <Tr key={pr._id}>
+                      <Td>
+                        <span className="block text-foreground font-medium">
+                          {pr.employeeId?.name ?? "Karyawan terhapus"}
                         </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <a
-                          href={pr.fileUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white underline font-semibold"
-                        >
-                          <FileText className="w-3.5 h-3.5" /> Lihat <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </td>
-                    </tr>
+                        <span className="block text-xs text-subtle">
+                          {pr.employeeId?.employeeId ?? "—"}
+                        </span>
+                      </Td>
+                      <Td className="text-right tabular-nums">{formatRupiah(pr.totalEarnings)}</Td>
+                      <Td className="text-right tabular-nums text-warning">
+                        {formatRupiah(pr.totalDeductions)}
+                      </Td>
+                      <Td className="text-right tabular-nums font-semibold text-foreground">
+                        {formatRupiah(pr.netSalary)}
+                      </Td>
+                      <Td>
+                        <StatusBadge status={pr.status} />
+                      </Td>
+                      <Td className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Link href={"/print/payslip/" + pr._id} target="_blank">
+                            <Button variant="ghost" size="sm" icon={Printer}>
+                              Cetak
+                            </Button>
+                          </Link>
+                          {pr.status === "draft" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              icon={Trash2}
+                              aria-label={"Hapus draf slip " + (pr.employeeId?.name ?? "")}
+                              onClick={() => setDeleting(pr)}
+                            />
+                          )}
+                        </div>
+                      </Td>
+                    </Tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+              </TableWrap>
+            )}
+          </CardBody>
+        </Card>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        onClose={() => setDeleting(null)}
+        onConfirm={remove}
+        tone="danger"
+        title="Hapus draf slip gaji?"
+        message={
+          "Draf slip " +
+          (deleting?.employeeId?.name ?? "karyawan ini") +
+          " untuk " +
+          formatPeriod(period) +
+          " akan dihapus. Anda dapat memprosesnya kembali kapan saja."
+        }
+        confirmLabel="Hapus draf"
+      />
     </div>
   );
 }

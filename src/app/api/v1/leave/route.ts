@@ -1,221 +1,388 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
-import { connectToDatabase } from "@/lib/db";
+import { z } from "zod";
+import mongoose from "mongoose";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import {
+  requireUser,
+  requireEmployee,
+  parseBody,
+  enforceRateLimit,
+  BadRequest,
+  Conflict,
+  Forbidden,
+  NotFound,
+} from "@/lib/guard";
+import { RATE_RULES } from "@/lib/rate-limit";
 import { logActivity } from "@/lib/audit/logger";
+import { getSettings } from "@/lib/settings";
+import { countLeaveDays } from "@/lib/hr/calendar";
+import { createApprovalInstance, cancelInstance, isUntouched } from "@/lib/approval/engine";
+import {
+  formatDate,
+  normalizeDateKey,
+  wibDateKey,
+  wibStartOfDay,
+  wibEndOfDay,
+  inclusiveDayCount,
+} from "@/lib/time";
+import { storageProvider, decodeDataUrl } from "@/lib/storage";
 import LeaveType from "@/models/LeaveType";
 import LeaveBalance from "@/models/LeaveBalance";
 import LeaveRequest from "@/models/LeaveRequest";
-import ApprovalFlow from "@/models/ApprovalFlow";
 import ApprovalInstance from "@/models/ApprovalInstance";
 import Employee from "@/models/Employee";
-import User from "@/models/User";
-import Role from "@/models/Role";
-import { sendEmail, sendWhatsapp } from "@/lib/notification/notificationService";
+
+/* ------------------------------------------------------------------ */
+/* GET                                                                  */
+/* ------------------------------------------------------------------ */
 
 export const GET = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk mengakses data ini", null, 401);
-  }
-
-  await connectToDatabase();
-
-  const url = new URL(req.url);
-  const type = url.searchParams.get("type") || "balance";
+  const ctx = await requireUser(req);
+  const type = new URL(req.url).searchParams.get("type") ?? "balance";
 
   if (type === "types") {
-    const leaveTypes = await LeaveType.find({});
-    return apiSuccess(leaveTypes, "Berhasil memuat jenis cuti");
-  } else {
-    // Fetch remaining balances
-    const empId = session.user.employeeId;
-    if (!empId) {
-      return apiSuccess([], "Berhasil memuat saldo");
+    const employee = ctx.user.employeeId
+      ? await Employee.findById(ctx.user.employeeId).select("gender").lean<{ gender?: string } | null>()
+      : null;
+
+    const query: Record<string, unknown> = { isActive: { $ne: false } };
+    if (employee?.gender) {
+      // Maternity/paternity types are filtered out rather than shown and then
+      // rejected on submit.
+      query.$or = [{ genderRestriction: "any" }, { genderRestriction: employee.gender }];
     }
-
-    const year = new Date().getFullYear();
-    
-    // Auto-initialize balance if doesn't exist yet for active leave types
-    const leaveTypes = await LeaveType.find({});
-    for (const lt of leaveTypes) {
-      const balanceExists = await LeaveBalance.findOne({
-        employeeId: empId,
-        leaveTypeId: lt._id,
-        year
-      });
-      if (!balanceExists) {
-        await LeaveBalance.create({
-          employeeId: empId,
-          leaveTypeId: lt._id,
-          year,
-          allocatedDays: lt.quotaDays,
-          remainingDays: lt.quotaDays,
-          usedDays: 0,
-          pendingDays: 0
-        });
-      }
-    }
-
-    const balances = await LeaveBalance.find({ employeeId: empId, year })
-      .populate("leaveTypeId");
-
-    // Also fetch historical requests
-    const history = await LeaveRequest.find({ employeeId: empId })
-      .populate("leaveTypeId")
-      .sort({ createdAt: -1 });
-
-    return apiSuccess({ balances, history }, "Berhasil memuat data cuti");
+    const leaveTypes = await LeaveType.find(query).sort({ name: 1 }).lean();
+    return apiSuccess(leaveTypes, "Berhasil memuat jenis izin/cuti");
   }
+
+  if (!ctx.user.employeeId) {
+    return apiSuccess({ balances: [], history: [] }, "Akun ini tidak tertaut ke data karyawan");
+  }
+
+  const year = new Date().getFullYear();
+  const balances = await ensureBalances(ctx.user.employeeId, year);
+
+  const history = await LeaveRequest.find({ employeeId: ctx.user.employeeId })
+    .populate("leaveTypeId", "name colorTone")
+    .populate({ path: "approvalInstanceId", select: "status currentStep stepsStatus" })
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+
+  return apiSuccess({ balances, history, year }, "Berhasil memuat data cuti");
+});
+
+/**
+ * Creates any missing balance rows for the year.
+ *
+ * Prorata types are allocated in proportion to the months remaining after the
+ * join date, which is what the spec asks for and what the previous version
+ * ignored (it always granted the full annual quota).
+ */
+async function ensureBalances(employeeId: string, year: number) {
+  const [types, employee] = await Promise.all([
+    LeaveType.find({ isActive: { $ne: false } }).lean<
+      Array<{ _id: mongoose.Types.ObjectId; name: string; quotaDays: number; accrualMode: string; deductsBalance: boolean }>
+    >(),
+    Employee.findById(employeeId).select("joinDate").lean<{ joinDate?: Date } | null>(),
+  ]);
+
+  const existing = await LeaveBalance.find({ employeeId, year }).lean<
+    Array<{ leaveTypeId: mongoose.Types.ObjectId }>
+  >();
+  const have = new Set(existing.map((b) => b.leaveTypeId.toString()));
+
+  const missing = types.filter((t) => !have.has(t._id.toString()));
+  if (missing.length) {
+    const joinDate = employee?.joinDate ? new Date(employee.joinDate) : null;
+    const joinedThisYear = joinDate && joinDate.getFullYear() === year;
+
+    await LeaveBalance.insertMany(
+      missing.map((t) => {
+        let allocated = t.quotaDays;
+        if (t.accrualMode === "prorata" && joinedThisYear && joinDate) {
+          const remainingMonths = 12 - joinDate.getMonth();
+          allocated = Math.floor((t.quotaDays * remainingMonths) / 12);
+        }
+        return {
+          employeeId,
+          leaveTypeId: t._id,
+          year,
+          allocatedDays: allocated,
+          remainingDays: allocated,
+          usedDays: 0,
+          pendingDays: 0,
+        };
+      }),
+      { ordered: false }
+    ).catch(() => {
+      /* a concurrent request may have inserted the same rows — harmless */
+    });
+  }
+
+  return LeaveBalance.find({ employeeId, year }).populate("leaveTypeId").lean();
+}
+
+/* ------------------------------------------------------------------ */
+/* POST — submit a request                                              */
+/* ------------------------------------------------------------------ */
+
+const createSchema = z.object({
+  leaveTypeId: z.string().regex(/^[0-9a-fA-F]{24}$/, "Jenis cuti tidak valid"),
+  startDate: z.string().min(8),
+  endDate: z.string().min(8),
+  reason: z.string().trim().min(10, "Alasan minimal 10 karakter agar approver dapat menilai").max(1000),
+  /** Data URL of the supporting document, when the type requires one. */
+  evidence: z.string().optional(),
 });
 
 export const POST = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user || !session.user.employeeId) {
-    return apiError("UNAUTHORIZED", "Hanya akun karyawan yang dapat mengajukan cuti", null, 401);
+  const ctx = await requireEmployee(req);
+  enforceRateLimit("leave-create", ctx.employeeId, RATE_RULES.write);
+
+  const body = await parseBody(req, createSchema);
+  const settings = await getSettings();
+
+  const startKey = normalizeDateKey(body.startDate);
+  const endKey = normalizeDateKey(body.endDate);
+  if (inclusiveDayCount(startKey, endKey) < 1) {
+    throw BadRequest("Tanggal selesai tidak boleh lebih awal dari tanggal mulai.");
   }
 
-  const body = await req.json();
-  const { leaveTypeId, startDate, endDate, reason, evidenceUrl } = body;
-
-  if (!leaveTypeId || !startDate || !endDate || !reason) {
-    return apiError("BAD_REQUEST", "Data jenis cuti, tanggal mulai, tanggal selesai, dan alasan wajib disediakan");
+  const leaveType = await LeaveType.findById(body.leaveTypeId);
+  if (!leaveType || leaveType.isActive === false) {
+    throw NotFound("Jenis izin/cuti tidak ditemukan atau sedang dinonaktifkan.");
   }
 
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  
-  if (start.getTime() > end.getTime()) {
-    return apiError("BAD_REQUEST", "Tanggal selesai tidak boleh sebelum tanggal mulai");
+  const employee = await Employee.findById(ctx.employeeId).select("gender name divisionId");
+  if (!employee) throw NotFound("Data karyawan tidak ditemukan.");
+
+  if (leaveType.genderRestriction !== "any" && employee.gender !== leaveType.genderRestriction) {
+    throw Forbidden(`Jenis "${leaveType.name}" tidak tersedia untuk profil Anda.`);
   }
 
-  await connectToDatabase();
-
-  const employeeId = session.user.employeeId;
-  const year = start.getFullYear();
-
-  // 1. Fetch Leave Type Details
-  const lt = await LeaveType.findById(leaveTypeId);
-  if (!lt) {
-    return apiError("NOT_FOUND", "Jenis cuti tidak ditemukan");
-  }
-
-  // 2. Validate Notice Lead Time (H- lead days check)
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diffTimeNotice = start.getTime() - today.getTime();
-  const diffDaysNotice = Math.ceil(diffTimeNotice / (1000 * 60 * 60 * 24));
-  
-  if (diffDaysNotice < lt.minLeadDays) {
-    return apiError(
-      "LEAD_TIME_VIOLATION",
-      `Pengajuan jenis cuti ini minimal harus diajukan H-${lt.minLeadDays} sebelum tanggal mulai.`
+  /* --- lead time ---------------------------------------------------- */
+  const todayKey = wibDateKey();
+  const leadDays = inclusiveDayCount(todayKey, startKey) - 1;
+  if (leadDays < leaveType.minLeadDays) {
+    throw BadRequest(
+      `"${leaveType.name}" harus diajukan minimal H-${leaveType.minLeadDays} sebelum tanggal mulai. ` +
+        `Pengajuan Anda baru H-${Math.max(0, leadDays)}.`
     );
   }
 
-  // 3. Calculate leave duration
-  const diffTime = Math.abs(end.getTime() - start.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // inclusive
-
-  // 4. Verify Leave Balance Availability
-  const balance = await LeaveBalance.findOne({
-    employeeId,
-    leaveTypeId,
-    year
-  });
-
-  if (!balance || balance.remainingDays < diffDays) {
-    return apiError(
-      "INSUFFICIENT_BALANCE",
-      `Saldo cuti tidak mencukupi. Sisa saldo Anda: ${balance?.remainingDays || 0} hari. Pengajuan: ${diffDays} hari.`
+  /* --- duration ----------------------------------------------------- */
+  const breakdown = await countLeaveDays(startKey, endKey);
+  if (breakdown.chargedDays < 1) {
+    throw BadRequest(
+      "Rentang tanggal yang dipilih seluruhnya jatuh pada akhir pekan atau hari libur nasional, sehingga tidak perlu mengajukan cuti."
+    );
+  }
+  if (leaveType.maxConsecutiveDays > 0 && breakdown.chargedDays > leaveType.maxConsecutiveDays) {
+    throw BadRequest(
+      `"${leaveType.name}" maksimal ${leaveType.maxConsecutiveDays} hari per pengajuan. Anda mengajukan ${breakdown.chargedDays} hari.`
     );
   }
 
-  // 5. Create LeaveRequest document
-  const leaveReq = await LeaveRequest.create({
-    employeeId,
-    leaveTypeId,
-    startDate: start,
-    endDate: end,
-    reason,
-    evidenceUrl: evidenceUrl || "",
-    status: "pending",
-  });
+  /* --- overlap ------------------------------------------------------ */
+  if (!settings.leave_allow_overlap) {
+    const clash = await LeaveRequest.findOne({
+      employeeId: ctx.employeeId,
+      status: { $in: ["pending", "approved"] },
+      startDate: { $lte: wibEndOfDay(endKey) },
+      endDate: { $gte: wibStartOfDay(startKey) },
+    })
+      .populate("leaveTypeId", "name")
+      .lean<{ startDate: Date; endDate: Date; leaveTypeId?: { name?: string } } | null>();
 
-  // 6. Look up and trigger Approval Flow
-  const flow = await ApprovalFlow.findOne({ transactionType: "leave" });
-  let approvalInstanceId;
-
-  if (flow) {
-    // Generate approval instance stepsStatus mapping
-    const stepsStatus = flow.steps.map((step: any) => ({
-      stepNumber: step.stepNumber,
-      approverRole: step.approverRole,
-      status: step.stepNumber === 1 ? "pending" : "pending", // will evaluate in order
-    }));
-
-    const inst = await ApprovalInstance.create({
-      refType: "leave",
-      refId: leaveReq._id,
-      currentStep: 1,
-      status: "pending",
-      stepsStatus,
-      history: [
-        {
-          action: "SUBMITTED",
-          userId: session.user.id as any,
-          timestamp: new Date(),
-          comment: "Mengajukan cuti"
-        }
-      ]
-    });
-
-    approvalInstanceId = inst._id;
-    leaveReq.approvalInstanceId = inst._id as any;
-    await leaveReq.save();
-
-    // Trigger Notification to next approver
-    try {
-      const employee = await Employee.findById(employeeId);
-      const targetRoleName = stepsStatus[0].approverRole;
-      const targetRole = await Role.findOne({ name: targetRoleName });
-      if (targetRole && employee) {
-        const approvers = await User.find({ roleId: targetRole._id });
-        for (const app of approvers) {
-          if (app.email) {
-            sendEmail({
-              to: app.email,
-              subject: "Persetujuan Pengajuan Cuti Baru",
-              html: `<p>Halo,</p><p>Karyawan <strong>${employee.name}</strong> mengajukan cuti (${lt.name}) dari tanggal ${startDate} s/d ${endDate} dengan alasan: "${reason}".</p><p>Silakan login ke portal admin untuk menyetujui.</p>`
-            }).catch(console.error);
-          }
-          if (app.phone) {
-            sendWhatsapp({
-              to: app.phone,
-              message: `Halo, pengajuan cuti baru dari ${employee.name} (${lt.name}) membutuhkan persetujuan Anda.`
-            }).catch(console.error);
-          }
-        }
-      }
-    } catch (nErr) {
-      console.error("Gagal mengirim notifikasi pengajuan cuti:", nErr);
+    if (clash) {
+      throw Conflict(
+        `Tanggal ini beririsan dengan pengajuan "${clash.leaveTypeId?.name ?? "cuti"}" Anda ` +
+          `(${formatDate(clash.startDate)} – ${formatDate(clash.endDate)}). Batalkan dulu pengajuan tersebut.`
+      );
     }
   }
 
-  // 7. Lock balances (decrement remaining, increment pending)
-  balance.remainingDays -= diffDays;
-  balance.pendingDays += diffDays;
-  await balance.save();
+  /* --- evidence ----------------------------------------------------- */
+  let evidenceKey = "";
+  const evidenceThreshold = Number(settings.leave_evidence_min_days);
+  const evidenceRequired =
+    leaveType.requiresEvidence && breakdown.chargedDays >= evidenceThreshold;
 
-  // 8. Log audit log
-  await logActivity({
-    userId: session.user.id,
+  if (evidenceRequired && !body.evidence) {
+    throw BadRequest(
+      `"${leaveType.name}" dengan durasi ${breakdown.chargedDays} hari wajib melampirkan bukti (misalnya surat dokter).`
+    );
+  }
+  if (body.evidence) {
+    const { buffer, ext, mime } = decodeDataUrl(body.evidence, [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/pdf",
+    ]);
+    evidenceKey = await storageProvider.upload(
+      buffer,
+      `leaves/${ctx.employeeId}/${Date.now()}${ext}`,
+      mime
+    );
+  }
+
+  /* --- balance ------------------------------------------------------ */
+  const year = Number(startKey.slice(0, 4));
+  await ensureBalances(ctx.employeeId, year);
+
+  let balance = null;
+  if (leaveType.deductsBalance) {
+    // A conditional update is the atomic reservation: it only succeeds when the
+    // balance is still sufficient, so two concurrent submissions cannot both
+    // spend the last day.
+    balance = await LeaveBalance.findOneAndUpdate(
+      {
+        employeeId: ctx.employeeId,
+        leaveTypeId: leaveType._id,
+        year,
+        remainingDays: { $gte: breakdown.chargedDays },
+      },
+      { $inc: { remainingDays: -breakdown.chargedDays, pendingDays: breakdown.chargedDays } },
+      { new: true }
+    );
+
+    if (!balance) {
+      const current = await LeaveBalance.findOne({
+        employeeId: ctx.employeeId,
+        leaveTypeId: leaveType._id,
+        year,
+      }).lean<{ remainingDays: number } | null>();
+      throw Conflict(
+        `Saldo "${leaveType.name}" tidak mencukupi. Sisa saldo Anda ${current?.remainingDays ?? 0} hari, ` +
+          `sedangkan pengajuan ini memerlukan ${breakdown.chargedDays} hari kerja.`
+      );
+    }
+  }
+
+  /* --- persist + route to approvers --------------------------------- */
+  let leaveReq;
+  try {
+    leaveReq = await LeaveRequest.create({
+      employeeId: ctx.employeeId,
+      leaveTypeId: leaveType._id,
+      startDate: wibStartOfDay(startKey),
+      endDate: wibStartOfDay(endKey),
+      chargedDays: breakdown.chargedDays,
+      calendarDays: breakdown.calendarDays,
+      reason: body.reason.trim(),
+      evidenceUrl: evidenceKey,
+      status: "pending",
+    });
+
+    const summary = `${leaveType.name} ${formatDate(startKey)} – ${formatDate(endKey)} (${breakdown.chargedDays} hari)`;
+    const instanceId = await createApprovalInstance({
+      refType: "leave",
+      refId: leaveReq._id as mongoose.Types.ObjectId,
+      employeeId: ctx.employeeId,
+      submitterUserId: ctx.user.id,
+      summary,
+    });
+
+    leaveReq.approvalInstanceId = instanceId;
+    await leaveReq.save();
+  } catch (err) {
+    // Never leave the balance reserved for a request that failed to be created.
+    if (balance) {
+      await LeaveBalance.updateOne(
+        { _id: balance._id },
+        { $inc: { remainingDays: breakdown.chargedDays, pendingDays: -breakdown.chargedDays } }
+      );
+    }
+    throw err;
+  }
+
+  void logActivity({
+    userId: ctx.user.id,
     action: "CREATE_LEAVE_REQUEST",
     module: "leave",
-    before: null,
-    after: leaveReq.toObject(),
-    ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-    userAgent: req.headers.get("user-agent") || "",
+    after: {
+      leaveType: leaveType.name,
+      startKey,
+      endKey,
+      chargedDays: breakdown.chargedDays,
+    },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
   });
 
-  return apiSuccess(leaveReq, `Pengajuan cuti berhasil disubmit. Menunggu persetujuan.`);
+  const skippedNote = breakdown.skipped.length
+    ? ` ${breakdown.skipped.length} hari tidak dipotong (akhir pekan/libur nasional).`
+    : "";
+
+  return apiSuccess(
+    { request: leaveReq.toObject(), breakdown },
+    `Pengajuan ${leaveType.name} sebanyak ${breakdown.chargedDays} hari terkirim dan menunggu persetujuan.${skippedNote}`,
+    undefined,
+    201
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* DELETE — withdraw a request that nobody has actioned yet             */
+/* ------------------------------------------------------------------ */
+
+export const DELETE = wrapRouteHandler(async (req) => {
+  const ctx = await requireEmployee(req);
+  const settings = await getSettings();
+  if (!settings.leave_allow_cancel_pending) {
+    throw Forbidden("Pembatalan pengajuan mandiri sedang dinonaktifkan oleh HRD.");
+  }
+
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) throw BadRequest("ID pengajuan wajib disertakan.");
+
+  const leaveReq = await LeaveRequest.findOne({ _id: id, employeeId: ctx.employeeId });
+  if (!leaveReq) throw NotFound("Pengajuan tidak ditemukan.");
+  if (leaveReq.status !== "pending") {
+    throw Conflict("Hanya pengajuan berstatus menunggu yang dapat dibatalkan.");
+  }
+
+  if (leaveReq.approvalInstanceId) {
+    const instance = await ApprovalInstance.findById(leaveReq.approvalInstanceId).lean<{
+      stepsStatus: Array<{ status: string }>;
+    } | null>();
+    if (instance && !isUntouched(instance)) {
+      throw Conflict(
+        "Pengajuan sudah mulai diproses approver, sehingga tidak dapat dibatalkan sendiri. Hubungi HRD."
+      );
+    }
+    await cancelInstance(leaveReq.approvalInstanceId, ctx.user.id);
+  }
+
+  leaveReq.status = "cancelled";
+  await leaveReq.save();
+
+  const leaveType = await LeaveType.findById(leaveReq.leaveTypeId).lean<{ deductsBalance?: boolean } | null>();
+  if (leaveType?.deductsBalance !== false) {
+    await LeaveBalance.updateOne(
+      {
+        employeeId: ctx.employeeId,
+        leaveTypeId: leaveReq.leaveTypeId,
+        year: new Date(leaveReq.startDate).getFullYear(),
+      },
+      {
+        $inc: {
+          remainingDays: leaveReq.chargedDays ?? 0,
+          pendingDays: -(leaveReq.chargedDays ?? 0),
+        },
+      }
+    );
+  }
+
+  void logActivity({
+    userId: ctx.user.id,
+    action: "CANCEL_LEAVE_REQUEST",
+    module: "leave",
+    after: { id },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
+
+  return apiSuccess({ id }, "Pengajuan dibatalkan dan saldo cuti Anda dikembalikan.");
 });

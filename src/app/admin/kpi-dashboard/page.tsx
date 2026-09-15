@@ -1,766 +1,553 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { 
-  TrendingUp, Users, Settings, Award, Plus, Trash2, CheckCircle2, 
-  AlertCircle, Loader2, BarChart2, ClipboardList, UserCheck, ChevronRight 
+import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  BarChart3,
+  CircleCheck,
+  ClipboardList,
+  Layers,
+  Plus,
+  Printer,
+  Target,
+  Undo2,
+  Users,
 } from "lucide-react";
-import SearchSelect from "@/components/SearchSelect";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  ICON_STROKE,
+  Input,
+  PageHeader,
+  Select,
+  SkeletonCards,
+  SkeletonList,
+  StatCard,
+  Tabs,
+  TableWrap,
+  Td,
+  Th,
+  Tr,
+  cn,
+  type BadgeTone,
+} from "@/components/ui";
+import { useToast } from "@/components/ui/Toast";
+import { api, errorMessage } from "@/lib/client-api";
+import { formatRelative } from "@/lib/time";
+import { KpiTemplateBuilder } from "./KpiTemplateBuilder";
+import { EvaluationForm, type ExistingEvaluation } from "./EvaluationForm";
+import { EVALUATION_STATUS_LABELS } from "@/lib/hr/kpi";
 
-interface KpiIndicator {
-  name: string;
-  weight: number;
-  target: string;
+interface Overview {
+  stats: {
+    totalEvaluations: number;
+    settledEvaluations: number;
+    averageScore: number;
+    templateCount: number;
+    activeEmployees: number;
+    coverage: number | null;
+  };
+  byStatus: Record<string, number>;
+  divisionAverages: Array<{ name: string; average: number; count: number }>;
+  distribution: Array<{ label: string; min: number; count: number }>;
+  topPerformers: Array<{
+    employeeName: string;
+    divisionName: string;
+    finalScore: number;
+    gradeLabel: string;
+    period: string;
+  }>;
+  periods: string[];
 }
 
-interface KpiTemplate {
+interface EvaluationRow {
   _id: string;
-  name: string;
-  divisionId: { _id: string; name: string } | any;
-  indicators: KpiIndicator[];
-}
-
-interface Employee {
-  _id: string;
-  name: string;
-  employeeId: string;
-  divisionId?: { _id: string; name: string } | any;
-}
-
-interface KpiEvaluation {
-  _id: string;
-  employeeId: { name: string; employeeId: string; divisionId?: { name: string } };
-  templateId: { name: string };
   period: string;
   finalScore: number;
-  notes: string;
-  evaluatorId: { name: string };
+  gradeLabel: string;
+  status: string;
+  updatedAt: string;
+  employeeId: {
+    _id: string;
+    name: string;
+    employeeId: string;
+    divisionId?: { name: string } | null;
+    positionId?: { name: string } | null;
+  } | null;
+  templateId: { _id: string; name: string } | null;
 }
 
-export default function KpiDashboardPage() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "grading" | "templates">("dashboard");
+const STATUS_TONE: Record<string, BadgeTone> = {
+  draft: "neutral",
+  submitted: "warning",
+  acknowledged: "info",
+  finalized: "success",
+};
+
+export default function KpiPage() {
+  const [tab, setTab] = useState<"overview" | "evaluations" | "templates">("overview");
+
+  return (
+    <div>
+      <PageHeader
+        title="KPI & Kinerja"
+        description="Susun template penilaian, nilai karyawan, dan pantau hasilnya per divisi."
+      />
+
+      <div className="mb-6">
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { id: "overview", label: "Ringkasan", icon: BarChart3 },
+            { id: "evaluations", label: "Penilaian", icon: ClipboardList },
+            { id: "templates", label: "Template", icon: Layers },
+          ]}
+        />
+      </div>
+
+      {tab === "overview" && <OverviewTab />}
+      {tab === "evaluations" && <EvaluationsTab />}
+      {tab === "templates" && <KpiTemplateBuilder />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+function OverviewTab() {
+  const [data, setData] = useState<Overview | null>(null);
+  const [period, setPeriod] = useState("");
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
-  // Data states
-  const [templates, setTemplates] = useState<KpiTemplate[]>([]);
-  const [evaluations, setEvaluations] = useState<KpiEvaluation[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [divisions, setDivisions] = useState<{ _id: string; name: string }[]>([]);
-  const [selectedDivisionId, setSelectedDivisionId] = useState<string>("");
-
-  // Analytics states
-  const [stats, setStats] = useState({ totalEmployees: 0, totalEvaluated: 0, averageScore: 0, averagePercentage: 0 });
-  const [divisionAverages, setDivisionAverages] = useState<{ name: string; average: number }[]>([]);
-  const [topPerformers, setTopPerformers] = useState<{ employeeName: string; divisionName: string; finalScore: number; period: string }[]>([]);
-
-  // Notification states
-  const [errorMsg, setErrorMsg] = useState("");
-  const [successMsg, setSuccessMsg] = useState("");
-
-  // Template Form Fields
-  const [templateName, setTemplateName] = useState("");
-  const [templateDivisionId, setTemplateDivisionId] = useState("");
-  const [templateIndicators, setTemplateIndicators] = useState<KpiIndicator[]>([
-    { name: "Kedisiplinan & Kehadiran", weight: 20, target: ">= 95%" },
-    { name: "Kualitas Hasil Kerja", weight: 30, target: "Nihil Error/Revisi" },
-    { name: "Penyelesaian Tugas tepat waktu", weight: 30, target: "100% SLA" },
-    { name: "Kerjasama Tim", weight: 20, target: "Feedback Positif" }
-  ]);
-  const [newIndicatorName, setNewIndicatorName] = useState("");
-  const [newIndicatorWeight, setNewIndicatorWeight] = useState(10);
-  const [newIndicatorTarget, setNewIndicatorTarget] = useState("");
-
-  // Grading Form Fields
-  const [gradeEmployeeId, setGradeEmployeeId] = useState("");
-  const [gradeTemplateId, setGradeTemplateId] = useState("");
-  const [gradePeriod, setGradePeriod] = useState("2026-07");
-  const [gradeScores, setGradeScores] = useState<number[]>([]);
-  const [gradeNotes, setGradeNotes] = useState("");
-
-  const fetchDashboardStats = async (divId: string) => {
-    try {
-      const query = divId ? `?type=dashboard&divisionId=${divId}` : "?type=dashboard";
-      const resDash = await fetch(`/api/v1/kpi${query}`);
-      const dataDash = await resDash.json();
-      if (dataDash.success) {
-        setStats(dataDash.data.stats);
-        setDivisionAverages(dataDash.data.divisionAverages || []);
-        setTopPerformers(dataDash.data.topPerformers || []);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const fetchData = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      // 1. Fetch dashboard analytics
-      await fetchDashboardStats(selectedDivisionId);
-
-      // 2. Fetch templates
-      const resTemp = await fetch("/api/v1/kpi?type=templates");
-      const dataTemp = await resTemp.json();
-      if (dataTemp.success) setTemplates(dataTemp.data || []);
-
-      // 3. Fetch evaluations
-      const resEval = await fetch("/api/v1/kpi?type=evaluations");
-      const dataEval = await resEval.json();
-      if (dataEval.success) setEvaluations(dataEval.data || []);
-
-      // 4. Fetch divisions & employees for forms
-      const resDivs = await fetch("/api/v1/divisions");
-      const dataDivs = await resDivs.json();
-      if (dataDivs.success) setDivisions(dataDivs.data || []);
-
-      const resEmps = await fetch("/api/v1/employees");
-      const dataEmps = await resEmps.json();
-      if (dataEmps.success) setEmployees(dataEmps.data || []);
-
+      const res = await api.get<Overview>(`/api/v1/kpi${period ? `?period=${period}` : ""}`);
+      setData(res.data ?? null);
     } catch (err) {
-      console.error(err);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, [period]);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    void load();
+  }, [load]);
 
-  useEffect(() => {
-    if (activeTab === "dashboard") {
-      fetchDashboardStats(selectedDivisionId);
-    }
-  }, [selectedDivisionId, activeTab]);
+  if (loading) return <SkeletonCards count={4} />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
+  if (!data) return null;
 
-  // Update grading scores array size when selected template changes
-  useEffect(() => {
-    const selected = templates.find(t => t._id === gradeTemplateId);
-    if (selected) {
-      setGradeScores(new Array(selected.indicators.length).fill(80));
-    } else {
-      setGradeScores([]);
-    }
-  }, [gradeTemplateId, templates]);
-
-  const handleAddIndicator = () => {
-    if (!newIndicatorName || !newIndicatorTarget) return;
-    const item: KpiIndicator = {
-      name: newIndicatorName,
-      weight: Number(newIndicatorWeight),
-      target: newIndicatorTarget
-    };
-    setTemplateIndicators([...templateIndicators, item]);
-    setNewIndicatorName("");
-    setNewIndicatorTarget("");
-  };
-
-  const handleRemoveIndicator = (index: number) => {
-    setTemplateIndicators(templateIndicators.filter((_, i) => i !== index));
-  };
-
-  const handleSaveTemplate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const totalWeight = templateIndicators.reduce((sum, ind) => sum + ind.weight, 0);
-    if (totalWeight !== 100) {
-      setErrorMsg(`Total bobot indikator harus 100%. Saat ini: ${totalWeight}%`);
-      return;
-    }
-
-    setSubmitting(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-
-    try {
-      const res = await fetch("/api/v1/kpi", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "template",
-          name: templateName,
-          divisionId: templateDivisionId,
-          indicators: templateIndicators
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMsg("Templat KPI berhasil disimpan!");
-        setTemplateName("");
-        setTemplateDivisionId("");
-        fetchData();
-      } else {
-        setErrorMsg(data.message || "Gagal menyimpan templat");
-      }
-    } catch (err) {
-      setErrorMsg("Terjadi kesalahan koneksi.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleGradeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!gradeEmployeeId || !gradeTemplateId) return;
-
-    const selectedTemplate = templates.find(t => t._id === gradeTemplateId);
-    if (!selectedTemplate) return;
-
-    // Build the scores objects
-    const scores = selectedTemplate.indicators.map((ind, idx) => ({
-      indicatorName: ind.name,
-      weight: ind.weight,
-      score: gradeScores[idx] || 0
-    }));
-
-    setSubmitting(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-
-    try {
-      const res = await fetch("/api/v1/kpi", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "evaluation",
-          employeeId: gradeEmployeeId,
-          templateId: gradeTemplateId,
-          period: gradePeriod,
-          scores,
-          notes: gradeNotes
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMsg("Penilaian KPI Karyawan berhasil disimpan!");
-        setGradeEmployeeId("");
-        setGradeTemplateId("");
-        setGradeNotes("");
-        fetchData();
-        setTimeout(() => setActiveTab("dashboard"), 1000);
-      } else {
-        setErrorMsg(data.message || "Gagal menyimpan penilaian");
-      }
-    } catch (err) {
-      setErrorMsg("Terjadi kesalahan jaringan.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const filteredEvaluations = selectedDivisionId
-    ? evaluations.filter((ev) => {
-        const emp = ev.employeeId as any;
-        const empDivId = emp?.divisionId?._id || emp?.divisionId;
-        return empDivId?.toString() === selectedDivisionId;
-      })
-    : evaluations;
+  const maxDivision = Math.max(...data.divisionAverages.map((d) => d.average), 1);
+  const totalDistribution = data.distribution.reduce((n, d) => n + d.count, 0);
 
   return (
-    <div className="space-y-6 font-sans">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 dark:border-white/4 pb-4 gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-slate-700 dark:text-slate-350" />
-            Dashboard KPI & Kinerja Karyawan
-          </h1>
-          <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">
-            Pantau persentase pencapaian KPI bulanan, kelola templat penilaian, dan input penilaian kinerja staf.
-          </p>
-        </div>
-      </div>
-
-
-      {/* Tabs and Filter */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex gap-2 p-1 bg-slate-100 dark:bg-white/2 border border-slate-200 dark:border-white/8 rounded-lg w-fit">
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "dashboard" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+    <div className="space-y-6">
+      {data.periods.length > 0 && (
+        <div className="flex items-center gap-3">
+          <Select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value)}
+            aria-label="Saring periode"
+            className="w-52"
           >
-            <BarChart2 className="w-3.5 h-3.5" />
-            Dashboard Pencapaian
-          </button>
-          <button
-            onClick={() => setActiveTab("grading")}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "grading" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
-          >
-            <UserCheck className="w-3.5 h-3.5" />
-            Penilaian Karyawan
-          </button>
-          <button
-            onClick={() => setActiveTab("templates")}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "templates" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
-          >
-            <Settings className="w-3.5 h-3.5" />
-            Templat KPI Divisi
-          </button>
-        </div>
-
-        {activeTab === "dashboard" && (
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-500 dark:text-slate-400 font-semibold">Filter Divisi:</span>
-            <select
-              value={selectedDivisionId}
-              onChange={(e) => setSelectedDivisionId(e.target.value)}
-              className="px-3 py-1.5 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 text-slate-950 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold cursor-pointer"
-            >
-              <option value="">Semua Divisi (Keseluruhan)</option>
-              {divisions.map((div) => (
-                <option key={div._id} value={div._id}>
-                  {div.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
-
-      {loading ? (
-        <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
-          <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-250" />
-        </div>
-      ) : activeTab === "dashboard" ? (
-        <div className="space-y-6">
-          {/* Stat Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="p-5 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 rounded-xl flex items-center justify-between shadow-xs">
-              <div className="space-y-1">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Rata-rata KPI Perusahaan</span>
-                <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{stats.averageScore}%</div>
-                <p className="text-[9px] text-slate-400">Rasio pencapaian target kumulatif</p>
-              </div>
-              <div className="w-14 h-14 rounded-full border-4 border-slate-100 dark:border-white/5 flex items-center justify-center relative">
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{stats.averageScore}</span>
-              </div>
-            </div>
-
-            <div className="p-5 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 rounded-xl flex items-center justify-between shadow-xs">
-              <div className="space-y-1">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Karyawan Dinilai</span>
-                <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{stats.totalEvaluated} / {stats.totalEmployees}</div>
-                <p className="text-[9px] text-slate-400">Jumlah staf aktif dengan penilaian</p>
-              </div>
-              <Users className="w-10 h-10 text-slate-300 dark:text-white/10" />
-            </div>
-
-            <div className="p-5 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 rounded-xl flex items-center justify-between shadow-xs">
-              <div className="space-y-1">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Templat Aktif</span>
-                <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{templates.length} Divisi</div>
-                <p className="text-[9px] text-slate-400">Rasio bobot kinerja terintegrasi</p>
-              </div>
-              <ClipboardList className="w-10 h-10 text-slate-300 dark:text-white/10" />
-            </div>
-          </div>
-
-          {/* Division Averages Graph (Custom Premium CSS Bar Chart) */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 p-5 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 rounded-xl shadow-xs space-y-4">
-              <div>
-                <h3 className="font-bold text-xs text-slate-900 dark:text-slate-200 uppercase tracking-wider">Pencapaian Rata-Rata KPI Per Divisi</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">Metrik penilaian kumulatif berdasarkan divisi aktif</p>
-              </div>
-
-              {divisionAverages.length === 0 ? (
-                <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-lg flex items-center justify-center text-slate-400 text-xs">
-                  Belum ada data evaluasi divisi untuk divisualisasikan
-                </div>
-              ) : (
-                <div className="flex items-end justify-between gap-4 h-48 pt-6 border-b border-slate-200 dark:border-white/8">
-                  {divisionAverages.map(div => (
-                    <div key={div.name} className="flex-1 flex flex-col items-center gap-2 group relative">
-                      {/* Tooltip on hover */}
-                      <div className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded font-mono font-bold transition-all shadow-md z-10 pointer-events-none">
-                        {div.average}%
-                      </div>
-                      {/* Bar */}
-                      <div 
-                        style={{ height: `${div.average}%` }}
-                        className="w-full max-w-[40px] bg-linear-to-t from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 rounded-t-sm transition-all duration-500 hover:opacity-80"
-                      />
-                      {/* Label */}
-                      <span className="text-[9px] font-semibold text-slate-550 dark:text-slate-400 truncate w-full text-center max-w-[60px]" title={div.name}>
-                        {div.name}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Top Performers */}
-            <div className="p-5 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 rounded-xl shadow-xs space-y-4">
-              <div>
-                <h3 className="font-bold text-xs text-slate-900 dark:text-slate-200 uppercase tracking-wider">Top Performers Karyawan</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">Penghargaan skor KPI tertinggi bulan ini</p>
-              </div>
-
-              <div className="space-y-3">
-                {topPerformers.map((perf, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-white/2 rounded-lg border border-slate-200 dark:border-white/4">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-6 h-6 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 flex items-center justify-center font-bold text-[10px]">
-                        #{idx + 1}
-                      </div>
-                      <div>
-                        <div className="font-bold text-xs text-slate-900 dark:text-slate-200">{perf.employeeName}</div>
-                        <div className="text-[9px] text-slate-400">{perf.divisionName} &bull; Periode: {perf.period}</div>
-                      </div>
-                    </div>
-                    <span className="text-xs font-black text-slate-900 dark:text-slate-100">{perf.finalScore}%</span>
-                  </div>
-                ))}
-                {topPerformers.length === 0 && (
-                  <p className="text-center text-slate-400 text-xs py-8">Belum ada evaluasi tersimpan</p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Evaluations History List */}
-          <div className="space-y-3">
-            <h3 className="font-bold text-xs text-slate-900 dark:text-slate-250 uppercase tracking-wider">Riwayat Pengukuran Evaluasi KPI</h3>
-            <div className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 rounded-xl shadow-xs overflow-hidden">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-white/8 bg-slate-50/50 dark:bg-white/2 text-slate-700 dark:text-slate-400">
-                    <th className="p-4 font-semibold">NIP / Karyawan</th>
-                    <th className="p-4 font-semibold">Periode</th>
-                    <th className="p-4 font-semibold">Templat KPI</th>
-                    <th className="p-4 font-semibold">Skor Akhir</th>
-                    <th className="p-4 font-semibold">Penilai (Evaluator)</th>
-                    <th className="p-4 font-semibold">Catatan Evaluasi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredEvaluations.map((ev) => (
-                    <tr key={ev._id} className="border-b border-slate-200 dark:border-white/4 hover:bg-slate-50/50 dark:hover:bg-white/1 transition-all">
-                      <td className="p-4">
-                        <span className="font-semibold text-slate-900 dark:text-slate-100 block">{ev.employeeId?.name || "Karyawan Dihapus"}</span>
-                        <span className="text-[10px] text-slate-550 dark:text-slate-400 font-mono">{ev.employeeId?.employeeId || "-"}</span>
-                      </td>
-                      <td className="p-4 font-semibold text-slate-900 dark:text-slate-100">{ev.period}</td>
-                      <td className="p-4 text-slate-550 dark:text-slate-450">{ev.templateId?.name || "-"}</td>
-                      <td className="p-4">
-                        <span className={`px-2 py-0.5 rounded font-black ${
-                          ev.finalScore >= 85
-                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                            : ev.finalScore >= 70
-                            ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                            : "bg-red-500/10 text-red-700 dark:text-red-400"
-                        }`}>
-                          {ev.finalScore}%
-                        </span>
-                      </td>
-                      <td className="p-4 text-slate-550 dark:text-slate-400">{ev.evaluatorId?.name || "HRD"}</td>
-                      <td className="p-4 text-slate-500 italic max-w-xs truncate" title={ev.notes}>{ev.notes || "-"}</td>
-                    </tr>
-                  ))}
-                  {filteredEvaluations.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="text-center py-8 text-slate-500 text-xs">Belum ada evaluasi kinerja terdaftar</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      ) : activeTab === "grading" ? (
-        <div className="max-w-2xl bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 rounded-xl p-6 shadow-xs">
-          <div className="pb-4 border-b border-slate-200 dark:border-white/4 mb-4">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 uppercase flex items-center gap-1.5">
-              <Award className="w-4 h-4 text-slate-700 dark:text-slate-350" />
-              Input Hasil Penilaian Karyawan
-            </h3>
-            <p className="text-[10px] text-slate-400">Evaluasi pencapaian bulanan berdasarkan bobot indikator template divisi</p>
-          </div>
-
-          {errorMsg && (
-            <div className="p-3 mb-4 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          {successMsg && (
-            <div className="p-3 mb-4 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{successMsg}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleGradeSubmit} className="space-y-4 text-xs">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex-1 w-full">
-                <SearchSelect
-                  label="Pilih Karyawan"
-                  value={gradeEmployeeId}
-                  onChange={setGradeEmployeeId}
-                  options={employees.map(emp => ({
-                    label: `${emp.name} (${emp.employeeId})`,
-                    value: emp._id
-                  }))}
-                  placeholder="Pilih..."
-                />
-              </div>
-
-              <div className="flex-1 w-full">
-                <SearchSelect
-                  label="Pilih Templat KPI"
-                  value={gradeTemplateId}
-                  onChange={setGradeTemplateId}
-                  options={templates.map(t => ({
-                    label: t.name,
-                    value: t._id
-                  }))}
-                  placeholder="Pilih..."
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-350 uppercase tracking-wider mb-1.5">Periode Penilaian</label>
-                <input
-                  type="month"
-                  required
-                  value={gradePeriod}
-                  onChange={(e) => setGradePeriod(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/2 border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-250 focus:outline-none focus:ring-1 focus:ring-slate-900 text-xs"
-                />
-              </div>
-            </div>
-
-            {/* Dynamic Rendering of Template Indicators */}
-            {gradeTemplateId && (
-              <div className="space-y-4 border-t border-slate-250 dark:border-white/5 pt-4">
-                <h4 className="font-bold text-[11px] text-slate-900 dark:text-slate-200 uppercase tracking-wider">Skor per Indikator KPI:</h4>
-                <div className="space-y-3 bg-slate-50 dark:bg-white/2 p-4 rounded-xl border border-slate-200 dark:border-white/4">
-                  {templates.find(t => t._id === gradeTemplateId)?.indicators.map((ind, idx) => (
-                    <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-b border-slate-200 dark:border-white/4 pb-2 last:border-b-0 last:pb-0">
-                      <div>
-                        <div className="font-bold text-slate-900 dark:text-slate-250">{ind.name}</div>
-                        <div className="text-[10px] text-slate-400">Bobot: {ind.weight}% &bull; Target: {ind.target}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          required
-                          min={0}
-                          max={100}
-                          value={gradeScores[idx] ?? 80}
-                          onChange={(e) => {
-                            const updated = [...gradeScores];
-                            updated[idx] = Number(e.target.value);
-                            setGradeScores(updated);
-                          }}
-                          className="w-16 px-2 py-1 rounded bg-white dark:bg-white/3 border border-slate-200 dark:border-white/8 text-center font-bold text-slate-900 dark:text-slate-100"
-                        />
-                        <span className="text-slate-400 font-bold">/ 100</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-350 uppercase tracking-wider mb-1.5">Catatan/Evaluasi Tambahan</label>
-              <textarea
-                rows={3}
-                value={gradeNotes}
-                onChange={(e) => setGradeNotes(e.target.value)}
-                placeholder="Tuliskan masukan kinerja, pencapaian luar biasa atau area evaluasi..."
-                className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/2 border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-250 focus:outline-none focus:ring-1 focus:ring-slate-900 text-xs"
-              />
-            </div>
-
-            <div className="pt-2 border-t border-slate-200 dark:border-white/4 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setGradeEmployeeId("");
-                  setGradeTemplateId("");
-                  setActiveTab("dashboard");
-                }}
-                className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-700 dark:text-slate-400 hover:bg-slate-100 transition-all cursor-pointer"
-              >
-                Batal
-              </button>
-              <button
-                type="submit"
-                disabled={submitting || !gradeTemplateId || !gradeEmployeeId}
-                className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-xs font-semibold text-white dark:text-slate-900 border border-slate-900 dark:border-white hover:bg-slate-800 dark:hover:bg-slate-100 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-              >
-                {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                Simpan Penilaian
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : (
-        // Templates Configuration
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* List of existing templates */}
-          <div className="space-y-4">
-            <h3 className="font-bold text-xs text-slate-900 dark:text-slate-250 uppercase tracking-wider">Templat KPI Aktif</h3>
-            <div className="space-y-3">
-              {templates.map((temp) => (
-                <div key={temp._id} className="p-4 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 rounded-xl space-y-3">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="font-bold text-xs text-slate-900 dark:text-slate-200">{temp.name}</h4>
-                      <p className="text-[10px] text-slate-400">Divisi: {temp.divisionId?.name || "Divisi Lain"}</p>
-                    </div>
-                  </div>
-                  <div className="space-y-1.5 border-t border-slate-100 dark:border-white/4 pt-2">
-                    {temp.indicators.map((ind, idx) => (
-                      <div key={idx} className="flex justify-between items-center text-[10px] text-slate-550 dark:text-slate-400 font-medium">
-                        <span>{idx + 1}. {ind.name}</span>
-                        <span>{ind.weight}% &bull; Target: {ind.target}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              {templates.length === 0 && (
-                <p className="text-center text-slate-400 text-xs py-8">Belum ada templat KPI terdaftar</p>
-              )}
-            </div>
-          </div>
-
-          {/* Form to create template */}
-          <div className="bg-white dark:bg-[#0a0c14] border border-slate-200 dark:border-white/8 rounded-xl p-5 shadow-xs h-fit space-y-4">
-            <div className="pb-3 border-b border-slate-200 dark:border-white/4">
-              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase flex items-center gap-1.5">
-                <Plus className="w-4 h-4 text-slate-700 dark:text-slate-350" />
-                Buat Templat KPI Divisi Baru
-              </h3>
-            </div>
-
-            {errorMsg && (
-              <div className="p-3 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4" />
-                <span>{errorMsg}</span>
-              </div>
-            )}
-
-            {successMsg && (
-              <div className="p-3 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>{successMsg}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveTemplate} className="space-y-4 text-xs">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-350 uppercase tracking-wider mb-1.5">Nama Templat</label>
-                <input
-                  type="text"
-                  required
-                  value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
-                  placeholder="Contoh: KPI Staff Divisi Teknologi"
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/2 border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-250 focus:outline-none focus:ring-1 focus:ring-slate-900 text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-350 uppercase tracking-wider mb-1.5">Terapkan untuk Divisi</label>
-                <select
-                  required
-                  value={templateDivisionId}
-                  onChange={(e) => setTemplateDivisionId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/2 border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-250 focus:outline-none focus:ring-1 focus:ring-slate-900 text-xs"
-                >
-                  <option value="">-- Pilih --</option>
-                  {divisions.map(d => (
-                    <option key={d._id} value={d._id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Indicators list configuration */}
-              <div className="space-y-2 border-t border-slate-200 dark:border-white/4 pt-3">
-                <label className="font-bold text-slate-700 dark:text-slate-350">Indikator KPI & Bobot (Total Wajib 100%):</label>
-                <div className="space-y-1.5">
-                  {templateIndicators.map((ind, idx) => (
-                    <div key={idx} className="flex justify-between items-center p-2 rounded bg-slate-50 dark:bg-white/3 border border-slate-250 dark:border-white/6">
-                      <div className="font-semibold text-slate-900 dark:text-slate-200">
-                        {ind.name} <span className="text-slate-400">({ind.weight}%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-400 font-mono">Target: {ind.target}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveIndicator(idx)}
-                          className="text-red-500 hover:text-red-700 p-0.5"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Add indicator inline */}
-              <div className="p-3 rounded-lg border border-dashed border-slate-250 dark:border-white/8 space-y-3 bg-slate-50/50">
-                <h4 className="font-bold text-[10px] uppercase text-slate-700 dark:text-slate-350">Tambah Indikator</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    value={newIndicatorName}
-                    onChange={(e) => setNewIndicatorName(e.target.value)}
-                    placeholder="Nama Indikator (e.g. Sales KPI)"
-                    className="px-2 py-1.5 rounded bg-white dark:bg-white/2 border border-slate-250 text-xs text-slate-900 dark:text-slate-250 focus:outline-none"
-                  />
-                  <div className="flex gap-1.5 items-center">
-                    <input
-                      type="number"
-                      value={newIndicatorWeight}
-                      onChange={(e) => setNewIndicatorWeight(Number(e.target.value))}
-                      placeholder="Bobot (e.g. 25)"
-                      className="w-16 px-2 py-1.5 rounded bg-white dark:bg-white/2 border border-slate-250 text-xs text-slate-900 dark:text-slate-250 focus:outline-none text-center"
-                    />
-                    <span className="text-xs text-slate-400 font-bold">%</span>
-                  </div>
-                </div>
-                <input
-                  type="text"
-                  value={newIndicatorTarget}
-                  onChange={(e) => setNewIndicatorTarget(e.target.value)}
-                  placeholder="Target Pencapaian (e.g. >= 100%)"
-                  className="w-full px-2 py-1.5 rounded bg-white dark:bg-white/2 border border-slate-250 text-xs text-slate-900 dark:text-slate-250 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddIndicator}
-                  disabled={!newIndicatorName || !newIndicatorTarget}
-                  className="w-full py-1.5 bg-slate-900 dark:bg-white text-[10px] font-bold text-white dark:text-slate-900 rounded-lg hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
-                >
-                  Tambah Indikator
-                </button>
-              </div>
-
-              <div className="pt-3 border-t border-slate-200 dark:border-white/4 flex justify-end gap-3">
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-xs font-semibold text-white dark:text-slate-900 border border-slate-900 dark:border-white hover:bg-slate-800 dark:hover:bg-slate-100 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                >
-                  {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  Simpan Templat KPI
-                </button>
-              </div>
-            </form>
-          </div>
+            <option value="">Semua periode</option>
+            {data.periods.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </Select>
         </div>
       )}
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Rata-rata nilai"
+          value={data.stats.averageScore.toFixed(1)}
+          hint={`dari ${data.stats.settledEvaluations} penilaian yang sudah dibagikan`}
+          icon={Target}
+          tone="primary"
+        />
+        <StatCard
+          label="Menunggu tanggapan"
+          value={data.byStatus.submitted ?? 0}
+          hint="sudah dikirim, belum ditanggapi karyawan"
+          icon={ClipboardList}
+          tone={data.byStatus.submitted ? "warning" : "neutral"}
+        />
+        <StatCard
+          label="Sudah final"
+          value={data.byStatus.finalized ?? 0}
+          hint="terkunci dan dapat diunduh karyawan"
+          icon={CircleCheck}
+          tone="success"
+        />
+        <StatCard
+          label={period ? "Cakupan periode" : "Karyawan aktif"}
+          value={period && data.stats.coverage !== null ? `${data.stats.coverage}%` : data.stats.activeEmployees}
+          hint={period ? `dari ${data.stats.activeEmployees} karyawan aktif` : `${data.stats.templateCount} template aktif`}
+          icon={Users}
+        />
+      </div>
+
+      {data.byStatus.draft > 0 && (
+        <Alert tone="info" title={`${data.byStatus.draft} penilaian masih berstatus draf`}>
+          Draf hanya terlihat oleh penilainya dan belum sampai ke karyawan. Kirimkan agar karyawan
+          dapat menanggapi.
+        </Alert>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-2 items-start">
+        <Card>
+          <CardHeader
+            title="Rata-rata per divisi"
+            icon={BarChart3}
+            description="Hanya penilaian yang sudah dibagikan ke karyawan yang dihitung."
+          />
+          <CardBody>
+            {data.divisionAverages.length === 0 ? (
+              <p className="text-[13px] text-muted py-6 text-center">Belum ada data penilaian.</p>
+            ) : (
+              <ul className="space-y-4">
+                {data.divisionAverages.map((d) => (
+                  <li key={d.name}>
+                    <div className="flex items-baseline justify-between gap-3 mb-1.5">
+                      <span className="text-[13px] font-medium text-foreground truncate">{d.name}</span>
+                      <span className="text-[13px] text-muted shrink-0">
+                        <strong className="text-foreground tabular-nums">{d.average.toFixed(1)}</strong>
+                        <span className="text-subtle"> · {d.count} orang</span>
+                      </span>
+                    </div>
+                    <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-primary"
+                        style={{ width: `${(d.average / maxDivision) * 100}%` }}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title="Sebaran predikat" icon={Target} />
+          <CardBody>
+            {totalDistribution === 0 ? (
+              <p className="text-[13px] text-muted py-6 text-center">Belum ada data penilaian.</p>
+            ) : (
+              <ul className="space-y-3.5">
+                {data.distribution.map((d, i) => {
+                  const tones = ["bg-success", "bg-primary", "bg-warning", "bg-danger"];
+                  const pct = Math.round((d.count / totalDistribution) * 100);
+                  return (
+                    <li key={d.label}>
+                      <div className="flex items-baseline justify-between gap-3 mb-1.5">
+                        <span className="text-[13px] text-foreground">
+                          {d.label}
+                          <span className="text-subtle"> · ≥ {d.min}</span>
+                        </span>
+                        <span className="text-[13px] text-muted tabular-nums">
+                          {d.count} orang ({pct}%)
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
+                        <div className={cn("h-full rounded-full", tones[i])} style={{ width: `${pct}%` }} />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+
+      {data.topPerformers.length > 0 && (
+        <Card>
+          <CardHeader title="Nilai tertinggi" icon={Target} />
+          <CardBody className="p-0">
+            <TableWrap>
+              <thead>
+                <tr>
+                  <Th>Karyawan</Th>
+                  <Th>Divisi</Th>
+                  <Th>Periode</Th>
+                  <Th className="text-right">Nilai</Th>
+                  <Th>Predikat</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.topPerformers.map((p, i) => (
+                  <Tr key={`${p.employeeName}-${i}`}>
+                    <Td className="font-medium">{p.employeeName}</Td>
+                    <Td className="text-muted">{p.divisionName}</Td>
+                    <Td className="text-muted">{p.period}</Td>
+                    <Td className="text-right font-semibold tabular-nums">
+                      {p.finalScore.toFixed(1)}
+                    </Td>
+                    <Td>
+                      <Badge tone="success">{p.gradeLabel || "—"}</Badge>
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </TableWrap>
+          </CardBody>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+function EvaluationsTab() {
+  const toast = useToast();
+  const [rows, setRows] = useState<EvaluationRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("all");
+  const [period, setPeriod] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<ExistingEvaluation | null>(null);
+  const [confirm, setConfirm] = useState<{ row: EvaluationRow; action: "finalize" | "return" } | null>(
+    null
+  );
+  const [acting, setActing] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const qs = new URLSearchParams();
+      if (status !== "all") qs.set("status", status);
+      if (period.trim()) qs.set("period", period.trim());
+      const res = await api.get<EvaluationRow[]>(`/api/v1/kpi/evaluations?${qs}`);
+      setRows(res.data ?? []);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [status, period]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => void load(), period ? 350 : 0);
+    return () => window.clearTimeout(t);
+  }, [load, period]);
+
+  const openEdit = async (row: EvaluationRow) => {
+    try {
+      const res = await api.get<ExistingEvaluation>(`/api/v1/kpi/evaluations?id=${row._id}`);
+      setEditing(res.data ?? null);
+      setFormOpen(true);
+    } catch (err) {
+      toast.error("Gagal memuat penilaian", errorMessage(err));
+    }
+  };
+
+  const act = async () => {
+    if (!confirm) return;
+    setActing(true);
+    try {
+      const res = await api.patch("/api/v1/kpi/evaluations", {
+        id: confirm.row._id,
+        action: confirm.action,
+      });
+      toast.success("Berhasil", res.message);
+      setConfirm(null);
+      await load();
+    } catch (err) {
+      toast.error("Gagal memproses", errorMessage(err));
+    } finally {
+      setActing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <Select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          aria-label="Saring status"
+          className="w-52"
+        >
+          <option value="all">Semua status</option>
+          {Object.entries(EVALUATION_STATUS_LABELS).map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
+        </Select>
+        <Input
+          value={period}
+          onChange={(e) => setPeriod(e.target.value)}
+          placeholder="Periode, misalnya 2026-Q3"
+          aria-label="Saring periode"
+          className="w-56"
+        />
+        <Button
+          icon={Plus}
+          className="ml-auto"
+          onClick={() => {
+            setEditing(null);
+            setFormOpen(true);
+          }}
+        >
+          Buat penilaian
+        </Button>
+      </div>
+
+      {error && <ErrorState message={error} onRetry={load} />}
+
+      {loading ? (
+        <SkeletonList rows={4} />
+      ) : rows.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={ClipboardList}
+            title="Belum ada penilaian"
+            description="Buat penilaian pertama dengan memilih karyawan, template, dan periodenya."
+            action={
+              <Button
+                size="sm"
+                icon={Plus}
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(true);
+                }}
+              >
+                Buat penilaian
+              </Button>
+            }
+          />
+        </Card>
+      ) : (
+        <Card>
+          <CardBody className="p-0">
+            <TableWrap>
+              <thead>
+                <tr>
+                  <Th>Karyawan</Th>
+                  <Th>Template</Th>
+                  <Th>Periode</Th>
+                  <Th className="text-right">Nilai</Th>
+                  <Th>Status</Th>
+                  <Th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <Tr key={row._id}>
+                    <Td>
+                      <span className="block text-[13px] font-medium text-foreground">
+                        {row.employeeId?.name ?? "Karyawan dihapus"}
+                      </span>
+                      <span className="block text-xs text-subtle mt-0.5">
+                        {row.employeeId?.divisionId?.name ?? "—"}
+                      </span>
+                    </Td>
+                    <Td className="text-muted text-[13px]">{row.templateId?.name ?? "—"}</Td>
+                    <Td className="text-muted text-[13px]">{row.period}</Td>
+                    <Td className="text-right">
+                      <span className="text-[14px] font-semibold tabular-nums">
+                        {row.finalScore.toFixed(1)}
+                      </span>
+                      {row.gradeLabel && (
+                        <span className="block text-[11px] text-subtle mt-0.5">{row.gradeLabel}</span>
+                      )}
+                    </Td>
+                    <Td>
+                      <Badge tone={STATUS_TONE[row.status] ?? "neutral"} dot>
+                        {EVALUATION_STATUS_LABELS[row.status as keyof typeof EVALUATION_STATUS_LABELS] ??
+                          row.status}
+                      </Badge>
+                      <span className="block text-[11px] text-subtle mt-1">
+                        {formatRelative(row.updatedAt)}
+                      </span>
+                    </Td>
+                    <Td>
+                      <div className="flex items-center justify-end gap-1">
+                        {row.status !== "finalized" && (
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(row)}>
+                            Ubah
+                          </Button>
+                        )}
+                        {row.status === "submitted" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={Undo2}
+                            onClick={() => setConfirm({ row, action: "return" })}
+                          >
+                            Tarik
+                          </Button>
+                        )}
+                        {(row.status === "acknowledged" || row.status === "submitted") && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={CircleCheck}
+                            className="text-success"
+                            onClick={() => setConfirm({ row, action: "finalize" })}
+                          >
+                            Finalkan
+                          </Button>
+                        )}
+                        <Link href={`/print/kpi/${row._id}`} target="_blank">
+                          <Button variant="ghost" size="sm" icon={Printer}>
+                            Cetak
+                          </Button>
+                        </Link>
+                      </div>
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </TableWrap>
+          </CardBody>
+        </Card>
+      )}
+
+      <EvaluationForm
+        open={formOpen}
+        existing={editing}
+        onClose={() => setFormOpen(false)}
+        onSaved={() => {
+          setFormOpen(false);
+          void load();
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(confirm)}
+        onClose={() => setConfirm(null)}
+        onConfirm={act}
+        loading={acting}
+        tone={confirm?.action === "finalize" ? "primary" : "danger"}
+        title={confirm?.action === "finalize" ? "Finalkan penilaian?" : "Tarik kembali penilaian?"}
+        confirmLabel={confirm?.action === "finalize" ? "Ya, finalkan" : "Ya, tarik"}
+        message={
+          confirm?.action === "finalize"
+            ? `Penilaian ${confirm.row.employeeId?.name ?? ""} periode ${confirm?.row.period} akan dikunci dan tidak dapat diubah lagi. Karyawan menerima notifikasi dan dapat mengunduh dokumennya.`
+            : `Penilaian akan kembali menjadi draf dan hilang dari portal karyawan sampai Anda mengirimkannya lagi.`
+        }
+      />
     </div>
   );
 }

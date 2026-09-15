@@ -1,303 +1,591 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import React, { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { 
-  User, KeyRound, ShieldCheck, Mail, Loader2, AlertCircle, CheckCircle2, 
-  Sun, Moon, Lock, Info, ExternalLink
+import {
+  Briefcase,
+  Building2,
+  IdCard,
+  KeyRound,
+  Landmark,
+  Mail,
+  Save,
+  ShieldCheck,
+  UserRound,
 } from "lucide-react";
-import { motion } from "framer-motion";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  ErrorState,
+  Field,
+  Input,
+  SkeletonList,
+  Tabs,
+} from "@/components/ui";
+import { PasswordInput } from "@/components/auth/AuthShell";
+import { useToast } from "@/components/ui/Toast";
+import { api, errorMessage } from "@/lib/client-api";
+import { formatDate } from "@/lib/time";
+import { EMPLOYEE_STATUS_LABELS, EMPLOYMENT_STATUS_LABELS } from "@/lib/hr/labels";
 
-export default function ProfilePage() {
-  const { data: session, status } = useSession();
-  const router = useRouter();
+interface Profile {
+  _id: string;
+  employeeId: string;
+  name: string;
+  nik: string;
+  npwp: string;
+  birthPlace: string;
+  birthDate?: string;
+  gender?: string;
+  religion: string;
+  maritalStatus: string;
+  taxStatus: string;
+  bpjsKesehatan: string;
+  bpjsKetenagakerjaan: string;
+  personalEmail: string;
+  officeEmail: string;
+  phone: string;
+  photoUrl: string;
+  isPiiMasked: boolean;
+  ktpAddress?: Record<string, string>;
+  domicileAddress?: Record<string, string>;
+  socialMedia?: Record<string, string>;
+  bankAccount?: { bankName: string; accountNumber: string; accountHolder: string };
+  branchId?: { name: string } | null;
+  divisionId?: { name: string } | null;
+  positionId?: { name: string } | null;
+  supervisorId?: { name: string; employeeId: string } | null;
+  joinDate?: string;
+  employmentStatus: string;
+  status: string;
+}
 
-  const [loadingProfile, setLoadingProfile] = useState(true);
-  const [profile, setProfile] = useState<any>(null);
+export default function ProfilePageWrapper() {
+  return (
+    <Suspense fallback={<SkeletonList rows={4} />}>
+      <ProfilePage />
+    </Suspense>
+  );
+}
 
-  // Change password states
-  const [code, setCode] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+function ProfilePage() {
+  const { data: session, update: updateSession } = useSession();
+  const params = useSearchParams();
+  const forced = params.get("force_password") === "1";
 
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
+  const [tab, setTab] = useState<"profile" | "security">(forced ? "security" : "profile");
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const employeeId = session?.user?.employeeId;
 
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/auth/login");
-    } else if (status === "authenticated") {
-      fetchProfile();
-    }
-  }, [status]);
-
-  useEffect(() => {
-    const savedTheme = localStorage.getItem("theme") as "light" | "dark" | null;
-    const activeTheme = savedTheme || "dark";
-    setTheme(activeTheme);
-    if (activeTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    const nextTheme = theme === "dark" ? "light" : "dark";
-    setTheme(nextTheme);
-    localStorage.setItem("theme", nextTheme);
-    if (nextTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
-
-  const fetchProfile = async () => {
-    if (!session?.user?.employeeId) {
-      setLoadingProfile(false);
+  const load = useCallback(async () => {
+    if (!employeeId) {
+      setLoading(false);
       return;
     }
-    setLoadingProfile(true);
+    setError("");
     try {
-      const res = await fetch(`/api/v1/employees/${session.user.employeeId}`);
-      const data = await res.json();
-      if (data.success) {
-        setProfile(data.data);
-      }
+      const res = await api.get<Profile>(`/api/v1/employees/${employeeId}`);
+      setProfile(res.data ?? null);
     } catch (err) {
-      console.error("Gagal memuat profil:", err);
+      setError(errorMessage(err));
     } finally {
-      setLoadingProfile(false);
+      setLoading(false);
     }
-  };
+  }, [employeeId]);
 
-  const handleSendOTP = async () => {
-    setSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-    try {
-      const res = await fetch("/api/v1/auth/change-password-verify", { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMessage("Kode verifikasi OTP telah dikirim ke email Anda");
-        setOtpSent(true);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal mengirim kode verifikasi");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi ke server");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const res = await fetch("/api/v1/auth/change-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, newPassword }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMessage("Kata sandi Anda berhasil diperbarui!");
-        setCode("");
-        setNewPassword("");
-        setOtpSent(false);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal mengubah kata sandi");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi ke server");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  if (status === "loading" || status === "unauthenticated") {
+  if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-[#07080d] flex items-center justify-center text-slate-550 dark:text-slate-400">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
+      <div className="space-y-6">
+        <div className="skeleton h-8 w-52" />
+        <SkeletonList rows={4} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#07080d] text-slate-900 dark:text-slate-100 transition-colors duration-300 font-sans p-6 md:p-12 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-size-[14px_24px] pointer-events-none" />
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-[26px] md:text-[30px] text-heading">Profil &amp; Keamanan</h1>
+        <p className="text-sm text-muted mt-2 leading-relaxed">
+          Perbarui data kontak Anda dan kelola kata sandi akun.
+        </p>
+      </header>
 
-      <div className="max-w-4xl mx-auto space-y-8 relative z-10">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-6">
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white">
-              Profil Saya & Pengaturan Keamanan
-            </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-550 dark:text-slate-400 mt-1">
-              Kelola informasi profil pribadi Anda dan perbarui kata sandi dengan aman.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => router.push("/portal/attendance")}
-              className="px-4 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-300 dark:border-white/8 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-white/4 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
-            >
-              Portal Presensi
-            </button>
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg bg-slate-200/50 dark:bg-white/3 border border-slate-300/40 dark:border-white/8 hover:bg-slate-200 dark:hover:bg-white/8 transition-all cursor-pointer text-slate-600 dark:text-slate-300"
-            >
-              {theme === "dark" ? <Sun className="w-4.5 h-4.5 text-amber-400" /> : <Moon className="w-4.5 h-4.5" />}
-            </button>
-          </div>
-        </div>
+      {forced && (
+        <Alert tone="warning" title="Anda wajib mengganti kata sandi terlebih dahulu">
+          Akun Anda masih memakai kata sandi awal dari HRD. Ganti kata sandi sekarang untuk membuka
+          akses ke seluruh menu sistem.
+        </Alert>
+      )}
 
-        {errorMessage && (
-          <div className="p-3.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{errorMessage}</span>
-          </div>
-        )}
+      {error && <ErrorState message={error} onRetry={load} />}
 
-        {successMessage && (
-          <div className="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{successMessage}</span>
-          </div>
-        )}
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: "profile", label: "Data Diri", icon: UserRound },
+          { id: "security", label: "Keamanan Akun", icon: ShieldCheck },
+        ]}
+      />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-          {/* Profile Card Section */}
-          <div className="bg-white dark:bg-white/2 border border-slate-200 dark:border-white/6 rounded-2xl p-6 space-y-6">
-            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-200 dark:border-white/4 flex items-center gap-1.5">
-              <User className="w-4.5 h-4.5 text-slate-700 dark:text-slate-300" /> Informasi Karyawan
-            </h2>
+      {tab === "profile" ? (
+        !employeeId ? (
+          <Card>
+            <CardBody>
+              <Alert tone="info" title="Akun administrasi">
+                Akun ini tidak tertaut ke data karyawan, sehingga tidak memiliki profil kepegawaian.
+                Anda tetap dapat mengganti kata sandi di tab Keamanan Akun.
+              </Alert>
+            </CardBody>
+          </Card>
+        ) : profile ? (
+          <ProfileTab profile={profile} onSaved={load} />
+        ) : null
+      ) : (
+        <SecurityTab
+          onChanged={async () => {
+            // Clears the forced-change gate without making the user sign in again.
+            await updateSession?.({ mustChangePassword: false });
+            window.location.href = "/portal/attendance";
+          }}
+        />
+      )}
+    </div>
+  );
+}
 
-            {loadingProfile ? (
-              <div className="h-48 flex items-center justify-center">
-                <Loader2 className="w-6 h-6 animate-spin text-slate-800 dark:text-slate-200" />
+/* ------------------------------------------------------------------ */
+
+function ProfileTab({ profile, onSaved }: { profile: Profile; onSaved: () => void }) {
+  const toast = useToast();
+  const [phone, setPhone] = useState(profile.phone ?? "");
+  const [personalEmail, setPersonalEmail] = useState(profile.personalEmail ?? "");
+  const [domicile, setDomicile] = useState({
+    street: profile.domicileAddress?.street ?? "",
+    subdistrict: profile.domicileAddress?.subdistrict ?? "",
+    city: profile.domicileAddress?.city ?? "",
+    province: profile.domicileAddress?.province ?? "",
+    country: profile.domicileAddress?.country ?? "Indonesia",
+  });
+  const [social, setSocial] = useState<Record<string, string>>({
+    linkedIn: profile.socialMedia?.linkedIn ?? "",
+    instagram: profile.socialMedia?.instagram ?? "",
+    whatsApp: profile.socialMedia?.whatsApp ?? "",
+    website: profile.socialMedia?.website ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await api.patch(`/api/v1/employees/${profile._id}`, {
+        phone: phone.trim() || undefined,
+        personalEmail: personalEmail.trim(),
+        domicileAddress: domicile,
+        socialMedia: social,
+      });
+      toast.success("Profil diperbarui", res.message);
+      onSaved();
+    } catch (err) {
+      toast.error("Gagal menyimpan", errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[340px_1fr] items-start">
+      {/* Read-only identity summary */}
+      <div className="space-y-6">
+        <Card>
+          <CardBody className="text-center">
+            <span className="inline-grid place-items-center w-20 h-20 rounded-2xl bg-primary-soft text-primary text-xl font-semibold mb-3">
+              {profile.name
+                .split(" ")
+                .slice(0, 2)
+                .map((p) => p[0])
+                .join("")
+                .toUpperCase()}
+            </span>
+            <h2 className="text-base font-semibold">{profile.name}</h2>
+            <p className="text-xs text-muted mt-0.5">{profile.positionId?.name ?? "Jabatan belum diatur"}</p>
+            <p className="text-[11px] font-mono text-subtle mt-1">{profile.employeeId}</p>
+            <div className="flex flex-wrap items-center justify-center gap-1.5 mt-3">
+              <Badge tone={profile.status === "active" ? "success" : "info"}>
+                {EMPLOYEE_STATUS_LABELS[profile.status] ?? profile.status}
+              </Badge>
+              <Badge tone="neutral">
+                {EMPLOYMENT_STATUS_LABELS[profile.employmentStatus] ?? profile.employmentStatus}
+              </Badge>
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader icon={Briefcase} title="Penempatan" />
+          <CardBody className="space-y-3">
+            <ReadRow icon={Building2} label="Cabang" value={profile.branchId?.name} />
+            <ReadRow icon={Briefcase} label="Divisi" value={profile.divisionId?.name} />
+            <ReadRow
+              icon={UserRound}
+              label="Atasan langsung"
+              value={profile.supervisorId?.name}
+            />
+            <ReadRow icon={Mail} label="Email kantor" value={profile.officeEmail} />
+            <ReadRow
+              icon={IdCard}
+              label="Tanggal masuk"
+              value={profile.joinDate ? formatDate(profile.joinDate) : undefined}
+            />
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader icon={Landmark} title="Data administratif" description="Hanya dapat diubah oleh HRD." />
+          <CardBody className="space-y-3">
+            <ReadRow icon={IdCard} label="NIK (KTP)" value={profile.nik} mono />
+            <ReadRow icon={IdCard} label="NPWP" value={profile.npwp} mono />
+            <ReadRow icon={IdCard} label="Status pajak" value={profile.taxStatus} />
+            <ReadRow icon={Landmark} label="BPJS Kesehatan" value={profile.bpjsKesehatan} mono />
+            <ReadRow icon={Landmark} label="BPJS Ketenagakerjaan" value={profile.bpjsKetenagakerjaan} mono />
+            <ReadRow
+              icon={Landmark}
+              label="Rekening"
+              value={
+                profile.bankAccount?.accountNumber
+                  ? `${profile.bankAccount.bankName} — ${profile.bankAccount.accountNumber}`
+                  : undefined
+              }
+              mono
+            />
+          </CardBody>
+        </Card>
+      </div>
+
+      {/* Editable */}
+      <Card>
+        <CardHeader
+          icon={UserRound}
+          title="Data yang dapat Anda ubah sendiri"
+          description="Perubahan NIK, NPWP, dan rekening harus melalui HRD demi validitas data payroll."
+          actions={
+            <Button size="sm" icon={Save} type="submit" form="profile-form" loading={saving}>
+              Simpan
+            </Button>
+          }
+        />
+        <CardBody>
+          <form id="profile-form" onSubmit={save} className="space-y-6">
+            <section className="space-y-4">
+              <h3 className="eyebrow">Kontak</h3>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <Field label="Nomor HP / WhatsApp" htmlFor="pf-phone">
+                  <Input
+                    id="pf-phone"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="08xxxxxxxxxx"
+                  />
+                </Field>
+                <Field label="Email pribadi" htmlFor="pf-email" hint="Dipakai untuk kode verifikasi bila email kantor tidak dapat diakses.">
+                  <Input
+                    id="pf-email"
+                    type="email"
+                    value={personalEmail}
+                    onChange={(e) => setPersonalEmail(e.target.value)}
+                    placeholder="nama@gmail.com"
+                  />
+                </Field>
               </div>
-            ) : profile ? (
-              <div className="space-y-4 text-xs text-slate-600 dark:text-slate-550 dark:text-slate-400">
-                <div className="p-4 rounded-xl bg-slate-100/50 dark:bg-white/1 border border-slate-200 dark:border-white/4 space-y-2">
-                  <p className="text-[10px] text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider">Biodata Diri</p>
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200">{profile.name}</p>
-                  <p className="font-mono">NIP: {profile.employeeId}</p>
-                </div>
+            </section>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-550 dark:text-slate-400 block font-semibold uppercase tracking-wider">Cabang Kantor</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{profile.branchId?.name || "-"}</span>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-550 dark:text-slate-400 block font-semibold uppercase tracking-wider">Jabatan</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{profile.positionId?.name || "-"}</span>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <span className="text-[10px] text-slate-550 dark:text-slate-400 block font-semibold uppercase tracking-wider">Email Kantor</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{profile.officeEmail}</span>
-                </div>
+            <section className="space-y-4">
+              <h3 className="eyebrow">
+                Alamat domisili saat ini
+              </h3>
+              <Field label="Jalan / nomor rumah" htmlFor="pf-street">
+                <Input
+                  id="pf-street"
+                  value={domicile.street}
+                  onChange={(e) => setDomicile({ ...domicile, street: e.target.value })}
+                />
+              </Field>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <Field label="Kecamatan" htmlFor="pf-sub">
+                  <Input
+                    id="pf-sub"
+                    value={domicile.subdistrict}
+                    onChange={(e) => setDomicile({ ...domicile, subdistrict: e.target.value })}
+                  />
+                </Field>
+                <Field label="Kota / kabupaten" htmlFor="pf-city">
+                  <Input
+                    id="pf-city"
+                    value={domicile.city}
+                    onChange={(e) => setDomicile({ ...domicile, city: e.target.value })}
+                  />
+                </Field>
+                <Field label="Provinsi" htmlFor="pf-prov">
+                  <Input
+                    id="pf-prov"
+                    value={domicile.province}
+                    onChange={(e) => setDomicile({ ...domicile, province: e.target.value })}
+                  />
+                </Field>
+                <Field label="Negara" htmlFor="pf-country">
+                  <Input
+                    id="pf-country"
+                    value={domicile.country}
+                    onChange={(e) => setDomicile({ ...domicile, country: e.target.value })}
+                  />
+                </Field>
               </div>
-            ) : (
-              <p className="text-xs text-slate-500 italic">
-                {!session?.user?.employeeId 
-                  ? "Akun Anda adalah akun sistem (Superadmin) dan tidak terhubung ke profil data karyawan." 
-                  : "Profil karyawan tidak ditemukan."}
-              </p>
-            )}
-          </div>
+            </section>
 
-          {/* Change Password Section */}
-          <div className="bg-white dark:bg-white/2 border border-slate-200 dark:border-white/6 rounded-2xl p-6 space-y-6">
-            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-200 dark:border-white/4 flex items-center gap-1.5">
-              <Lock className="w-4.5 h-4.5 text-purple-500" /> Perbarui Kata Sandi
-            </h2>
-
-            {!otpSent ? (
-              <div className="space-y-4 text-xs">
-                <div className="p-3.5 rounded-lg bg-slate-500/2 border border-blue-500/10 text-slate-500 dark:text-slate-550 dark:text-slate-400 flex items-start gap-2">
-                  <Info className="w-4 h-4 shrink-0 mt-0.5 text-slate-700 dark:text-slate-300" />
-                  <span>Untuk alasan keamanan, ganti password wajib memverifikasi email Anda terlebih dahulu dengan kode OTP.</span>
-                </div>
-                <button
-                  onClick={handleSendOTP}
-                  disabled={submitting}
-                  className="w-full py-2.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  Kirim Kode Verifikasi ke Email
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={handleChangePasswordSubmit} className="space-y-4 text-xs">
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-600 dark:text-slate-300">Kode Verifikasi OTP (6 Digit)</label>
-                  <div className="relative">
-                    <ShieldCheck className="absolute left-3 top-3 w-4 h-4 text-slate-550 dark:text-slate-400" />
-                    <input
-                      type="text"
-                      required
-                      maxLength={6}
-                      value={code}
-                      onChange={e => setCode(e.target.value)}
-                      placeholder="123456"
-                      className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-100/50 dark:bg-white/2 border border-slate-300 dark:border-white/8 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono tracking-widest placeholder:text-slate-550 dark:placeholder:text-slate-600"
+            <section className="space-y-4">
+              <h3 className="eyebrow">
+                Media sosial (opsional)
+              </h3>
+              <div className="grid sm:grid-cols-2 gap-4">
+                {(
+                  [
+                    ["linkedIn", "LinkedIn"],
+                    ["instagram", "Instagram"],
+                    ["whatsApp", "WhatsApp"],
+                    ["website", "Website pribadi"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <Field key={key} label={label} htmlFor={`pf-${key}`}>
+                    <Input
+                      id={`pf-${key}`}
+                      value={social[key] ?? ""}
+                      onChange={(e) => setSocial({ ...social, [key]: e.target.value })}
                     />
-                  </div>
-                </div>
+                  </Field>
+                ))}
+              </div>
+            </section>
+          </form>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
 
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-600 dark:text-slate-300">Kata Sandi Baru</label>
-                  <div className="relative">
-                    <KeyRound className="absolute left-3 top-3 w-4 h-4 text-slate-550 dark:text-slate-400" />
-                    <input
-                      type="password"
-                      required
-                      value={newPassword}
-                      onChange={e => setNewPassword(e.target.value)}
-                      placeholder="Minimal 6 karakter"
-                      className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-100/50 dark:bg-white/2 border border-slate-300 dark:border-white/8 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-550 dark:placeholder:text-slate-600"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setOtpSent(false)}
-                    className="flex-1 py-2.5 rounded-lg border border-slate-300 dark:border-white/8 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="flex-1 py-2.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.99] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    Simpan Password
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
+function ReadRow({
+  icon: Icon,
+  label,
+  value,
+  mono,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value?: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <Icon className="w-3.5 h-3.5 text-subtle shrink-0 mt-0.5" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] uppercase tracking-wide text-subtle">{label}</p>
+        <p className={`text-xs mt-0.5 break-words ${mono ? "font-mono" : ""} ${value ? "" : "text-subtle italic"}`}>
+          {value || "Belum diisi"}
+        </p>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+function SecurityTab({ onChanged }: { onChanged: () => void }) {
+  const toast = useToast();
+  const [step, setStep] = useState<"request" | "verify">("request");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [maskedEmail, setMaskedEmail] = useState("");
+
+  const requestOtp = async () => {
+    setLoading(true);
+    try {
+      const res = await api.post<{ email: string }>("/api/v1/auth/change-password-verify");
+      setMaskedEmail(res.data?.email ?? "");
+      toast.info("Kode dikirim", res.message);
+      setStep("verify");
+    } catch (err) {
+      toast.error("Gagal mengirim kode", errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword !== confirm) {
+      toast.error("Konfirmasi tidak cocok", "Kata sandi baru dan konfirmasinya harus sama.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await api.post("/api/v1/auth/change-password", {
+        currentPassword,
+        code: code.trim(),
+        newPassword,
+      });
+      toast.success("Kata sandi diganti", res.message);
+      onChanged();
+    } catch (err) {
+      toast.error("Gagal mengganti kata sandi", errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2 items-start">
+      <Card>
+        <CardHeader
+          icon={KeyRound}
+          title="Ganti kata sandi"
+          description="Diverifikasi dengan kata sandi lama dan kode yang dikirim ke email Anda."
+        />
+        <CardBody>
+          {step === "request" ? (
+            <div className="space-y-4">
+              <Alert tone="info">
+                Kami akan mengirim kode verifikasi 6 angka ke email akun Anda. Kode berlaku 10 menit.
+              </Alert>
+              <Button onClick={requestOtp} loading={loading} className="w-full justify-center" size="lg">
+                Kirim kode verifikasi
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={submit} className="space-y-4">
+              {maskedEmail && (
+                <Alert tone="success">Kode verifikasi telah dikirim ke {maskedEmail}.</Alert>
+              )}
+
+              <Field label="Kata sandi saat ini" required htmlFor="sec-current">
+                <PasswordInput
+                  id="sec-current"
+                  value={currentPassword}
+                  onChange={setCurrentPassword}
+                  placeholder="••••••••"
+                />
+              </Field>
+
+              <Field label="Kode verifikasi" required htmlFor="sec-code">
+                <Input
+                  id="sec-code"
+                  inputMode="numeric"
+                  maxLength={6}
+                  required
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="000000"
+                  className="text-center text-lg tracking-[0.5em] font-semibold"
+                />
+              </Field>
+
+              <Field
+                label="Kata sandi baru"
+                required
+                htmlFor="sec-new"
+                hint="Minimal 10 karakter, memuat huruf besar, huruf kecil, dan angka."
+              >
+                <PasswordInput
+                  id="sec-new"
+                  value={newPassword}
+                  onChange={setNewPassword}
+                  autoComplete="new-password"
+                  placeholder="••••••••••"
+                />
+              </Field>
+
+              <Field
+                label="Ulangi kata sandi baru"
+                required
+                htmlFor="sec-confirm"
+                error={confirm && confirm !== newPassword ? "Konfirmasi belum cocok." : undefined}
+              >
+                <PasswordInput
+                  id="sec-confirm"
+                  value={confirm}
+                  onChange={setConfirm}
+                  autoComplete="new-password"
+                  placeholder="••••••••••"
+                />
+              </Field>
+
+              <Button type="submit" loading={loading} className="w-full justify-center" size="lg">
+                Simpan kata sandi baru
+              </Button>
+
+              <button
+                type="button"
+                onClick={() => setStep("request")}
+                className="w-full text-xs text-muted hover:text-foreground cursor-pointer"
+              >
+                Kode tidak diterima? Kirim ulang
+              </button>
+            </form>
+          )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader icon={ShieldCheck} title="Tips menjaga keamanan akun" />
+        <CardBody>
+          <ul className="space-y-3 text-xs text-muted leading-relaxed">
+            <Tip>
+              Jangan pernah membagikan kata sandi atau kode verifikasi kepada siapa pun, termasuk
+              yang mengaku sebagai staf HRD atau IT.
+            </Tip>
+            <Tip>
+              Gunakan kata sandi yang berbeda dari akun lain. Kebocoran di layanan lain tidak boleh
+              ikut membuka akun HRIS Anda.
+            </Tip>
+            <Tip>
+              Akun terkunci sementara setelah beberapa kali gagal login. Bila terkunci, tunggu
+              beberapa menit atau gunakan menu Lupa Kata Sandi.
+            </Tip>
+            <Tip>
+              Seluruh aktivitas login, persetujuan, dan akses slip gaji tercatat di log audit dan
+              dapat ditelusuri bila terjadi penyalahgunaan.
+            </Tip>
+            <Tip>
+              Selalu keluar dari akun setelah memakai perangkat bersama, terutama komputer kantor
+              yang dipakai bergantian.
+            </Tip>
+          </ul>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function Tip({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex gap-2.5">
+      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-primary shrink-0" aria-hidden />
+      <span>{children}</span>
+    </li>
   );
 }

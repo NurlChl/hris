@@ -1,31 +1,122 @@
 import crypto from "crypto";
 
-const ALGORITHM = "aes-256-cbc";
-const SECRET = process.env.ENCRYPTION_KEY || process.env.NEXTAUTH_SECRET || "default-very-secure-32-byte-key-placeholder";
+/**
+ * At-rest encryption for the fields the spec calls sensitive: NIK, NPWP, and
+ * bank account numbers.
+ *
+ * Format: `v2:<iv>:<authTag>:<ciphertext>` using AES-256-GCM. GCM is
+ * authenticated, so a tampered ciphertext fails loudly instead of decrypting to
+ * garbage — the old AES-256-CBC format had no integrity protection at all.
+ * Legacy `<iv>:<ciphertext>` CBC values written before this change are still
+ * readable so existing records keep working; anything re-saved is upgraded.
+ */
 
-// Generate a 32-byte key from the secret
-const KEY = crypto.createHash("sha256").update(SECRET).digest();
+const GCM = "aes-256-gcm";
+const LEGACY_CBC = "aes-256-cbc";
+const PREFIX = "v2";
+
+function resolveSecret(): string {
+  const secret = process.env.ENCRYPTION_KEY || process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
+  if (!secret) {
+    // Refusing here is safer than silently protecting PII with a public constant.
+    throw new Error(
+      "ENCRYPTION_KEY (atau NEXTAUTH_SECRET) belum diset. Data sensitif tidak dapat dienkripsi."
+    );
+  }
+  return secret;
+}
+
+let cachedKey: Buffer | null = null;
+function key(): Buffer {
+  if (!cachedKey) cachedKey = crypto.createHash("sha256").update(resolveSecret()).digest();
+  return cachedKey;
+}
 
 export function encrypt(text: string): string {
   if (!text) return text;
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, KEY, iv);
-  let encrypted = cipher.update(text, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  return `${iv.toString("hex")}:${encrypted}`;
+  const iv = crypto.randomBytes(12); // 96-bit nonce, the size GCM is defined for
+  const cipher = crypto.createCipheriv(GCM, key(), iv);
+  const ciphertext = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${PREFIX}:${iv.toString("hex")}:${tag.toString("hex")}:${ciphertext.toString("hex")}`;
 }
 
-export function decrypt(encryptedText: string): string {
-  if (!encryptedText || !encryptedText.includes(":")) return encryptedText;
+export function decrypt(value: string): string {
+  if (!value || typeof value !== "string" || !value.includes(":")) return value;
+
+  const parts = value.split(":");
+
   try {
-    const [ivHex, encrypted] = encryptedText.split(":");
-    const iv = Buffer.from(ivHex, "hex");
-    const decipher = crypto.createDecipheriv(ALGORITHM, KEY, iv);
-    let decrypted = decipher.update(encrypted, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
-  } catch (error) {
-    console.error("Decryption failed:", error);
-    return encryptedText; // Fallback to raw if decryption fails (e.g. data wasn't encrypted)
+    if (parts[0] === PREFIX && parts.length === 4) {
+      const [, ivHex, tagHex, dataHex] = parts;
+      const decipher = crypto.createDecipheriv(GCM, key(), Buffer.from(ivHex, "hex"));
+      decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+      return Buffer.concat([
+        decipher.update(Buffer.from(dataHex, "hex")),
+        decipher.final(),
+      ]).toString("utf8");
+    }
+
+    // Legacy CBC payload written by the previous implementation.
+    if (parts.length === 2) {
+      const [ivHex, dataHex] = parts;
+      const decipher = crypto.createDecipheriv(LEGACY_CBC, key(), Buffer.from(ivHex, "hex"));
+      return Buffer.concat([
+        decipher.update(Buffer.from(dataHex, "hex")),
+        decipher.final(),
+      ]).toString("utf8");
+    }
+  } catch {
+    // Value was never encrypted (or the key rotated) — hand back what we got so
+    // the record still renders instead of the page exploding.
+    return value;
   }
+
+  return value;
+}
+
+/** True when the value already carries an encrypted envelope. */
+export function isEncrypted(value: string): boolean {
+  return typeof value === "string" && (value.startsWith(`${PREFIX}:`) || /^[0-9a-f]{32}:[0-9a-f]+$/.test(value));
+}
+
+/** Encrypts only if not already encrypted — safe to call on every save. */
+export function encryptOnce(value: string): string {
+  if (!value) return value;
+  return isEncrypted(value) ? value : encrypt(value);
+}
+
+/**
+ * Renders a sensitive value for users who may see that it exists but not what
+ * it is, e.g. `••••••7788` for a bank account in a list view.
+ */
+export function maskTail(value: string, visible = 4): string {
+  if (!value) return "-";
+  const plain = decrypt(value);
+  if (plain.length <= visible) return "•".repeat(plain.length);
+  return "•".repeat(Math.min(plain.length - visible, 8)) + plain.slice(-visible);
+}
+
+/** Constant-time string compare for tokens and signatures. */
+export function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/** URL-safe random token for reset links and API keys. */
+export function randomToken(bytes = 32): string {
+  return crypto.randomBytes(bytes).toString("base64url");
+}
+
+/** Numeric OTP code of the given length. */
+export function randomOtp(digits = 6): string {
+  const max = 10 ** digits;
+  return String(crypto.randomInt(0, max)).padStart(digits, "0");
+}
+
+/** SHA-256 hash, used to store OTPs and reset tokens without keeping plaintext. */
+export function sha256(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }

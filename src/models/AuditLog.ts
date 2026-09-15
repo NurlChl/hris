@@ -4,8 +4,8 @@ export interface IAuditLog extends Document {
   userId: mongoose.Types.ObjectId | string | null;
   action: string;
   module: string;
-  before: Record<string, any> | null;
-  after: Record<string, any> | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
   ip: string;
   userAgent: string;
   timestamp: Date;

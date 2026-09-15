@@ -2,20 +2,45 @@ import mongoose, { Schema, Document } from "mongoose";
 
 export interface IAttendance extends Document {
   employeeId: mongoose.Types.ObjectId;
-  date: Date; // date representing yyyy-mm-dd (set to midnight)
+  /** 00:00 WIB of the attendance day, stored as the UTC instant. */
+  date: Date;
   clockIn?: Date;
   breakOut?: Date;
   breakIn?: Date;
   clockOut?: Date;
-  photoUrl: string[]; // clockIn photo, clockOut photo, etc.
+  /** Storage keys, not URLs — signed URLs are minted per request. */
+  photoUrl: string[];
   gpsLat: number;
   gpsLng: number;
+  /** Device-reported accuracy in meters; helps HRD judge an override claim. */
+  gpsAccuracy?: number;
+  /** The branch the tap actually matched (may differ from the posting). */
+  branchId?: mongoose.Types.ObjectId;
+  distanceMeter?: number;
+  /** Schedule in force that day, snapshotted so later roster edits don't rewrite history. */
+  scheduleClockIn?: string;
+  scheduleClockOut?: string;
   isLate: boolean;
   lateMinutes: number;
-  isManualFallback: boolean; // true if face-api fails 3x and falls back to normal selfie
-  isCrossBranch: boolean; // true if checked in at a branch other than assigned_branch_id
-  isLocationOverride: boolean; // true if checked in outside radius using "Kendala Lokasi" emergency request
-  note?: string;
+  isEarlyLeave: boolean;
+  earlyLeaveMinutes: number;
+  /** Face match failed and a plain selfie was accepted instead. */
+  isManualFallback: boolean;
+  /** Clocked in at a branch other than the assigned posting. */
+  isCrossBranch: boolean;
+  /** Used the "Kendala Lokasi" escape hatch — outside radius, reason required. */
+  isLocationOverride: boolean;
+  /** Outside radius but covered by an approved WFH / dinas luar request. */
+  isRemoteApproved: boolean;
+  /** Fell on a national holiday — feeds overtime calculation. */
+  isHoliday: boolean;
+  /** Any of the flags above; the single field HRD filters their review queue on. */
+  needsReview: boolean;
+  /** Set once HRD has looked at a flagged entry. */
+  reviewedBy?: mongoose.Types.ObjectId;
+  reviewedAt?: Date;
+  reviewNote?: string;
+  note: string;
 }
 
 const AttendanceSchema = new Schema<IAttendance>(
@@ -29,19 +54,34 @@ const AttendanceSchema = new Schema<IAttendance>(
     photoUrl: [{ type: String }],
     gpsLat: { type: Number, required: true },
     gpsLng: { type: Number, required: true },
+    gpsAccuracy: { type: Number },
+    branchId: { type: Schema.Types.ObjectId, ref: "Branch", index: true },
+    distanceMeter: { type: Number },
+    scheduleClockIn: { type: String },
+    scheduleClockOut: { type: String },
     isLate: { type: Boolean, default: false },
     lateMinutes: { type: Number, default: 0 },
+    isEarlyLeave: { type: Boolean, default: false },
+    earlyLeaveMinutes: { type: Number, default: 0 },
     isManualFallback: { type: Boolean, default: false },
     isCrossBranch: { type: Boolean, default: false },
     isLocationOverride: { type: Boolean, default: false },
-    note: { type: String },
+    isRemoteApproved: { type: Boolean, default: false },
+    isHoliday: { type: Boolean, default: false },
+    needsReview: { type: Boolean, default: false, index: true },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    reviewedAt: { type: Date },
+    reviewNote: { type: String },
+    note: { type: String, default: "" },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-// Unique index for employee per date
+// One row per employee per day — the whole flow reads and updates this record,
+// so the database, not application code, guarantees there is only ever one.
 AttendanceSchema.index({ employeeId: 1, date: 1 }, { unique: true });
+// Supports the admin monthly/branch reports without a collection scan.
+AttendanceSchema.index({ date: -1, branchId: 1 });
 
-export default mongoose.models.Attendance || mongoose.model<IAttendance>("Attendance", AttendanceSchema);
+export default mongoose.models.Attendance ||
+  mongoose.model<IAttendance>("Attendance", AttendanceSchema);

@@ -1,92 +1,93 @@
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
-import { StorageProvider } from "./StorageProvider";
+import { contentTypeForKey, type StorageProvider } from "./StorageProvider";
 
+/**
+ * Disk-backed storage for single-server / development deployments.
+ *
+ * The base directory defaults to `./storage/uploads`, which is deliberately
+ * **outside** `public/`. Files under `public/` are served statically by
+ * Next.js, which previously made every attendance selfie and payslip readable
+ * by anyone who could guess the path — the signed URLs were decorative. Now the
+ * only way in is `/api/v1/storage/secure`, which checks both the session and the
+ * HMAC signature.
+ */
 export class LocalProvider implements StorageProvider {
   private baseDir: string;
   private secret: string;
 
   constructor() {
-    this.baseDir = process.env.LOCAL_STORAGE_PATH || "./public/uploads";
-    // Initialize secure secret for signing local URLs
-    this.secret = process.env.NEXTAUTH_SECRET || "default-secret-for-local-storage-signing";
-  }
-
-  private getFullPath(relativePath: string): string {
-    const resolvedBase = path.resolve(process.cwd(), this.baseDir);
-    const resolvedPath = path.resolve(resolvedBase, relativePath);
-    if (!resolvedPath.startsWith(resolvedBase)) {
-      throw new Error("Directory traversal attempt detected");
+    this.baseDir = process.env.LOCAL_STORAGE_PATH || "./storage/uploads";
+    const secret =
+      process.env.STORAGE_SIGNING_SECRET ||
+      process.env.ENCRYPTION_KEY ||
+      process.env.NEXTAUTH_SECRET ||
+      process.env.AUTH_SECRET;
+    if (!secret) {
+      throw new Error(
+        "NEXTAUTH_SECRET / STORAGE_SIGNING_SECRET belum diset — URL file tidak dapat ditandatangani."
+      );
     }
-    return resolvedPath;
+    this.secret = secret;
   }
 
-  async upload(file: Buffer | Blob, relativePath: string, mimeType?: string): Promise<string> {
-    const fullPath = this.getFullPath(relativePath);
-    const dir = path.dirname(fullPath);
-
-    // Ensure the folder exists
-    await fs.mkdir(dir, { recursive: true });
-
-    let buffer: Buffer;
-    if (file instanceof Blob) {
-      const arrayBuffer = await file.arrayBuffer();
-      buffer = Buffer.from(arrayBuffer);
-    } else {
-      buffer = file;
+  /** Resolves a key inside the base dir, refusing traversal. */
+  private resolve(key: string): string {
+    const base = path.resolve(process.cwd(), this.baseDir);
+    const full = path.resolve(base, key);
+    if (full !== base && !full.startsWith(base + path.sep)) {
+      throw new Error("Percobaan akses direktori di luar area penyimpanan ditolak.");
     }
-
-    await fs.writeFile(fullPath, buffer);
-    
-    // Return relative URL from public root
-    return `/uploads/${relativePath.replace(/\\/g, "/")}`;
+    return full;
   }
 
-  getUrl(relativePath: string): string {
-    return `/uploads/${relativePath.replace(/\\/g, "/")}`;
+  async upload(file: Buffer | Blob, key: string, _mimeType?: string): Promise<string> {
+    const full = this.resolve(key);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+
+    const buffer =
+      file instanceof Buffer ? file : Buffer.from(await (file as Blob).arrayBuffer());
+
+    await fs.writeFile(full, buffer);
+    return key.replace(/\\/g, "/");
   }
 
-  async getSignedUrl(relativePath: string, expiresInSeconds: number = 900): Promise<string> {
-    // Generate secure local URL signed with HMAC
-    const expiresAt = Math.floor(Date.now() / 1000) + expiresInSeconds;
-    const cleanPath = relativePath.replace(/\\/g, "/");
-    
-    const hmac = crypto.createHmac("sha256", this.secret);
-    hmac.update(`${cleanPath}:${expiresAt}`);
-    const signature = hmac.digest("hex");
-
-    return `/api/v1/storage/secure?path=${encodeURIComponent(cleanPath)}&expires=${expiresAt}&sig=${signature}`;
+  getUrl(key: string): string {
+    // Even "non-sensitive" local files go through the authenticated route;
+    // nothing on disk is publicly reachable by design.
+    return `/api/v1/storage/secure?key=${encodeURIComponent(key.replace(/\\/g, "/"))}`;
   }
 
-  async delete(relativePath: string): Promise<void> {
-    const fullPath = this.getFullPath(relativePath);
+  async getSignedUrl(key: string, expiresInSeconds = 900): Promise<string> {
+    const cleanKey = key.replace(/\\/g, "/");
+    const expires = Math.floor(Date.now() / 1000) + expiresInSeconds;
+    const sig = this.sign(cleanKey, expires);
+    return `/api/v1/storage/secure?key=${encodeURIComponent(cleanKey)}&expires=${expires}&sig=${sig}`;
+  }
+
+  async delete(key: string): Promise<void> {
     try {
-      await fs.unlink(fullPath);
-    } catch (err: any) {
-      if (err.code !== "ENOENT") {
-        throw err;
-      }
+      await fs.unlink(this.resolve(key));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
   }
 
-  /**
-   * Helper to verify a signed local path request
-   */
-  verifySignature(relativePath: string, expiresAt: number, signature: string): boolean {
-    if (Date.now() / 1000 > expiresAt) {
-      return false; // Expired
-    }
-    const cleanPath = relativePath.replace(/\\/g, "/");
-    const hmac = crypto.createHmac("sha256", this.secret);
-    hmac.update(`${cleanPath}:${expiresAt}`);
-    const expectedSignature = hmac.digest("hex");
-    
-    // Ensure signatures have identical length before timingSafeEqual to avoid crashes
-    if (signature.length !== expectedSignature.length) {
-      return false;
-    }
-    
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+  async read(key: string): Promise<{ buffer: Buffer; contentType: string }> {
+    const buffer = await fs.readFile(this.resolve(key));
+    return { buffer, contentType: contentTypeForKey(key) };
+  }
+
+  private sign(key: string, expires: number): string {
+    return crypto.createHmac("sha256", this.secret).update(`${key}:${expires}`).digest("hex");
+  }
+
+  /** Verifies a signed link; false when expired, malformed, or tampered with. */
+  verifySignature(key: string, expires: number, signature: string): boolean {
+    if (!Number.isFinite(expires) || Date.now() / 1000 > expires) return false;
+    const expected = this.sign(key.replace(/\\/g, "/"), expires);
+    if (signature.length !== expected.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   }
 }

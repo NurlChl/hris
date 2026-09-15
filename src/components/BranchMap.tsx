@@ -19,7 +19,9 @@ export default function BranchMap({ lat, lng, radius, onChange }: BranchMapProps
 
   useEffect(() => {
     // Fix leaflet marker icon URLs
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
+    // Leaflet derives icon URLs from a private field that breaks under a
+    // bundler; removing it forces the explicit CDN URLs set below to be used.
+    delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
     L.Icon.Default.mergeOptions({
       iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
       iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
@@ -88,13 +90,13 @@ export default function BranchMap({ lat, lng, radius, onChange }: BranchMapProps
 
   return (
     <div className="space-y-1">
-      <label className="text-xs text-slate-400 font-semibold">Titik Lokasi & Radius Absen</label>
+      <label className="text-xs text-subtle font-semibold">Titik Lokasi & Radius Absen</label>
       <div 
         ref={mapRef} 
         className="w-full h-64 rounded-lg border border-white/8 relative z-10"
         style={{ minHeight: "250px" }}
       />
-      <p className="text-[10px] text-slate-500 italic mt-1">
+      <p className="text-xs text-muted italic mt-1">
         * Geser penanda pin merah atau klik pada peta untuk menentukan koordinat presisi.
       </p>
     </div>

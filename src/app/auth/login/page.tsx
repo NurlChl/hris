@@ -1,182 +1,125 @@
 "use client";
 
-import React, { useState, Suspense, useEffect } from "react";
+import React, { Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Users, Mail, Eye, EyeOff, Loader2, Sun, Moon, Key } from "lucide-react";
-import { motion } from "framer-motion";
+import { AuthShell, PasswordInput } from "@/components/auth/AuthShell";
+import { Alert, Button, Field, Input } from "@/components/ui";
+
+/**
+ * NextAuth reports every credential failure as `CredentialsSignin`; the server
+ * deliberately does not distinguish "unknown email" from "wrong password" or
+ * "account locked", so the copy here has to cover all three without guessing.
+ */
+function messageFor(code: string | null): string {
+  if (!code) return "";
+  switch (code) {
+    case "CredentialsSignin":
+    case "Callback":
+      return "Email atau kata sandi salah. Setelah beberapa percobaan gagal, akun akan terkunci sementara demi keamanan.";
+    case "SessionRequired":
+      return "Sesi Anda telah berakhir. Silakan masuk kembali.";
+    case "AccessDenied":
+      return "Akun Anda tidak memiliki akses ke halaman tersebut.";
+    default:
+      return "Tidak dapat memproses login saat ini. Coba lagi beberapa saat lagi.";
+  }
+}
 
 function LoginForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/portal/attendance";
-  const errorParam = searchParams.get("error");
+  const params = useSearchParams();
+  const callbackUrl = params.get("callbackUrl") || "/portal/attendance";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  
-  const getErrorMessage = (err: string | null) => {
-    if (!err) return "";
-    if (err === "CredentialsSignin" || err === "Callback" || err === "Configuration") {
-      return "Email atau password salah. Silakan periksa kembali.";
-    }
-    if (err === "SessionRequired") {
-      return "Sesi telah habis. Silakan login kembali.";
-    }
-    return "Terjadi kesalahan masuk. Silakan coba lagi.";
-  };
+  const [error, setError] = useState(messageFor(params.get("error")));
 
-  const [error, setError] = useState(getErrorMessage(errorParam));
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
-
-  useEffect(() => {
-    const savedTheme = localStorage.getItem("theme") as "light" | "dark" | null;
-    const activeTheme = savedTheme || "dark";
-    setTheme(activeTheme);
-    if (activeTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    const nextTheme = theme === "dark" ? "light" : "dark";
-    setTheme(nextTheme);
-    localStorage.setItem("theme", nextTheme);
-    if (nextTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError("");
+    setLoading(true);
 
-    try {
-      const res = await signIn("credentials", {
-        redirect: false,
-        email,
-        password,
-      });
+    const res = await signIn("credentials", {
+      redirect: false,
+      email: email.trim(),
+      password,
+    }).catch(() => null);
 
-      if (res?.error) {
-        setError("Email atau password salah. Silakan periksa kembali.");
-        setLoading(false);
-      } else {
-        router.push(callbackUrl);
-      }
-    } catch (err: any) {
-      setError("Terjadi kesalahan masuk. Silakan coba lagi.");
+    if (!res || res.error) {
+      setError(messageFor(res?.error ?? "CredentialsSignin"));
       setLoading(false);
+      return;
     }
+
+    // A full navigation rather than a soft push, so the session cookie is read
+    // by the proxy before the destination renders.
+    router.push(callbackUrl);
+    router.refresh();
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white dark:bg-[#07080d] text-slate-900 dark:text-slate-100 transition-colors duration-200 font-sans relative overflow-hidden">
-      
-      {/* Grid Pattern */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808008_1px,transparent_1px),linear-gradient(to_bottom,#80808008_1px,transparent_1px)] bg-size-[14px_24px] pointer-events-none" />
+    <AuthShell
+      badge="Portal Karyawan"
+      title="Masuk ke akun Anda"
+      subtitle="Gunakan email kantor dan kata sandi yang diberikan HRD."
+      footer={
+        <>
+          Administrator?{" "}
+          <Link href="/auth/admin" className="font-semibold text-primary hover:underline">
+            Masuk lewat panel admin
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        {error && <Alert tone="danger">{error}</Alert>}
 
-      {/* Theme Toggle */}
-      <div className="absolute top-6 right-6 z-20">
-        <button
-          onClick={toggleTheme}
-          className="p-2 rounded-md bg-slate-100 dark:bg-white/3 border border-slate-200 dark:border-white/8 hover:bg-slate-200 dark:hover:bg-white/5 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
-        >
-          {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
-        </button>
-      </div>
+        <Field label="Email" htmlFor="email" required>
+          <Input
+            id="email"
+            type="email"
+            inputMode="email"
+            autoComplete="username"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="nama@perusahaan.com"
+          />
+        </Field>
 
-      <motion.div 
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="w-full max-w-md p-8 rounded-xl bg-white dark:bg-[#0c0d12] border border-slate-200 dark:border-white/8 shadow-md relative z-10 mx-4"
-      >
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center p-3 rounded-lg bg-slate-100 dark:bg-white/3 border border-slate-200 dark:border-white/8 mb-4">
-            <Users className="w-5 h-5 text-slate-800 dark:text-slate-200" />
-          </div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
-            Portal Karyawan
-          </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-550 dark:text-slate-400 mt-1">Masuk untuk mencatat presensi harian, cuti, & slip gaji</p>
+        <Field label="Kata sandi" htmlFor="password" required>
+          <PasswordInput id="password" value={password} onChange={setPassword} placeholder="••••••••" />
+        </Field>
+
+        <div className="flex justify-end">
+          <Link
+            href="/auth/forgot-password"
+            className="text-[11px] font-semibold text-primary hover:underline"
+          >
+            Lupa kata sandi?
+          </Link>
         </div>
 
-        {error && (
-          <div className="p-3.5 rounded-lg bg-red-500/5 border border-red-500/10 text-red-600 dark:text-red-400 text-xs mb-6 text-center font-medium">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleLogin} className="space-y-4 text-xs">
-          <div className="space-y-1">
-            <label className="font-semibold text-slate-700 dark:text-slate-300">Alamat Email Karyawan</label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-3 w-4 h-4 text-slate-550 dark:text-slate-400" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="nama@perusahaan.com"
-                className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-50 dark:bg-white/2 border border-slate-200 dark:border-white/8 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-slate-400 dark:focus:border-white/20 transition-all placeholder:text-slate-550 dark:text-slate-400"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex justify-between items-center">
-              <label className="font-semibold text-slate-700 dark:text-slate-300">Kata Sandi</label>
-              <Link href="/auth/forgot-password" className="text-slate-500 hover:text-slate-800 dark:text-slate-550 dark:text-slate-400 dark:hover:text-white underline">Lupa Password?</Link>
-            </div>
-            <div className="relative">
-              <Key className="absolute left-3 top-3 w-4 h-4 text-slate-550 dark:text-slate-400" />
-              <input
-                type={showPassword ? "text" : "password"}
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full pl-10 pr-10 py-2.5 rounded-lg bg-slate-50 dark:bg-white/2 border border-slate-200 dark:border-white/8 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-slate-400 dark:focus:border-white/20 transition-all placeholder:text-slate-550 dark:text-slate-400"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-3 text-slate-550 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 focus:outline-none cursor-pointer"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 rounded-lg bg-slate-900 hover:bg-slate-850 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 text-xs font-semibold hover:opacity-95 active:scale-[0.99] transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-6 cursor-pointer"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Masuk ke Portal"}
-          </button>
-        </form>
-      </motion.div>
-    </div>
+        <Button type="submit" loading={loading} className="w-full justify-center" size="lg">
+          {loading ? "Memverifikasi…" : "Masuk"}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-[#07080d] text-slate-450">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-500" />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="min-h-screen grid place-items-center bg-background">
+          <div className="skeleton w-64 h-40 rounded-xl" />
+        </div>
+      }
+    >
       <LoginForm />
     </Suspense>
   );

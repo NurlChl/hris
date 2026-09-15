@@ -1,231 +1,396 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
+import { z } from "zod";
+import bcrypt from "bcryptjs";
+import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import {
+  requireUser,
+  requirePermission,
+  parseBody,
+  scopeFilter,
+  pagination,
+  BadRequest,
+  Conflict,
+  Forbidden,
+  NotFound,
+} from "@/lib/guard";
 import { checkPermission } from "@/lib/rbac";
 import { logActivity } from "@/lib/audit/logger";
+import { decrypt, encryptOnce, maskTail } from "@/lib/crypto";
+import { getSettings } from "@/lib/settings";
 import Employee from "@/models/Employee";
 import User from "@/models/User";
-import Setting from "@/models/Setting";
-import bcrypt from "bcryptjs";
-import { connectToDatabase } from "@/lib/db";
+import Counter from "@/models/Counter";
 
-export const GET = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk mengakses data ini", null, 401);
-  }
+/**
+ * Employee master data.
+ *
+ * NIK, NPWP, and bank account numbers are encrypted at rest. They are decrypted
+ * only for callers holding a company-wide read scope; everyone else sees a
+ * masked tail, which is enough to confirm a record without exposing the number.
+ */
 
-  await connectToDatabase();
+const SENSITIVE_FIELDS = ["nik", "npwp", "bankAccount.accountNumber"] as const;
 
-  // Check read permission on attendance/employees
-  const perm = await checkPermission(session.user.id, "attendance", "read");
-  if (!perm.allowed) {
-    return apiError("FORBIDDEN", "Anda tidak memiliki akses ke data karyawan", null, 403);
-  }
+const addressSchema = z
+  .object({
+    street: z.string().trim().max(200).default(""),
+    subdistrict: z.string().trim().max(100).default(""),
+    city: z.string().trim().max(100).default(""),
+    province: z.string().trim().max(100).default(""),
+    country: z.string().trim().max(100).default("Indonesia"),
+  })
+  .partial()
+  .optional();
 
-  let filter: Record<string, any> = {};
+const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "ID tidak valid");
+const optionalObjectId = z.union([objectId, z.literal(""), z.null()]).optional();
 
-  // Apply RBAC scopes
-  if (perm.scope === "self") {
-    if (session.user.employeeId) {
-      filter._id = session.user.employeeId;
-    } else {
-      return apiSuccess([], "Berhasil memuat data karyawan"); // Superadmin account without employee link
-    }
-  } else if (perm.scope === "division") {
-    if (session.user.divisionId) {
-      filter.divisionId = session.user.divisionId;
-    }
-  } else if (perm.scope === "branch") {
-    if (session.user.branchId) {
-      filter.branchId = session.user.branchId;
-    }
-  }
-
-  const employees = await Employee.find(filter)
-    .populate("branchId")
-    .populate("divisionId")
-    .populate("positionId")
-    .populate("supervisorId")
-    .populate("storeManagerId")
-    .populate("areaManagerId");
-
-  return apiSuccess(employees, "Berhasil memuat data karyawan");
+const employeeSchema = z.object({
+  id: optionalObjectId,
+  name: z.string().trim().min(3, "Nama lengkap minimal 3 karakter").max(150),
+  nik: z
+    .string()
+    .trim()
+    .regex(/^\d{16}$/, "NIK harus 16 digit angka")
+    .or(z.literal(""))
+    .optional(),
+  birthPlace: z.string().trim().max(100).optional(),
+  birthDate: z.string().optional(),
+  gender: z.enum(["male", "female"]).optional(),
+  religion: z.string().trim().max(50).optional(),
+  maritalStatus: z.string().trim().max(50).optional(),
+  ktpAddress: addressSchema,
+  domicileAddress: addressSchema,
+  personalEmail: z.string().trim().toLowerCase().email("Email pribadi tidak valid").or(z.literal("")).optional(),
+  officeEmail: z.string().trim().toLowerCase().email("Email kantor tidak valid"),
+  phone: z.string().trim().regex(/^[0-9+()\-\s]{8,20}$/, "Nomor telepon tidak valid").or(z.literal("")).optional(),
+  socialMedia: z.record(z.string(), z.string().max(200)).optional(),
+  npwp: z.string().trim().max(40).optional(),
+  taxStatus: z.string().trim().max(10).optional(),
+  bpjsKesehatan: z.string().trim().max(40).optional(),
+  bpjsKetenagakerjaan: z.string().trim().max(40).optional(),
+  bankAccount: z
+    .object({
+      bankName: z.string().trim().max(60).default(""),
+      accountNumber: z.string().trim().max(40).default(""),
+      accountHolder: z.string().trim().max(120).default(""),
+    })
+    .partial()
+    .optional(),
+  branchId: optionalObjectId,
+  divisionId: optionalObjectId,
+  positionId: optionalObjectId,
+  supervisorId: optionalObjectId,
+  storeManagerId: optionalObjectId,
+  areaManagerId: optionalObjectId,
+  joinDate: z.string().optional(),
+  employmentStatus: z.enum(["probation", "pkwt", "pkwtt", "outsource"]).optional(),
+  status: z.enum(["active", "onboarding", "suspended", "resigned"]).optional(),
+  roleId: optionalObjectId,
+  password: z.string().optional(),
 });
 
+/* ------------------------------------------------------------------ */
+/* GET                                                                  */
+/* ------------------------------------------------------------------ */
+
+export const GET = wrapRouteHandler(async (req) => {
+  const ctx = await requireUser(req);
+  const perm = await checkPermission(ctx.user.id, "employees", "read");
+  const fallback = perm.allowed ? perm : await checkPermission(ctx.user.id, "attendance", "read");
+  if (!fallback.allowed) throw Forbidden("Anda tidak memiliki akses ke data karyawan.");
+
+  const sp = new URL(req.url).searchParams;
+  const { page, limit, skip } = pagination(req, 200, 500);
+  const search = sp.get("q")?.trim();
+  const status = sp.get("status");
+
+  const filter: Record<string, unknown> = {
+    ...scopeFilter({ ...ctx, permission: fallback }, {
+      employee: "_id",
+      branch: "branchId",
+      division: "divisionId",
+    }),
+  };
+  if (status && status !== "all") filter.status = status;
+  if (search) {
+    const safe = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    filter.$or = [
+      { name: { $regex: safe, $options: "i" } },
+      { employeeId: { $regex: safe, $options: "i" } },
+      { officeEmail: { $regex: safe, $options: "i" } },
+    ];
+  }
+
+  const [employees, total] = await Promise.all([
+    Employee.find(filter)
+      .populate("branchId", "name")
+      .populate("divisionId", "name")
+      .populate("positionId", "name")
+      .populate("supervisorId", "name employeeId")
+      .populate("storeManagerId", "name employeeId")
+      .populate("areaManagerId", "name employeeId")
+      .sort({ name: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    Employee.countDocuments(filter),
+  ]);
+
+  const canSeeFullPii = fallback.scope === "all";
+  const data = employees.map((e) => revealSensitive(e, canSeeFullPii));
+
+  return apiSuccess(data, "Berhasil memuat data karyawan", { page, limit, total });
+});
+
+/** Decrypts or masks the protected fields depending on the caller's scope. */
+function revealSensitive(doc: Record<string, unknown>, full: boolean) {
+  const bank = doc.bankAccount as { bankName?: string; accountNumber?: string; accountHolder?: string } | undefined;
+  return {
+    ...doc,
+    nik: doc.nik ? (full ? decrypt(doc.nik as string) : maskTail(doc.nik as string)) : "",
+    npwp: doc.npwp ? (full ? decrypt(doc.npwp as string) : maskTail(doc.npwp as string)) : "",
+    bankAccount: bank
+      ? {
+          ...bank,
+          accountNumber: bank.accountNumber
+            ? full
+              ? decrypt(bank.accountNumber)
+              : maskTail(bank.accountNumber)
+            : "",
+        }
+      : bank,
+    isPiiMasked: !full,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* POST — create / update                                               */
+/* ------------------------------------------------------------------ */
+
 export const POST = wrapRouteHandler(async (req) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk melakukan aksi ini", null, 401);
+  const ctx = await requirePermission(req, "employees", "write").catch(() =>
+    requirePermission(req, "attendance", "write")
+  );
+  const body = await parseBody(req, employeeSchema);
+  const settings = await getSettings();
+
+  const payload: Record<string, unknown> = {
+    name: body.name,
+    birthPlace: body.birthPlace ?? "",
+    birthDate: body.birthDate ? new Date(body.birthDate) : undefined,
+    gender: body.gender,
+    religion: body.religion ?? "",
+    maritalStatus: body.maritalStatus ?? "",
+    ktpAddress: body.ktpAddress,
+    domicileAddress: body.domicileAddress,
+    personalEmail: body.personalEmail ?? "",
+    officeEmail: body.officeEmail,
+    phone: body.phone ?? "",
+    socialMedia: body.socialMedia,
+    taxStatus: body.taxStatus ?? "",
+    bpjsKesehatan: body.bpjsKesehatan ?? "",
+    bpjsKetenagakerjaan: body.bpjsKetenagakerjaan ?? "",
+    branchId: body.branchId || null,
+    divisionId: body.divisionId || null,
+    positionId: body.positionId || null,
+    supervisorId: body.supervisorId || null,
+    storeManagerId: body.storeManagerId || null,
+    areaManagerId: body.areaManagerId || null,
+    joinDate: body.joinDate ? new Date(body.joinDate) : undefined,
+    employmentStatus: body.employmentStatus,
+  };
+
+  // Encrypt-on-write; `encryptOnce` is idempotent so re-saving an unchanged
+  // form does not double-encrypt.
+  if (body.nik !== undefined) payload.nik = body.nik ? encryptOnce(body.nik) : "";
+  if (body.npwp !== undefined) payload.npwp = body.npwp ? encryptOnce(body.npwp) : "";
+  if (body.bankAccount) {
+    payload.bankAccount = {
+      bankName: body.bankAccount.bankName ?? "",
+      accountHolder: body.bankAccount.accountHolder ?? "",
+      accountNumber: body.bankAccount.accountNumber
+        ? encryptOnce(body.bankAccount.accountNumber)
+        : "",
+    };
   }
 
-  const perm = await checkPermission(session.user.id, "attendance", "write");
-  if (!perm.allowed) {
-    return apiError("FORBIDDEN", "Anda tidak memiliki izin untuk mengonfigurasi karyawan", null, 403);
-  }
+  /* --- update ------------------------------------------------------- */
+  if (body.id) {
+    const existing = await Employee.findById(body.id);
+    if (!existing) throw NotFound("Data karyawan tidak ditemukan.");
 
-  const body = await req.json();
-  const {
-    id,
-    name,
-    nik,
-    birthPlace,
-    birthDate,
-    gender,
-    religion,
-    maritalStatus,
-    ktpAddress,
-    domicileAddress,
-    personalEmail,
-    officeEmail,
-    phone,
-    socialMedia,
-    npwp,
-    taxStatus,
-    bpjsKesehatan,
-    bpjsKetenagakerjaan,
-    bankAccount,
-    branchId,
-    divisionId,
-    positionId,
-    supervisorId,
-    storeManagerId,
-    areaManagerId,
-    joinDate,
-    employmentStatus,
-    status,
-    roleId,
-    password,
-  } = body;
-
-  await connectToDatabase();
-
-  let employee;
-  let oldData = null;
-
-  if (id) {
-    // Update
-    oldData = await Employee.findById(id);
-    if (!oldData) {
-      return apiError("NOT_FOUND", "Data karyawan tidak ditemukan");
+    // Only a company-wide scope may move someone between branches/divisions.
+    if (ctx.permission.scope !== "all") {
+      delete payload.branchId;
+      delete payload.divisionId;
     }
-    
-    employee = await Employee.findByIdAndUpdate(
-      id,
-      {
-        name,
-        nik,
-        birthPlace,
-        birthDate,
-        gender,
-        religion,
-        maritalStatus,
-        ktpAddress,
-        domicileAddress,
-        personalEmail,
-        officeEmail,
-        phone,
-        socialMedia,
-        npwp,
-        taxStatus,
-        bpjsKesehatan,
-        bpjsKetenagakerjaan,
-        bankAccount,
-        branchId,
-        divisionId,
-        positionId,
-        supervisorId: supervisorId || null,
-        storeManagerId: storeManagerId || null,
-        areaManagerId: areaManagerId || null,
-        joinDate,
-        employmentStatus,
-        status,
-      },
-      { new: true }
-    );
-
-    // Update related User email and password if changed
-    if (officeEmail && officeEmail !== oldData.officeEmail) {
-      await User.findOneAndUpdate({ employeeId: id }, { email: officeEmail });
-    }
-    if (password) {
-      const passwordHash = await bcrypt.hash(password, 12);
-      await User.findOneAndUpdate({ employeeId: id }, { passwordHash });
-    }
-
-    await logActivity({
-      userId: session.user.id,
-      action: "UPDATE_EMPLOYEE",
-      module: "attendance",
-      before: oldData.toObject(),
-      after: employee.toObject(),
-      ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-      userAgent: req.headers.get("user-agent") || "",
-    });
-  } else {
-    // Create new
-    // Generate unique employee ID: EMP-[YEAR]-[AUTO_INCREMENT]
-    const year = new Date(joinDate || Date.now()).getFullYear();
-    const count = await Employee.countDocuments({});
-    const seq = String(count + 1).padStart(4, "0");
-    const employeeId = `EMP-${year}-${seq}`;
-
-    employee = await Employee.create({
-      employeeId,
-      name,
-      nik,
-      birthPlace,
-      birthDate,
-      gender,
-      religion,
-      maritalStatus,
-      ktpAddress,
-      domicileAddress,
-      personalEmail,
-      officeEmail,
-      phone,
-      socialMedia,
-      npwp,
-      taxStatus,
-      bpjsKesehatan,
-      bpjsKetenagakerjaan,
-      bankAccount,
-      branchId,
-      divisionId,
-      positionId,
-      supervisorId: supervisorId || null,
-      storeManagerId: storeManagerId || null,
-      areaManagerId: areaManagerId || null,
-      joinDate,
-      employmentStatus,
-      status: status || "onboarding",
-    });
-
-    // Automatically create a user login account if roleId is provided
-    if (roleId) {
-      let pwd = password;
-      if (!pwd) {
-        const defaultPwdSetting = await Setting.findOne({ key: "default_employee_password" });
-        pwd = defaultPwdSetting?.value || "password123";
+    if (body.status) {
+      payload.status = body.status;
+      if (body.status === "resigned" || body.status === "suspended") {
+        // Losing employment status must also close the login, otherwise a
+        // departed employee keeps a valid session until it expires.
+        await User.updateOne({ employeeId: existing._id }, { isActive: false });
+      } else {
+        await User.updateOne({ employeeId: existing._id }, { isActive: true });
       }
-      const passwordHash = await bcrypt.hash(pwd, 12);
-      await User.create({
-        email: officeEmail,
-        passwordHash,
-        roleId,
-        employeeId: employee._id,
-      });
     }
 
-    await logActivity({
-      userId: session.user.id,
-      action: "CREATE_EMPLOYEE",
-      module: "attendance",
-      before: null,
-      after: employee.toObject(),
-      ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-      userAgent: req.headers.get("user-agent") || "",
+    const updated = await Employee.findByIdAndUpdate(body.id, payload, { new: true });
+
+    if (body.officeEmail && body.officeEmail !== existing.officeEmail) {
+      const clash = await User.findOne({
+        email: body.officeEmail,
+        employeeId: { $ne: existing._id },
+      }).lean();
+      if (clash) throw Conflict(`Email ${body.officeEmail} sudah dipakai akun lain.`);
+      await User.updateOne({ employeeId: existing._id }, { email: body.officeEmail });
+    }
+
+    if (body.password) {
+      if (body.password.length < Number(settings.password_min_length)) {
+        throw BadRequest(`Kata sandi minimal ${settings.password_min_length} karakter.`);
+      }
+      await User.updateOne(
+        { employeeId: existing._id },
+        {
+          passwordHash: await bcrypt.hash(body.password, 12),
+          // A password set by HR must be changed by the employee on first use.
+          mustChangePassword: Boolean(settings.force_password_change_on_first_login),
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        }
+      );
+    }
+
+    void logActivity({
+      userId: ctx.user.id,
+      action: "UPDATE_EMPLOYEE",
+      module: "employees",
+      // Only the changed field names are logged for protected data — writing the
+      // decrypted values into the audit log would defeat encrypting them.
+      before: redactForAudit(existing.toObject()),
+      after: redactForAudit(updated!.toObject()),
+      ip: ctx.ip,
+      userAgent: ctx.userAgent,
+    });
+
+    return apiSuccess(
+      revealSensitive(updated!.toObject(), ctx.permission.scope === "all"),
+      `Data ${body.name} berhasil diperbarui.`
+    );
+  }
+
+  /* --- create -------------------------------------------------------- */
+  const emailTaken = await User.findOne({ email: body.officeEmail }).lean();
+  if (emailTaken) throw Conflict(`Email ${body.officeEmail} sudah digunakan akun lain.`);
+
+  const year = new Date(body.joinDate ?? Date.now()).getFullYear();
+  const employeeId = await nextEmployeeId(year);
+
+  const employee = await Employee.create({
+    ...payload,
+    employeeId,
+    status: body.status ?? "onboarding",
+  });
+
+  let generatedPassword: string | null = null;
+  if (body.roleId) {
+    const pwd = body.password || String(settings.default_employee_password);
+    if (!body.password) generatedPassword = pwd;
+    await User.create({
+      email: body.officeEmail,
+      passwordHash: await bcrypt.hash(pwd, 12),
+      roleId: body.roleId,
+      employeeId: employee._id,
+      phone: body.phone ?? "",
+      mustChangePassword: Boolean(settings.force_password_change_on_first_login),
     });
   }
 
-  return apiSuccess(employee, id ? "Berhasil memperbarui data karyawan" : "Berhasil menambahkan data karyawan");
+  void logActivity({
+    userId: ctx.user.id,
+    action: "CREATE_EMPLOYEE",
+    module: "employees",
+    after: redactForAudit(employee.toObject()),
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
+
+  return apiSuccess(
+    {
+      ...revealSensitive(employee.toObject(), ctx.permission.scope === "all"),
+      generatedPassword,
+    },
+    `Karyawan ${body.name} dibuat dengan NIP ${employeeId}.` +
+      (generatedPassword
+        ? ` Kata sandi awal: ${generatedPassword} — sampaikan secara aman, karyawan wajib menggantinya saat login pertama.`
+        : ""),
+    undefined,
+    201
+  );
+});
+
+/**
+ * Allocates the next NIP atomically.
+ *
+ * The previous approach was `countDocuments() + 1`, which produced duplicate
+ * ids whenever two HR users saved at the same time and reused ids after a
+ * deletion. A counter document guarantees each number is handed out once.
+ */
+async function nextEmployeeId(year: number): Promise<string> {
+  const counter = await Counter.findOneAndUpdate(
+    { key: `employee:${year}` },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+  return `EMP-${year}-${String(counter.seq).padStart(4, "0")}`;
+}
+
+/** Replaces encrypted PII with a marker before the record enters the audit log. */
+function redactForAudit(doc: Record<string, unknown>): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...doc };
+  for (const field of SENSITIVE_FIELDS) {
+    if (field.includes(".")) {
+      const [parent, child] = field.split(".");
+      const obj = copy[parent] as Record<string, unknown> | undefined;
+      if (obj?.[child]) copy[parent] = { ...obj, [child]: "[terenkripsi]" };
+    } else if (copy[field]) {
+      copy[field] = "[terenkripsi]";
+    }
+  }
+  delete copy.documents;
+  return copy;
+}
+
+/* ------------------------------------------------------------------ */
+/* DELETE                                                               */
+/* ------------------------------------------------------------------ */
+
+export const DELETE = wrapRouteHandler(async (req) => {
+  const ctx = await requirePermission(req, "employees", "delete");
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) throw BadRequest("ID karyawan wajib disertakan.");
+
+  const employee = await Employee.findById(id);
+  if (!employee) throw NotFound("Data karyawan tidak ditemukan.");
+
+  // Hard-deleting would orphan attendance, payroll, and audit records, so the
+  // record is retired instead and the login disabled.
+  employee.status = "resigned";
+  await employee.save();
+  await User.updateOne({ employeeId: employee._id }, { isActive: false });
+
+  void logActivity({
+    userId: ctx.user.id,
+    action: "DEACTIVATE_EMPLOYEE",
+    module: "employees",
+    before: redactForAudit(employee.toObject()),
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
+
+  return apiSuccess(
+    { id },
+    `${employee.name} dinonaktifkan (status resign) dan akses loginnya ditutup. Riwayat presensi dan payroll tetap tersimpan.`
+  );
 });

@@ -1,6 +1,15 @@
+/**
+ * Idempotent database seed.
+ *
+ * Run with `npm run seed`. Safe to re-run: every step upserts, so it can be used
+ * both to bootstrap a fresh install and to top up an existing database with
+ * newly-added settings, modules, or master data.
+ */
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import { connectToDatabase } from "../lib/db";
+import { SETTING_DEFS } from "../lib/settings";
+import { encryptOnce } from "../lib/crypto";
 import Role from "../models/Role";
 import RolePermission from "../models/RolePermission";
 import Setting from "../models/Setting";
@@ -11,239 +20,499 @@ import Branch from "../models/Branch";
 import Division from "../models/Division";
 import Position from "../models/Position";
 import Employee from "../models/Employee";
+import WorkSchedule from "../models/WorkSchedule";
+import NationalHoliday from "../models/NationalHoliday";
+import Counter from "../models/Counter";
+import PayslipTemplate from "../models/PayslipTemplate";
+import { DEFAULT_BLOCKS, DEFAULT_EMPLOYEE_FIELDS } from "../lib/hr/payslip";
+import KpiTemplate from "../models/KpiTemplate";
 
-// Define env variables locally if not loaded (for script environment)
 process.env.MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/hris";
 
+const log = (msg: string) => console.log(`  ${msg}`);
+const step = (msg: string) => console.log(`\n▸ ${msg}`);
+
+/* ------------------------------------------------------------------ */
+/* RBAC matrix                                                          */
+/* ------------------------------------------------------------------ */
+
+type Scope = "all" | "branch" | "division" | "self";
+
+interface PermSeed {
+  role: string;
+  module: string;
+  actions: string[];
+  scope: Scope;
+}
+
+/**
+ * Mirrors the module × action matrix in Instructions.md §4.2.
+ * Superadmin is intentionally absent — `checkPermission` short-circuits it.
+ */
+const PERMISSIONS: PermSeed[] = [
+  // ---- STAFF: self-service only ----
+  { role: "STAFF", module: "attendance", actions: ["read", "write"], scope: "self" },
+  { role: "STAFF", module: "leave", actions: ["read", "write"], scope: "self" },
+  { role: "STAFF", module: "holiday_swap", actions: ["read", "write"], scope: "self" },
+  { role: "STAFF", module: "payroll", actions: ["read"], scope: "self" },
+  { role: "STAFF", module: "kpi", actions: ["read"], scope: "self" },
+  { role: "STAFF", module: "contracts", actions: ["read"], scope: "self" },
+  { role: "STAFF", module: "inventory", actions: ["read"], scope: "self" },
+  { role: "STAFF", module: "complaint", actions: ["read", "write"], scope: "self" },
+  { role: "STAFF", module: "employees", actions: ["read"], scope: "self" },
+
+  // ---- SPV: own division ----
+  { role: "SPV", module: "attendance", actions: ["read", "write"], scope: "division" },
+  { role: "SPV", module: "employees", actions: ["read"], scope: "division" },
+  { role: "SPV", module: "leave", actions: ["read", "approve"], scope: "division" },
+  { role: "SPV", module: "holiday_swap", actions: ["read", "approve"], scope: "division" },
+  { role: "SPV", module: "recruitment", actions: ["read"], scope: "division" },
+  { role: "SPV", module: "kpi", actions: ["read", "write"], scope: "division" },
+  { role: "SPV", module: "inventory", actions: ["read"], scope: "division" },
+  { role: "SPV", module: "complaint", actions: ["read", "write"], scope: "division" },
+  { role: "SPV", module: "reports", actions: ["read", "export"], scope: "division" },
+
+  // ---- HRD: company-wide operator ----
+  { role: "HRD", module: "attendance", actions: ["read", "write", "export"], scope: "all" },
+  { role: "HRD", module: "employees", actions: ["read", "write", "export"], scope: "all" },
+  { role: "HRD", module: "leave", actions: ["read", "write", "approve", "export"], scope: "all" },
+  { role: "HRD", module: "holiday_swap", actions: ["read", "write", "approve"], scope: "all" },
+  { role: "HRD", module: "recruitment", actions: ["read", "write", "export"], scope: "all" },
+  { role: "HRD", module: "payroll", actions: ["read", "write", "export"], scope: "all" },
+  { role: "HRD", module: "kpi", actions: ["read", "write", "export"], scope: "all" },
+  { role: "HRD", module: "contracts", actions: ["read", "write"], scope: "all" },
+  { role: "HRD", module: "inventory", actions: ["read"], scope: "all" },
+  { role: "HRD", module: "complaint", actions: ["read", "write"], scope: "all" },
+  { role: "HRD", module: "settings", actions: ["read", "write"], scope: "all" },
+  { role: "HRD", module: "reports", actions: ["read", "export"], scope: "all" },
+
+  // ---- AUDIT: read + export everywhere, approve on escalations ----
+  { role: "AUDIT", module: "attendance", actions: ["read", "export"], scope: "all" },
+  { role: "AUDIT", module: "employees", actions: ["read", "export"], scope: "all" },
+  { role: "AUDIT", module: "leave", actions: ["read", "approve", "export"], scope: "all" },
+  { role: "AUDIT", module: "holiday_swap", actions: ["read", "approve"], scope: "all" },
+  { role: "AUDIT", module: "recruitment", actions: ["read"], scope: "all" },
+  { role: "AUDIT", module: "payroll", actions: ["read", "export"], scope: "all" },
+  { role: "AUDIT", module: "kpi", actions: ["read", "export"], scope: "all" },
+  { role: "AUDIT", module: "contracts", actions: ["read"], scope: "all" },
+  { role: "AUDIT", module: "inventory", actions: ["read", "write"], scope: "all" },
+  { role: "AUDIT", module: "complaint", actions: ["read", "write"], scope: "all" },
+  { role: "AUDIT", module: "audit", actions: ["read", "export"], scope: "all" },
+  { role: "AUDIT", module: "reports", actions: ["read", "export"], scope: "all" },
+
+  // ---- GA: asset custodian ----
+  { role: "GA", module: "inventory", actions: ["read", "write", "delete", "export"], scope: "all" },
+  { role: "GA", module: "employees", actions: ["read"], scope: "all" },
+  { role: "GA", module: "reports", actions: ["read"], scope: "all" },
+
+  // ---- DIREKSI: oversight + final approvals ----
+  { role: "DIREKSI", module: "attendance", actions: ["read"], scope: "all" },
+  { role: "DIREKSI", module: "employees", actions: ["read"], scope: "all" },
+  { role: "DIREKSI", module: "leave", actions: ["read", "approve"], scope: "all" },
+  { role: "DIREKSI", module: "holiday_swap", actions: ["read", "approve"], scope: "all" },
+  { role: "DIREKSI", module: "recruitment", actions: ["read"], scope: "all" },
+  { role: "DIREKSI", module: "payroll", actions: ["read"], scope: "all" },
+  { role: "DIREKSI", module: "kpi", actions: ["read"], scope: "all" },
+  { role: "DIREKSI", module: "contracts", actions: ["read", "approve"], scope: "all" },
+  { role: "DIREKSI", module: "inventory", actions: ["read"], scope: "all" },
+  { role: "DIREKSI", module: "complaint", actions: ["read", "write"], scope: "all" },
+  { role: "DIREKSI", module: "reports", actions: ["read", "export"], scope: "all" },
+];
+
+/* ------------------------------------------------------------------ */
+/* Master data                                                          */
+/* ------------------------------------------------------------------ */
+
+const LEAVE_TYPES = [
+  {
+    name: "Cuti Tahunan",
+    description: "Hak cuti tahunan yang dihitung dari masa kerja.",
+    quotaDays: 12,
+    accrualMode: "prorata",
+    carryOverMaxDays: 6,
+    requiresEvidence: false,
+    minLeadDays: 3,
+    maxConsecutiveDays: 12,
+    deductsBalance: true,
+    colorTone: "primary",
+  },
+  {
+    name: "Izin Sakit",
+    description: "Izin karena sakit. Wajib surat dokter bila 2 hari atau lebih.",
+    quotaDays: 30,
+    accrualMode: "flat",
+    carryOverMaxDays: 0,
+    requiresEvidence: true,
+    minLeadDays: 0,
+    maxConsecutiveDays: 0,
+    deductsBalance: false,
+    colorTone: "warning",
+  },
+  {
+    name: "Cuti Menikah",
+    description: "Cuti pernikahan karyawan sendiri.",
+    quotaDays: 3,
+    accrualMode: "flat",
+    carryOverMaxDays: 0,
+    requiresEvidence: true,
+    minLeadDays: 14,
+    maxConsecutiveDays: 3,
+    deductsBalance: false,
+    colorTone: "success",
+  },
+  {
+    name: "Cuti Melahirkan",
+    description: "Cuti melahirkan sesuai ketentuan ketenagakerjaan.",
+    quotaDays: 90,
+    accrualMode: "flat",
+    carryOverMaxDays: 0,
+    requiresEvidence: true,
+    minLeadDays: 30,
+    maxConsecutiveDays: 0,
+    deductsBalance: false,
+    genderRestriction: "female",
+    colorTone: "info",
+  },
+  {
+    name: "Cuti Ayah",
+    description: "Cuti mendampingi istri melahirkan.",
+    quotaDays: 2,
+    accrualMode: "flat",
+    carryOverMaxDays: 0,
+    requiresEvidence: true,
+    minLeadDays: 0,
+    maxConsecutiveDays: 2,
+    deductsBalance: false,
+    genderRestriction: "male",
+    colorTone: "info",
+  },
+  {
+    name: "Izin Keluarga Meninggal",
+    description: "Izin duka untuk keluarga inti.",
+    quotaDays: 3,
+    accrualMode: "flat",
+    carryOverMaxDays: 0,
+    requiresEvidence: false,
+    minLeadDays: 0,
+    maxConsecutiveDays: 3,
+    deductsBalance: false,
+    colorTone: "neutral",
+  },
+  {
+    name: "WFH / Dinas Luar",
+    description:
+      "Bekerja dari luar kantor. Disetujui lebih dulu agar presensi di luar radius kantor diterima sistem.",
+    quotaDays: 60,
+    accrualMode: "flat",
+    carryOverMaxDays: 0,
+    requiresEvidence: false,
+    minLeadDays: 0,
+    maxConsecutiveDays: 0,
+    deductsBalance: false,
+    allowsRemoteAttendance: true,
+    colorTone: "info",
+  },
+  {
+    name: "Cuti di Luar Tanggungan",
+    description: "Cuti tanpa dibayar, memerlukan persetujuan berjenjang.",
+    quotaDays: 30,
+    accrualMode: "flat",
+    carryOverMaxDays: 0,
+    requiresEvidence: true,
+    minLeadDays: 14,
+    maxConsecutiveDays: 0,
+    deductsBalance: false,
+    colorTone: "danger",
+  },
+];
+
+const WORK_SCHEDULES = [
+  { name: "Backoffice A (Sen–Sab)", clockIn: "09:00", clockOut: "17:00", breakOut: "12:00", breakIn: "13:00", isBreakActive: true, gracePeriodMinutes: 5, activeDays: [1, 2, 3, 4, 5, 6] },
+  { name: "Backoffice B (Sen–Jum)", clockIn: "09:00", clockOut: "18:00", breakOut: "12:00", breakIn: "13:00", isBreakActive: true, gracePeriodMinutes: 5, activeDays: [1, 2, 3, 4, 5] },
+  { name: "Shift Pagi", clockIn: "07:00", clockOut: "15:00", isBreakActive: false, gracePeriodMinutes: 1, activeDays: [1, 2, 3, 4, 5, 6, 0] },
+  { name: "Shift Siang", clockIn: "15:00", clockOut: "23:00", isBreakActive: false, gracePeriodMinutes: 1, activeDays: [1, 2, 3, 4, 5, 6, 0] },
+  { name: "Shift Malam", clockIn: "23:00", clockOut: "07:00", isBreakActive: false, gracePeriodMinutes: 1, activeDays: [1, 2, 3, 4, 5, 6, 0] },
+];
+
+/** Indonesian public holidays — top up each year from the SKB three ministers. */
+const HOLIDAYS_2026 = [
+  { dateKey: "2026-01-01", name: "Tahun Baru Masehi" },
+  { dateKey: "2026-01-17", name: "Isra Mikraj Nabi Muhammad SAW" },
+  { dateKey: "2026-02-17", name: "Tahun Baru Imlek" },
+  { dateKey: "2026-03-19", name: "Hari Suci Nyepi" },
+  { dateKey: "2026-03-20", name: "Idul Fitri 1447 H" },
+  { dateKey: "2026-03-21", name: "Idul Fitri 1447 H (Hari Kedua)" },
+  { dateKey: "2026-04-03", name: "Wafat Isa Almasih" },
+  { dateKey: "2026-05-01", name: "Hari Buruh Internasional" },
+  { dateKey: "2026-05-14", name: "Kenaikan Isa Almasih" },
+  { dateKey: "2026-05-27", name: "Idul Adha 1447 H" },
+  { dateKey: "2026-05-31", name: "Hari Raya Waisak" },
+  { dateKey: "2026-06-01", name: "Hari Lahir Pancasila" },
+  { dateKey: "2026-06-16", name: "Tahun Baru Islam 1448 H" },
+  { dateKey: "2026-08-17", name: "Hari Kemerdekaan Republik Indonesia" },
+  { dateKey: "2026-08-25", name: "Maulid Nabi Muhammad SAW" },
+  { dateKey: "2026-12-25", name: "Hari Raya Natal" },
+];
+
+/* ------------------------------------------------------------------ */
+
 async function seed() {
-  console.log("Starting database seeding...");
-  
-  try {
-    await connectToDatabase();
-    
-    // 1. Seed Roles
-    const rolesToSeed = [
-      { name: "SUPERADMIN", isSystemDefault: true },
-      { name: "DIREKSI", isSystemDefault: true },
-      { name: "HRD", isSystemDefault: true },
-      { name: "AUDIT", isSystemDefault: true },
-      { name: "GA", isSystemDefault: true },
-      { name: "SPV", isSystemDefault: true },
-      { name: "STAFF", isSystemDefault: true },
-    ];
-    
-    console.log("Seeding Roles...");
-    const roleDocs: Record<string, any> = {};
-    for (const r of rolesToSeed) {
-      let roleDoc = await Role.findOne({ name: r.name });
-      if (!roleDoc) {
-        roleDoc = await Role.create(r);
-        console.log(`Created Role: ${r.name}`);
-      } else {
-        console.log(`Role ${r.name} already exists`);
-      }
-      roleDocs[r.name] = roleDoc;
+  console.log("HRIS — seeding database\n" + "=".repeat(40));
+  await connectToDatabase();
+
+  /* 1. Roles ------------------------------------------------------- */
+  step("Roles");
+  const roleNames = ["SUPERADMIN", "DIREKSI", "HRD", "AUDIT", "GA", "SPV", "STAFF"];
+  const roles: Record<string, { _id: mongoose.Types.ObjectId }> = {};
+  for (const name of roleNames) {
+    const doc = await Role.findOneAndUpdate(
+      { name },
+      { name, isSystemDefault: true },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    roles[name] = doc;
+  }
+  log(`${roleNames.length} peran tersedia`);
+
+  /* 2. Permissions -------------------------------------------------- */
+  step("Role permissions");
+  // Upsert rather than wipe: a Superadmin may have customised the matrix in the
+  // CMS, and a re-seed should not silently revert their configuration for roles
+  // it does not know about.
+  for (const p of PERMISSIONS) {
+    const roleId = roles[p.role]?._id;
+    if (!roleId) continue;
+    await RolePermission.findOneAndUpdate(
+      { roleId, module: p.module },
+      { roleId, module: p.module, actions: p.actions, scope: p.scope },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  }
+  log(`${PERMISSIONS.length} entri izin disinkronkan`);
+
+  /* 3. Settings ------------------------------------------------------ */
+  step("Settings");
+  let created = 0;
+  for (const def of SETTING_DEFS) {
+    const existing = await Setting.findOne({ key: def.key });
+    if (!existing) {
+      await Setting.create({ key: def.key, value: def.default, description: def.description });
+      created++;
+    } else if (existing.description !== def.description) {
+      // Keep the operator's value, refresh only the explanatory text.
+      existing.description = def.description;
+      await existing.save();
     }
+  }
+  log(`${SETTING_DEFS.length} kunci pengaturan (${created} baru dibuat, sisanya dipertahankan)`);
 
-    // 2. Seed Role Permissions
-    console.log("Seeding Role Permissions...");
-    // Clear old permissions to re-seed cleanly
-    await RolePermission.deleteMany({});
-    
-    const permissionsToSeed = [
-      // --- STAFF PERMISSIONS ---
-      { role: "STAFF", module: "attendance", actions: ["read", "write"], scope: "self" },
-      { role: "STAFF", module: "leave", actions: ["read", "write"], scope: "self" },
-      { role: "STAFF", module: "payroll", actions: ["read"], scope: "self" },
-      { role: "STAFF", module: "kpi", actions: ["read"], scope: "self" },
-      { role: "STAFF", module: "contracts", actions: ["read"], scope: "self" },
-      { role: "STAFF", module: "inventory", actions: ["read"], scope: "self" },
-      
-      // --- SPV PERMISSIONS ---
-      { role: "SPV", module: "attendance", actions: ["read", "write"], scope: "division" },
-      { role: "SPV", module: "leave", actions: ["read", "approve"], scope: "division" },
-      { role: "SPV", module: "recruitment", actions: ["read"], scope: "division" },
-      { role: "SPV", module: "kpi", actions: ["read", "write"], scope: "division" },
-      { role: "SPV", module: "inventory", actions: ["read"], scope: "division" },
-      { role: "SPV", module: "reports", actions: ["read"], scope: "division" },
+  /* 4. Leave types --------------------------------------------------- */
+  step("Leave types");
+  for (const lt of LEAVE_TYPES) {
+    await LeaveType.findOneAndUpdate(
+      { name: lt.name },
+      { $setOnInsert: lt },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  }
+  log(`${LEAVE_TYPES.length} jenis izin/cuti`);
 
-      // --- HRD PERMISSIONS ---
-      { role: "HRD", module: "attendance", actions: ["read", "write"], scope: "all" },
-      { role: "HRD", module: "leave", actions: ["read", "write", "approve"], scope: "all" },
-      { role: "HRD", module: "recruitment", actions: ["read", "write"], scope: "all" },
-      { role: "HRD", module: "payroll", actions: ["read", "write"], scope: "all" },
-      { role: "HRD", module: "kpi", actions: ["read", "write"], scope: "all" },
-      { role: "HRD", module: "contracts", actions: ["read", "write"], scope: "all" },
-      { role: "HRD", module: "inventory", actions: ["read"], scope: "all" },
-      { role: "HRD", module: "settings", actions: ["read"], scope: "all" },
-      { role: "HRD", module: "reports", actions: ["read"], scope: "all" },
-
-      // --- AUDIT PERMISSIONS ---
-      { role: "AUDIT", module: "attendance", actions: ["read"], scope: "all" },
-      { role: "AUDIT", module: "leave", actions: ["read", "approve"], scope: "all" },
-      { role: "AUDIT", module: "recruitment", actions: ["read"], scope: "all" },
-      { role: "AUDIT", module: "payroll", actions: ["read"], scope: "all" },
-      { role: "AUDIT", module: "kpi", actions: ["read"], scope: "all" },
-      { role: "AUDIT", module: "contracts", actions: ["read"], scope: "all" },
-      { role: "AUDIT", module: "inventory", actions: ["read"], scope: "all" },
-      { role: "AUDIT", module: "reports", actions: ["read"], scope: "all" },
-
-      // --- GA PERMISSIONS ---
-      { role: "GA", module: "inventory", actions: ["read", "write"], scope: "all" },
-
-      // --- DIREKSI PERMISSIONS ---
-      { role: "DIREKSI", module: "attendance", actions: ["read"], scope: "all" },
-      { role: "DIREKSI", module: "leave", actions: ["read", "approve"], scope: "all" },
-      { role: "DIREKSI", module: "recruitment", actions: ["read"], scope: "all" },
-      { role: "DIREKSI", module: "payroll", actions: ["read"], scope: "all" },
-      { role: "DIREKSI", module: "kpi", actions: ["read"], scope: "all" },
-      { role: "DIREKSI", module: "contracts", actions: ["read", "approve"], scope: "all" },
-      { role: "DIREKSI", module: "inventory", actions: ["read"], scope: "all" },
-      { role: "DIREKSI", module: "reports", actions: ["read"], scope: "all" },
-    ];
-
-    for (const p of permissionsToSeed) {
-      const roleId = roleDocs[p.role]?._id;
-      if (roleId) {
-        await RolePermission.create({
-          roleId,
-          module: p.module,
-          actions: p.actions,
-          scope: p.scope,
-        });
-        console.log(`Created Permission: [${p.role}] module: ${p.module}`);
-      }
-    }
-
-    // 3. Seed Global Settings
-    console.log("Seeding settings...");
-    const settingsToSeed = [
-      { key: "grace_period_minutes", value: 1, description: "Grace period for tardiness in minutes" },
-      { key: "max_absen_correction", value: 3, description: "Maximum leave/attendance corrections permitted per month" },
-      { key: "holiday_swap_lead_days", value: 7, description: "Minimum days in advance required for public holiday swap requests" },
-      { key: "default_geo_radius", value: 15, description: "Default geo-fence radius in meters around office branch location" },
-      { key: "default_employee_password", value: "password123", description: "Default login password for newly created employee accounts" },
-      { key: "require_selfie_clock_in", value: true, description: "Require selfie verification for clock in" },
-      { key: "require_selfie_break_out", value: false, description: "Require selfie verification for starting break" },
-      { key: "require_selfie_break_in", value: false, description: "Require selfie verification for ending break" },
-      { key: "require_selfie_clock_out", value: true, description: "Require selfie verification for clock out" },
-      { key: "enable_break_attendance", value: true, description: "Enable break time attendance for employees" },
-    ];
-
-    for (const s of settingsToSeed) {
-      const exists = await Setting.findOne({ key: s.key });
-      if (!exists) {
-        await Setting.create(s);
-        console.log(`Created setting: ${s.key} = ${s.value}`);
-      } else {
-        console.log(`Setting ${s.key} already exists`);
-      }
-    }
-
-    // 3.1. Seed Leave Types
-    console.log("Seeding leave types...");
-    const leaveTypesToSeed = [
-      { name: "Cuti Tahunan", quotaDays: 12, accrualMode: "flat", carryOverMaxDays: 6, requiresEvidence: false, minLeadDays: 3 },
-      { name: "Izin Sakit", quotaDays: 30, accrualMode: "flat", carryOverMaxDays: 0, requiresEvidence: true, minLeadDays: 0 },
-      { name: "Cuti Menikah", quotaDays: 3, accrualMode: "flat", carryOverMaxDays: 0, requiresEvidence: false, minLeadDays: 7 },
-    ];
-
-    for (const lt of leaveTypesToSeed) {
-      const exists = await LeaveType.findOne({ name: lt.name });
-      if (!exists) {
-        await LeaveType.create(lt);
-        console.log(`Created leave type: ${lt.name}`);
-      } else {
-        console.log(`Leave type ${lt.name} already exists`);
-      }
-    }
-
-    // 3.2. Seed Approval Flows
-    console.log("Seeding approval flows...");
-    const flowsToSeed = [
+  /* 5. Approval flows ------------------------------------------------ */
+  step("Approval flows");
+  for (const type of ["leave", "correction", "holiday_swap"] as const) {
+    await ApprovalFlow.findOneAndUpdate(
+      { transactionType: type },
       {
-        transactionType: "leave",
-        steps: [
-          { stepNumber: 1, approverRole: "SPV", isMandatory: true },
-          { stepNumber: 2, approverRole: "HRD", isMandatory: true }
-        ]
+        $setOnInsert: {
+          transactionType: type,
+          steps: [
+            { stepNumber: 1, approverRole: "SPV", isMandatory: true },
+            { stepNumber: 2, approverRole: "HRD", isMandatory: true },
+          ],
+        },
       },
-      {
-        transactionType: "correction",
-        steps: [
-          { stepNumber: 1, approverRole: "SPV", isMandatory: true },
-          { stepNumber: 2, approverRole: "HRD", isMandatory: true }
-        ]
-      },
-      {
-        transactionType: "holiday_swap",
-        steps: [
-          { stepNumber: 1, approverRole: "SPV", isMandatory: true },
-          { stepNumber: 2, approverRole: "HRD", isMandatory: true }
-        ]
-      }
-    ];
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  }
+  log("3 alur persetujuan (cuti, koreksi absen, tukar libur)");
 
-    for (const f of flowsToSeed) {
-      const exists = await ApprovalFlow.findOne({ transactionType: f.transactionType });
-      if (!exists) {
-        await ApprovalFlow.create(f);
-        console.log(`Created approval flow for: ${f.transactionType}`);
-      } else {
-        console.log(`Approval flow for ${f.transactionType} already exists`);
-      }
-    }
+  /* 6. National holidays --------------------------------------------- */
+  step("National holidays");
+  for (const h of HOLIDAYS_2026) {
+    await NationalHoliday.findOneAndUpdate(
+      { dateKey: h.dateKey },
+      { $setOnInsert: { ...h, type: "libur_nasional", isActive: true } },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+  }
+  log(`${HOLIDAYS_2026.length} tanggal merah 2026`);
 
-    // 3.3. Seed Master Penempatan (Cabang, Divisi, Jabatan)
-    console.log("Seeding master corporate data...");
-    
-    let branchDoc = await Branch.findOne({ $or: [{ code: "KPJ" }, { name: "Kantor Pusat Jakarta" }] });
-    if (!branchDoc) {
-      branchDoc = await Branch.create({
+  /* 7. Work schedules ------------------------------------------------ */
+  step("Work schedules");
+  for (const ws of WORK_SCHEDULES) {
+    await WorkSchedule.findOneAndUpdate(
+      { name: ws.name },
+      { $setOnInsert: ws },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+  }
+  log(`${WORK_SCHEDULES.length} template jadwal kerja`);
+
+  /* 8. Organisation -------------------------------------------------- */
+  step("Organisation");
+  const branch = await Branch.findOneAndUpdate(
+    { name: "Kantor Pusat Jakarta" },
+    {
+      $setOnInsert: {
         name: "Kantor Pusat Jakarta",
-        code: "KPJ",
-        lat: -6.200000,
-        lng: 106.816666,
-        radius: 150,
         address: "Jl. Jenderal Sudirman No. 1, Jakarta Pusat",
-      });
-      console.log("Created corporate Branch: Kantor Pusat Jakarta");
-    }
+        lat: -6.2,
+        lng: 106.816666,
+        // The model field is `radiusMeter`; the previous seed set `radius`,
+        // which Mongoose dropped, leaving every office on the 15 m default.
+        radiusMeter: 150,
+        workHours: { start: "09:00", end: "17:00" },
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 
-    let divisionDoc = await Division.findOne({ $or: [{ code: "IT" }, { name: "Teknologi Informasi" }] });
-    if (!divisionDoc) {
-      divisionDoc = await Division.create({
-        name: "Teknologi Informasi",
-        code: "IT",
-      });
-      console.log("Created corporate Division: Teknologi Informasi");
-    }
+  const division = await Division.findOneAndUpdate(
+    { name: "Teknologi Informasi" },
+    { $setOnInsert: { name: "Teknologi Informasi", branchId: branch._id } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 
-    let positionDoc = await Position.findOne({ $or: [{ code: "SSE" }, { name: "Senior Software Engineer" }] });
-    if (!positionDoc) {
-      positionDoc = await Position.create({
+  const position = await Position.findOneAndUpdate(
+    { name: "Senior Software Engineer" },
+    {
+      $setOnInsert: {
         name: "Senior Software Engineer",
-        code: "SSE",
-        divisionId: divisionDoc._id,
-      });
-      console.log("Created corporate Position: Senior Software Engineer");
-    }
+        divisionId: division._id,
+        description: "Merancang dan membangun layanan internal perusahaan.",
+        location: "Jakarta",
+        type: "Full-Time",
+        status: "active",
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  log(`Cabang "${branch.name}" · Divisi "${division.name}" · Jabatan "${position.name}"`);
 
-    // 3.4. Seed Default Employee & STAFF User
-    console.log("Seeding default Employee & Staff account...");
-    const empEmail = "budi@hris.com";
-    let employeeDoc = await Employee.findOne({ $or: [{ personalEmail: empEmail }, { employeeId: "EMP-2026-0001" }] });
-    
-    if (!employeeDoc) {
-      employeeDoc = await Employee.create({
+  /* 9. Payslip template ------------------------------------------------ */
+  step("Payslip template");
+  await PayslipTemplate.findOneAndUpdate(
+    { name: "Slip Gaji Standar" },
+    {
+      $setOnInsert: {
+        name: "Slip Gaji Standar",
+        description: "Tata letak bawaan yang dipakai untuk seluruh karyawan.",
+        isDefault: true,
+        paperSize: "A4",
+        accentColor: "#4f46e5",
+        baseFontSize: 12,
+        margin: 18,
+        companyName: "PT Contoh Nusantara",
+        companyAddress: "Jl. Jenderal Sudirman No. 1, Jakarta Pusat",
+        documentTitle: "SLIP GAJI KARYAWAN",
+        employeeFields: DEFAULT_EMPLOYEE_FIELDS,
+        blocks: DEFAULT_BLOCKS,
+      },
+    },
+    { upsert: true, setDefaultsOnInsert: true }
+  );
+  log("Template slip gaji bawaan");
+
+  /* 10. KPI template --------------------------------------------------- */
+  step("KPI template");
+  await KpiTemplate.findOneAndUpdate(
+    { name: "Penilaian Kinerja Umum" },
+    {
+      $setOnInsert: {
+        name: "Penilaian Kinerja Umum",
+        description:
+          "Template dasar tiga aspek yang berlaku untuk seluruh divisi. Sesuaikan bobot dan indikatornya lewat menu KPI & Kinerja.",
+        periodType: "quarterly",
+        scoreMode: "scale_5",
+        allowSelfAssessment: false,
+        isActive: true,
+        aspects: [
+          {
+            key: "hasil",
+            name: "Hasil Kerja",
+            description: "Pencapaian target dan kualitas keluaran.",
+            weight: 40,
+            indicators: [
+              { key: "target", name: "Pencapaian target", description: "", target: "Minimal 100% dari target periode", weight: 60 },
+              { key: "kualitas", name: "Kualitas hasil kerja", description: "", target: "Minim revisi dan kesalahan", weight: 40 },
+            ],
+          },
+          {
+            key: "disiplin",
+            name: "Kedisiplinan",
+            description: "Kehadiran dan kepatuhan pada aturan kerja.",
+            weight: 30,
+            indicators: [
+              { key: "hadir", name: "Kehadiran dan ketepatan waktu", description: "", target: "Tanpa alpha, keterlambatan minimal", weight: 50 },
+              { key: "sop", name: "Kepatuhan prosedur", description: "", target: "Mengikuti SOP yang berlaku", weight: 50 },
+            ],
+          },
+          {
+            key: "sikap",
+            name: "Sikap Kerja",
+            description: "Kerja sama, inisiatif, dan komunikasi.",
+            weight: 30,
+            indicators: [
+              { key: "tim", name: "Kerja sama tim", description: "", target: "Kooperatif dan membantu rekan", weight: 50 },
+              { key: "inisiatif", name: "Inisiatif", description: "", target: "Mengusulkan perbaikan tanpa diminta", weight: 50 },
+            ],
+          },
+        ],
+      },
+    },
+    { upsert: true, setDefaultsOnInsert: true }
+  );
+  log("Template KPI bawaan (3 aspek, 6 indikator)");
+
+  /* 11. Demo accounts -------------------------------------------------- */
+  step("Accounts");
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || "Admin#Hris2026";
+  const staffPassword = process.env.SEED_STAFF_PASSWORD || "Budi#Hris2026";
+
+  await User.findOneAndUpdate(
+    { email: "admin@hris.com" },
+    {
+      email: "admin@hris.com",
+      passwordHash: await bcrypt.hash(adminPassword, 12),
+      roleId: roles.SUPERADMIN._id,
+      isActive: true,
+      // The superadmin is the bootstrap account; forcing a change here would
+      // lock the installer out before any other account exists.
+      mustChangePassword: false,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  await Counter.findOneAndUpdate(
+    { key: "employee:2026" },
+    { $max: { seq: 1 } },
+    { upsert: true, setDefaultsOnInsert: true }
+  );
+
+  const employee = await Employee.findOneAndUpdate(
+    { employeeId: "EMP-2026-0001" },
+    {
+      $setOnInsert: {
         employeeId: "EMP-2026-0001",
         name: "Budi Santoso",
-        nik: "1234567890123456",
+        // Sensitive identifiers are stored encrypted, matching what the API writes.
+        nik: encryptOnce("3174012345678901"),
+        npwp: encryptOnce("09.254.294.3-407.000"),
         birthPlace: "Jakarta",
         birthDate: new Date("1995-05-15"),
         gender: "male",
         religion: "Islam",
-        maritalStatus: "Single",
+        maritalStatus: "Belum Menikah",
         ktpAddress: {
           street: "Jl. Mawar No. 12",
           subdistrict: "Tebet",
@@ -258,66 +527,56 @@ async function seed() {
           province: "DKI Jakarta",
           country: "Indonesia",
         },
-        personalEmail: empEmail,
+        personalEmail: "budi@hris.com",
         officeEmail: "budi.santoso@hris.com",
         phone: "08123456789",
         socialMedia: {},
-        npwp: "123456789000",
         taxStatus: "TK/0",
         bankAccount: {
           bankName: "Bank Central Asia (BCA)",
-          accountNumber: "8881234567",
+          accountNumber: encryptOnce("8881234567"),
           accountHolder: "Budi Santoso",
         },
-        branchId: branchDoc._id,
-        divisionId: divisionDoc._id,
-        positionId: positionDoc._id,
+        branchId: branch._id,
+        divisionId: division._id,
+        positionId: position._id,
         joinDate: new Date("2026-01-01"),
         employmentStatus: "pkwtt",
         status: "active",
-      });
-      console.log("Created default Employee profile: Budi Santoso (EMP-2026-0001)");
-    }
-
-    // Seed User for Staff
-    const staffUserExists = await User.findOne({ email: empEmail });
-    if (!staffUserExists) {
-      const staffPasswordHash = await bcrypt.hash("budi123", 12);
-      await User.create({
-        email: empEmail,
-        passwordHash: staffPasswordHash,
-        roleId: roleDocs["STAFF"]._id,
-        employeeId: employeeDoc._id,
-        is2faEnabled: false,
-      });
-      console.log(`Created Staff User account: ${empEmail} (password: budi123)`);
-    }
-
-    // 4. Seed Superadmin User Account
-    console.log("Seeding Superadmin account...");
-    const adminEmail = "admin@hris.com";
-    const passwordHash = await bcrypt.hash("admin123", 12);
-    
-    await User.findOneAndUpdate(
-      { email: adminEmail },
-      {
-        email: adminEmail,
-        passwordHash,
-        roleId: roleDocs["SUPERADMIN"]._id,
-        is2faEnabled: false,
       },
-      { upsert: true, new: true }
-    );
-    console.log(`Upserted Superadmin User account: ${adminEmail} (password: admin123)`);
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 
-    console.log("Database seeding completed successfully!");
-    mongoose.connection.close();
-    process.exit(0);
-  } catch (err: any) {
-    console.error("Error seeding database:", err.message);
-    mongoose.connection.close();
-    process.exit(1);
-  }
+  await User.findOneAndUpdate(
+    { email: "budi@hris.com" },
+    {
+      $set: {
+        passwordHash: await bcrypt.hash(staffPassword, 12),
+        roleId: roles.STAFF._id,
+        employeeId: employee._id,
+        phone: "08123456789",
+        isActive: true,
+      },
+      $setOnInsert: { email: "budi@hris.com", mustChangePassword: false },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  console.log("\n" + "=".repeat(40));
+  console.log("Seeding selesai.\n");
+  console.log("  Superadmin : admin@hris.com / " + adminPassword);
+  console.log("  Karyawan   : budi@hris.com  / " + staffPassword);
+  console.log(
+    "\n  Ganti kedua kata sandi ini sebelum dipakai di produksi,\n  atau set SEED_ADMIN_PASSWORD / SEED_STAFF_PASSWORD sebelum menjalankan seed.\n"
+  );
+
+  await mongoose.connection.close();
+  process.exit(0);
 }
 
-seed();
+seed().catch(async (err) => {
+  console.error("\nSeeding gagal:", err.message);
+  await mongoose.connection.close().catch(() => {});
+  process.exit(1);
+});

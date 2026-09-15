@@ -5,12 +5,19 @@ import { ClipboardList, Briefcase, Plus, Trash2, Edit, X, Loader2, AlertCircle }
 import { motion, AnimatePresence } from "framer-motion";
 import SearchSelect from "@/components/SearchSelect";
 
+/**
+ * A reference the API may return either populated or as a bare id, depending on
+ * the endpoint. The form reads `_id` off it and the table reads `name`, so both
+ * shapes have to be spelled out rather than collapsed into one.
+ */
+type Ref = { _id: string; name: string; employeeId?: string } | string | null;
+
 interface MasterItem {
   _id: string;
   name: string;
-  headId?: { _id: string; name: string } | any;
-  divisionId?: { _id: string; name: string } | any;
-  branchId?: { _id: string; name: string } | any;
+  headId?: Ref;
+  divisionId?: Ref;
+  branchId?: Ref;
   description?: string;
   jobdesk?: string;
   requirements?: string;
@@ -19,15 +26,26 @@ interface MasterItem {
   status?: "active" | "inactive";
 }
 
+/** Reads a populated reference, tolerating the bare-id form. */
+function refName(ref: Ref | undefined): string {
+  return typeof ref === "object" && ref !== null ? ref.name : "";
+}
+
+/** Reads the id of a reference in either form. */
+function refId(ref: Ref | undefined): string {
+  if (!ref) return "";
+  return typeof ref === "string" ? ref : ref._id;
+}
+
 export default function DepartmentsPage() {
   const [activeTab, setActiveTab] = useState<"division" | "position">("division");
   const [items, setItems] = useState<MasterItem[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Data lists
-  const [employees, setEmployees] = useState<any[]>([]);
-  const [divisions, setDivisions] = useState<any[]>([]);
-  const [branches, setBranches] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<Array<{ _id: string; name: string; employeeId?: string }>>([]);
+  const [divisions, setDivisions] = useState<Array<{ _id: string; name: string }>>([]);
+  const [branches, setBranches] = useState<Array<{ _id: string; name: string }>>([]);
 
   // Form modal
   const [formOpen, setFormOpen] = useState(false);
@@ -106,9 +124,9 @@ export default function DepartmentsPage() {
     if (item) {
       setSelectedId(item._id);
       setName(item.name);
-      setHeadId(item.headId?._id || item.headId || "");
-      setDivisionId(item.divisionId?._id || item.divisionId || "");
-      setDivisionBranchId(item.branchId?._id || item.branchId || "");
+      setHeadId(refId(item.headId));
+      setDivisionId(refId(item.divisionId));
+      setDivisionBranchId(refId(item.branchId));
       setDescription(item.description || "");
       setJobdesk(item.jobdesk || "");
       setRequirements(item.requirements || "");
@@ -200,14 +218,14 @@ export default function DepartmentsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
+      <div className="flex items-center justify-between border-b border-line pb-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Divisi & Jabatan</h1>
-          <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">Kelola departemen divisi kerja dan penamaan jenjang jabatan karyawan</p>
+          <h1 className="text-xl font-semibold text-foreground dark:text-foreground">Divisi & Jabatan</h1>
+          <p className="text-xs text-muted dark:text-muted mt-1">Kelola departemen divisi kerja dan penamaan jenjang jabatan karyawan</p>
         </div>
         <button
           onClick={() => handleOpenForm()}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-sm font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 active:scale-[0.98] transition-all"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-sm font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all"
         >
           <Plus className="w-4 h-4" />
           Tambah {activeTab === "division" ? "Divisi" : "Jabatan"}
@@ -215,17 +233,17 @@ export default function DepartmentsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 p-1 bg-slate-100 dark:bg-white/2 border border-slate-200 dark:border-white/8 rounded-lg w-fit">
+      <div className="flex gap-2 p-1 bg-surface-2 border border-line rounded-lg w-fit">
         <button
           onClick={() => setActiveTab("division")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "division" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "division" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
         >
           <ClipboardList className="w-3.5 h-3.5" />
           Divisi / Departemen
         </button>
         <button
           onClick={() => setActiveTab("position")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "position" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "position" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
         >
           <Briefcase className="w-3.5 h-3.5" />
           Jabatan Kerja
@@ -233,20 +251,20 @@ export default function DepartmentsPage() {
       </div>
 
       {loading ? (
-        <div className="h-64 flex items-center justify-center text-slate-550 dark:text-slate-400">
-          <Loader2 className="w-8 h-8 animate-spin text-slate-800 dark:text-slate-200" />
+        <div className="h-64 flex items-center justify-center text-muted dark:text-muted">
+          <Loader2 className="w-8 h-8 animate-spin text-foreground" />
         </div>
       ) : items.length === 0 ? (
-        <div className="h-48 border border-dashed border-slate-200 dark:border-white/8 rounded-xl flex flex-col items-center justify-center text-center p-6 text-slate-500">
+        <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
           {activeTab === "division" ? <ClipboardList className="w-8 h-8 mb-2 opacity-50" /> : <Briefcase className="w-8 h-8 mb-2 opacity-50" />}
           <p className="text-sm font-medium">Belum ada {activeTab === "division" ? "divisi" : "jabatan"} terdaftar</p>
           <p className="text-xs mt-1">Tambahkan data master baru untuk melengkapi data jabatan operasional karyawan.</p>
         </div>
       ) : (
-        <div className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl overflow-hidden">
+        <div className="bg-surface border border-line/60 dark:border-white/6 rounded-xl overflow-hidden">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="border-b border-slate-200 dark:border-white/8 bg-slate-50 dark:bg-white/2 text-slate-550 dark:text-slate-400">
+              <tr className="border-b border-line bg-surface-2 text-muted dark:text-muted">
                 <th className="p-4 font-semibold">Nama {activeTab === "division" ? "Divisi / Departemen" : "Jabatan Kerja"}</th>
                 {activeTab === "division" ? (
                   <>
@@ -261,32 +279,34 @@ export default function DepartmentsPage() {
             </thead>
             <tbody>
               {items.map((item, idx) => (
-                <tr key={item._id} className="border-b border-slate-200 dark:border-white/4 hover:bg-slate-50/50 dark:hover:bg-white/1 transition-all">
-                  <td className="p-4 font-semibold text-slate-900 dark:text-slate-200 text-sm">{item.name}</td>
+                <tr key={item._id} className="border-b border-line hover:bg-surface-2/50 dark:hover:bg-white/1 transition-all">
+                  <td className="p-4 font-semibold text-foreground dark:text-foreground text-sm">{item.name}</td>
                   {activeTab === "division" ? (
                     <>
-                      <td className="p-4 text-slate-550 dark:text-slate-400 font-medium">
-                        {item.branchId?.name || "-"}
+                      <td className="p-4 text-muted dark:text-muted font-medium">
+                        {refName(item.branchId) || "-"}
                       </td>
-                      <td className="p-4 text-slate-550 dark:text-slate-400 font-medium">
-                        {item.headId?.name ? `${item.headId.name} (${item.headId.employeeId})` : "-"}
+                      <td className="p-4 text-muted dark:text-muted font-medium">
+                        {typeof item.headId === "object" && item.headId
+                          ? `${item.headId.name} (${item.headId.employeeId ?? "-"})`
+                          : "-"}
                       </td>
                     </>
                   ) : (
-                    <td className="p-4 text-slate-550 dark:text-slate-400 font-medium">
-                      {item.divisionId?.name || "-"}
+                    <td className="p-4 text-muted dark:text-muted font-medium">
+                      {refName(item.divisionId) || "-"}
                     </td>
                   )}
                   <td className="p-4 text-right flex items-center justify-end gap-2">
                     <button
                       onClick={() => handleOpenForm(item)}
-                      className="p-1.5 rounded hover:bg-white/4 text-slate-550 dark:text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
+                      className="p-1.5 rounded hover:bg-white/4 text-muted dark:text-muted hover:text-foreground transition-all cursor-pointer"
                     >
                       <Edit className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteItem(item._id)}
-                      className="p-1.5 rounded hover:bg-red-500/5 text-slate-550 dark:text-slate-400 hover:text-red-400 transition-all cursor-pointer"
+                      className="p-1.5 rounded hover:bg-danger-soft text-muted dark:text-muted hover:text-danger transition-all cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -313,22 +333,22 @@ export default function DepartmentsPage() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-[#0a0c14] border border-slate-200/60 dark:border-white/8 shadow-2xl rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto relative z-10 p-6"
+              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto relative z-10 p-6"
             >
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4 mb-4">
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-200">
+              <div className="flex items-center justify-between border-b border-line pb-4 mb-4">
+                <h3 className="text-base font-semibold text-foreground dark:text-foreground">
                   {selectedId ? `Edit ${activeTab === "division" ? "Divisi" : "Jabatan"}` : `Tambah ${activeTab === "division" ? "Divisi" : "Jabatan"} Baru`}
                 </h3>
                 <button
                   onClick={handleCloseForm}
-                  className="p-1 rounded bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-550 dark:text-slate-400 hover:text-slate-200 cursor-pointer"
+                  className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
               {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 mb-4">
+                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2 mb-4">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMessage}</span>
                 </div>
@@ -336,14 +356,14 @@ export default function DepartmentsPage() {
 
               <form onSubmit={handleSubmit} className="space-y-4 text-xs">
                 <div className="space-y-1">
-                  <label className="text-slate-700 dark:text-slate-300 font-semibold">Nama {activeTab === "division" ? "Divisi" : "Jabatan"}</label>
+                  <label className="text-foreground font-semibold">Nama {activeTab === "division" ? "Divisi" : "Jabatan"}</label>
                   <input
                     type="text"
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder={activeTab === "division" ? "e.g. Finance & Accounting" : "e.g. Senior Software Engineer"}
-                    className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-xs"
+                    className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs"
                   />
                 </div>
 
@@ -386,11 +406,11 @@ export default function DepartmentsPage() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <label className="text-slate-700 dark:text-slate-300 font-semibold">Tipe Pekerjaan</label>
+                        <label className="text-foreground font-semibold">Tipe Pekerjaan</label>
                         <select
                           value={type}
                           onChange={(e) => setType(e.target.value)}
-                          className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
+                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs"
                         >
                           <option value="Full-Time">Full-Time</option>
                           <option value="Part-Time">Part-Time</option>
@@ -401,11 +421,11 @@ export default function DepartmentsPage() {
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-slate-700 dark:text-slate-300 font-semibold">Status Lowongan Loker</label>
+                        <label className="text-foreground font-semibold">Status Lowongan Loker</label>
                         <select
                           value={status}
-                          onChange={(e) => setStatus(e.target.value as any)}
-                          className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
+                          onChange={(e) => setStatus(e.target.value as "active" | "inactive")}
+                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs"
                         >
                           <option value="active">Aktif (Buka Lowongan)</option>
                           <option value="inactive">Nonaktif (Tutup Lowongan)</option>
@@ -414,64 +434,64 @@ export default function DepartmentsPage() {
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-slate-700 dark:text-slate-300 font-semibold">Lokasi Penempatan Kerja</label>
+                      <label className="text-foreground font-semibold">Lokasi Penempatan Kerja</label>
                       <input
                         type="text"
                         required
                         value={location}
                         onChange={(e) => setLocation(e.target.value)}
                         placeholder="e.g. Jakarta, Remote, Hybrid"
-                        className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-xs"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-slate-700 dark:text-slate-300 font-semibold">Deskripsi Lowongan</label>
+                      <label className="text-foreground font-semibold">Deskripsi Lowongan</label>
                       <textarea
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder="Deskripsikan penawaran/informasi umum mengenai lowongan ini..."
                         rows={3}
-                        className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-xs resize-none"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs resize-none"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-slate-700 dark:text-slate-300 font-semibold">Tanggung Jawab Pekerjaan (Jobdesk)</label>
+                      <label className="text-foreground font-semibold">Tanggung Jawab Pekerjaan (Jobdesk)</label>
                       <textarea
                         value={jobdesk}
                         onChange={(e) => setJobdesk(e.target.value)}
                         placeholder="Sebutkan tanggung jawab pekerjaan (satu per baris)..."
                         rows={3}
-                        className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-xs resize-none"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs resize-none"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-slate-700 dark:text-slate-300 font-semibold">Kebutuhan / Persyaratan (Requirements)</label>
+                      <label className="text-foreground font-semibold">Kebutuhan / Persyaratan (Requirements)</label>
                       <textarea
                         value={requirements}
                         onChange={(e) => setRequirements(e.target.value)}
                         placeholder="Sebutkan persyaratan pelamar (satu per baris)..."
                         rows={3}
-                        className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-xs resize-none"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs resize-none"
                       />
                     </div>
                   </>
                 )}
 
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-white/4 mt-6">
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-6">
                   <button
                     type="button"
                     onClick={handleCloseForm}
-                    className="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/8 text-xs font-semibold text-slate-550 dark:text-slate-400 hover:text-slate-200 hover:bg-white dark:bg-white/2 cursor-pointer transition-all"
+                    className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all"
                   >
                     Batal
                   </button>
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
                   >
                     {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Simpan

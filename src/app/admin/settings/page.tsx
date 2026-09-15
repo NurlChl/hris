@@ -1,592 +1,649 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Settings, Shield, Plus, X, Loader2, AlertCircle, Save, Tag } from "lucide-react";
-import { motion } from "framer-motion";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Plus, RotateCcw, Save, Shield, Sliders, Trash2, Users } from "lucide-react";
+import {
+  Alert,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  Field,
+  Input,
+  Modal,
+  Select,
+  SkeletonList,
+  Tabs,
+  Toggle,
+  cn,
+} from "@/components/ui";
+import { useToast } from "@/components/ui/Toast";
+import { api, errorMessage } from "@/lib/client-api";
 
-interface SettingMap {
-  grace_period_minutes: number;
-  max_absen_correction: number;
-  holiday_swap_lead_days: number;
-  default_geo_radius: number;
-  default_employee_password: string;
-  require_selfie_clock_in: boolean;
-  require_selfie_break_out: boolean;
-  require_selfie_break_in: boolean;
-  require_selfie_clock_out: boolean;
-  enable_break_attendance: boolean;
-  [key: string]: any;
+type SettingValue = string | number | boolean;
+
+interface SettingField {
+  key: string;
+  label: string;
+  description: string;
+  type: "boolean" | "number" | "string" | "select";
+  default: SettingValue;
+  group: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  options?: Array<{ value: string; label: string }>;
 }
 
-interface Permission {
+interface SettingGroup {
+  id: string;
+  label: string;
+  description: string;
+}
+
+interface RolePermission {
   module: string;
   actions: string[];
-  scope: "all" | "branch" | "division" | "self";
+  scope: string;
 }
 
-interface RoleWithPermissions {
+interface RoleRow {
   _id: string;
   name: string;
   isSystemDefault: boolean;
-  permissions: Permission[];
+  userCount: number;
+  permissions: RolePermission[];
 }
 
-const MODULES = [
-  "attendance",
-  "leave",
-  "recruitment",
-  "payroll",
-  "kpi",
-  "contracts",
-  "inventory",
-  "settings",
-  "reports"
-];
-
-const ACTIONS = ["read", "write", "delete", "approve", "export"];
+interface RbacMeta {
+  modules: Array<{ id: string; label: string; hint: string }>;
+  actions: Array<{ id: string; label: string }>;
+  scopes: Array<{ id: string; label: string }>;
+}
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"settings" | "roles" | "categories">("settings");
-  
-  // Settings States
-  const [settings, setSettings] = useState<SettingMap | null>(null);
-  const [settingsLoading, setSettingsLoading] = useState(true);
-  const [settingsSubmitting, setSettingsSubmitting] = useState(false);
-
-  // Roles States
-  const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
-  const [rolesLoading, setRolesLoading] = useState(true);
-  const [selectedRole, setSelectedRole] = useState<RoleWithPermissions | null>(null);
-  const [rolesSubmitting, setRolesSubmitting] = useState(false);
-  const [newRoleName, setNewRoleName] = useState("");
-  const [addingRole, setAddingRole] = useState(false);
-
-  // Categories States
-  const [categories, setCategories] = useState<string[]>([]);
-  const [categoriesLoading, setCategoriesLoading] = useState(false);
-  const [categoriesSubmitting, setCategoriesSubmitting] = useState(false);
-  const [newCategory, setNewCategory] = useState("");
-
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
-
-  useEffect(() => {
-    if (activeTab === "settings") {
-      fetchSettings();
-    } else if (activeTab === "roles") {
-      fetchRoles();
-    } else if (activeTab === "categories") {
-      fetchCategories();
-    }
-    setErrorMessage("");
-    setSuccessMessage("");
-  }, [activeTab]);
-
-  // --- Fetching ---
-  const fetchSettings = async () => {
-    setSettingsLoading(true);
-    try {
-      const res = await fetch("/api/v1/settings");
-      const data = await res.json();
-      if (data.success) {
-        setSettings(data.data);
-      }
-    } catch (err) {
-      console.error("Gagal memuat settings:", err);
-    } finally {
-      setSettingsLoading(false);
-    }
-  };
-
-  const fetchCategories = async () => {
-    setCategoriesLoading(true);
-    try {
-      const res = await fetch("/api/v1/settings/categories");
-      const data = await res.json();
-      if (data.success) {
-        setCategories(data.data || []);
-      }
-    } catch (err) {
-      console.error("Gagal memuat kategori:", err);
-    } finally {
-      setCategoriesLoading(false);
-    }
-  };
-
-  const fetchRoles = async () => {
-    setRolesLoading(true);
-    try {
-      const res = await fetch("/api/v1/roles");
-      const data = await res.json();
-      if (data.success) {
-        setRoles(data.data);
-        if (data.data.length > 0) {
-          // Keep current selection or default to first
-          const current = selectedRole ? data.data.find((r: any) => r._id === selectedRole._id) : null;
-          setSelectedRole(current || data.data[0]);
-        }
-      }
-    } catch (err) {
-      console.error("Gagal memuat roles:", err);
-    } finally {
-      setRolesLoading(false);
-    }
-  };
-
-  const handleAddRole = async () => {
-    if (!newRoleName.trim()) return;
-    setAddingRole(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const res = await fetch("/api/v1/roles", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newRoleName.trim() }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMessage(data.message || "Berhasil membuat peran baru");
-        setNewRoleName("");
-        await fetchRoles();
-        const newlyCreatedRole = data.data;
-        if (newlyCreatedRole) {
-          setSelectedRole(newlyCreatedRole);
-        }
-      } else {
-        setErrorMessage(data.error?.message || "Gagal membuat peran baru");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi internet");
-    } finally {
-      setAddingRole(false);
-    }
-  };
-
-  // --- Handling Settings Updates ---
-  const handleSettingsSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!settings) return;
-    setSettingsSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const res = await fetch("/api/v1/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMessage("Pengaturan sistem berhasil diperbarui");
-        setSettings(data.data);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal memperbarui pengaturan");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi ke server");
-    } finally {
-      setSettingsSubmitting(false);
-    }
-  };
-
-  // --- Handling Roles Matrix Updates ---
-  const handlePermissionToggle = (module: string, action: string) => {
-    if (!selectedRole) return;
-
-    const updatedPermissions = [...selectedRole.permissions];
-    const permIdx = updatedPermissions.findIndex(p => p.module === module);
-
-    if (permIdx > -1) {
-      const actions = [...updatedPermissions[permIdx].actions];
-      const actIdx = actions.indexOf(action);
-      if (actIdx > -1) {
-        actions.splice(actIdx, 1);
-      } else {
-        actions.push(action);
-      }
-      updatedPermissions[permIdx] = { ...updatedPermissions[permIdx], actions };
-    } else {
-      updatedPermissions.push({ module, actions: [action], scope: "self" });
-    }
-
-    setSelectedRole({ ...selectedRole, permissions: updatedPermissions });
-  };
-
-  const handleScopeChange = (module: string, scope: "all" | "branch" | "division" | "self") => {
-    if (!selectedRole) return;
-
-    const updatedPermissions = [...selectedRole.permissions];
-    const permIdx = updatedPermissions.findIndex(p => p.module === module);
-
-    if (permIdx > -1) {
-      updatedPermissions[permIdx] = { ...updatedPermissions[permIdx], scope };
-    } else {
-      updatedPermissions.push({ module, actions: [], scope });
-    }
-
-    setSelectedRole({ ...selectedRole, permissions: updatedPermissions });
-  };
-
-  const handleSavePermissions = async () => {
-    if (!selectedRole) return;
-    setRolesSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const res = await fetch("/api/v1/roles", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          roleId: selectedRole._id,
-          permissions: selectedRole.permissions,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMessage(`Matriks akses role ${selectedRole.name} berhasil diperbarui`);
-        fetchRoles();
-      } else {
-        setErrorMessage(data.error?.message || "Gagal memperbarui matriks akses");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi ke server");
-    } finally {
-      setRolesSubmitting(false);
-    }
-  };
+  const [tab, setTab] = useState<"settings" | "roles">("settings");
 
   return (
-    <div className="space-y-6 font-sans">
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Pengaturan & Hak Akses</h1>
-          <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">Konfigurasi parameter global HRIS dan kelola matriks permission RBAC</p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-[26px] md:text-[30px] text-heading">Pengaturan Sistem</h1>
+        <p className="text-sm text-muted mt-2 leading-relaxed">
+          Semua aturan bisnis di bawah ini berlaku seketika tanpa perlu deploy ulang.
+        </p>
+      </header>
 
-      {/* Tabs */}
-      <div className="flex gap-2 p-1 bg-slate-100 dark:bg-white/2 border border-slate-200 dark:border-white/8 rounded-lg w-fit">
-        <button
-          onClick={() => setActiveTab("settings")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "settings" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
-        >
-          <Settings className="w-3.5 h-3.5" />
-          Parameter Global
-        </button>
-        <button
-          onClick={() => setActiveTab("roles")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "roles" ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200" }`}
-        >
-          <Shield className="w-3.5 h-3.5" />
-          Matriks Peran (RBAC)
-        </button>
-      </div>
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: "settings", label: "Aturan Bisnis", icon: Sliders },
+          { id: "roles", label: "Peran & Hak Akses", icon: Shield },
+        ]}
+      />
 
-      {errorMessage && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{errorMessage}</span>
-        </div>
-      )}
+      {tab === "settings" ? <BusinessRules /> : <RolesPanel />}
+    </div>
+  );
+}
 
-      {successMessage && (
-        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs flex items-center gap-2">
-          <Shield className="w-4 h-4 shrink-0" />
-          <span>{successMessage}</span>
-        </div>
-      )}
+/* ------------------------------------------------------------------ */
+/* Business rules                                                       */
+/* ------------------------------------------------------------------ */
 
-      {/* --- Parameter Global Tab --- */}
-      {activeTab === "settings" && (
-        settingsLoading ? (
-          <div className="h-48 flex items-center justify-center text-slate-550 dark:text-slate-400">
-            <Loader2 className="w-6 h-6 animate-spin text-slate-800 dark:text-slate-200" />
-          </div>
-        ) : settings && (
-          <form onSubmit={handleSettingsSubmit} className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-6 space-y-6 max-w-xl">
-            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider pb-2 border-b border-slate-200 dark:border-white/4">
-              Konfigurasi Absensi & Dispensasi
-            </h2>
+function BusinessRules() {
+  const toast = useToast();
+  const [fields, setFields] = useState<SettingField[]>([]);
+  const [groups, setGroups] = useState<SettingGroup[]>([]);
+  const [values, setValues] = useState<Record<string, SettingValue>>({});
+  const [initial, setInitial] = useState<Record<string, SettingValue>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [activeGroup, setActiveGroup] = useState("");
 
-            <div className="space-y-4 text-xs">
-              <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">Toleransi Keterlambatan Absensi (Menit)</label>
-                <input
-                  type="number"
-                  min={0}
-                  required
-                  value={settings.grace_period_minutes}
-                  onChange={e => setSettings({ ...settings, grace_period_minutes: parseInt(e.target.value) })}
-                  className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
-                />
-                <p className="text-[10px] text-slate-500 italic">Dispensasi keterlambatan presensi masuk karyawan.</p>
-              </div>
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api.get<{
+        values: Record<string, SettingValue>;
+        groups: SettingGroup[];
+        fields: SettingField[];
+      }>("/api/v1/settings?schema=1");
+      const data = res.data!;
+      setFields(data.fields);
+      setGroups(data.groups);
+      setValues(data.values);
+      setInitial(data.values);
+      setActiveGroup((g) => g || data.groups[0]?.id || "");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-              <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">Maks Koreksi Absen per Bulan</label>
-                <input
-                  type="number"
-                  min={1}
-                  required
-                  value={settings.max_absen_correction}
-                  onChange={e => setSettings({ ...settings, max_absen_correction: parseInt(e.target.value) })}
-                  className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
-                />
-                <p className="text-[10px] text-slate-500 italic">Kuota bulanan koreksi absen (lupa scan/tap) mandiri karyawan.</p>
-              </div>
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-              <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">Batas Pengajuan Tukar Libur (Hari Sebelum)</label>
-                <input
-                  type="number"
-                  min={1}
-                  required
-                  value={settings.holiday_swap_lead_days}
-                  onChange={e => setSettings({ ...settings, holiday_swap_lead_days: parseInt(e.target.value) })}
-                  className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
-                />
-                <p className="text-[10px] text-slate-500 italic">Batas H- pengajuan tukar libur saat masuk di tanggal merah nasional.</p>
-              </div>
+  // Only changed keys are submitted, so two admins editing different sections
+  // do not overwrite each other's work.
+  const dirty = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(values).filter(([k, v]) => initial[k] !== v && fields.some((f) => f.key === k))
+      ),
+    [values, initial, fields]
+  );
+  const dirtyCount = Object.keys(dirty).length;
 
-              <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">Default Radius Geofence (Meter)</label>
-                <input
-                  type="number"
-                  min={5}
-                  required
-                  value={settings.default_geo_radius}
-                  onChange={e => setSettings({ ...settings, default_geo_radius: parseInt(e.target.value) })}
-                  className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
-                />
-                <p className="text-[10px] text-slate-500 italic">Jarak radius area aman lokasi kantor penempatan untuk absen.</p>
-              </div>
+  const save = async () => {
+    if (!dirtyCount) return;
+    setSaving(true);
+    try {
+      const res = await api.post<Record<string, SettingValue>>("/api/v1/settings", dirty);
+      toast.success("Tersimpan", res.message);
+      setInitial(res.data ?? values);
+      setValues(res.data ?? values);
+    } catch (err) {
+      toast.error("Gagal menyimpan", errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
 
-              <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">Kata Sandi Default Karyawan Baru</label>
-                <input
-                  type="text"
-                  required
-                  value={settings.default_employee_password || ""}
-                  onChange={e => setSettings({ ...settings, default_employee_password: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 shadow-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
-                />
-                <p className="text-[10px] text-slate-550 dark:text-slate-500 italic">Kata sandi default untuk akun login karyawan baru saat pertama kali didaftarkan.</p>
-              </div>
+  if (loading) return <SkeletonList rows={5} />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
 
-              <div className="space-y-3 border-t border-slate-200 dark:border-white/4 pt-4">
-                <span className="font-bold text-slate-700 dark:text-slate-350 block text-[11px] mb-1 uppercase tracking-wider">Fitur Istirahat & Swafoto (Selfie)</span>
-                
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 dark:bg-white/1 border border-slate-200/60 dark:border-white/4">
-                  <div>
-                    <label className="font-semibold text-slate-750 dark:text-slate-250 block text-xs">Aktifkan Absensi Istirahat Karyawan</label>
-                    <span className="text-[10px] text-slate-450 dark:text-slate-500">Jika diaktifkan, karyawan wajib melakukan absen istirahat & kembali istirahat.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.enable_break_attendance !== undefined ? settings.enable_break_attendance : true}
-                    onChange={e => setSettings({ ...settings, enable_break_attendance: e.target.checked })}
-                    className="w-4 h-4 rounded border-white/10 accent-blue-500 cursor-pointer"
-                  />
-                </div>
+  const shown = fields.filter((f) => f.group === activeGroup);
+  const group = groups.find((g) => g.id === activeGroup);
 
-                <span className="font-bold text-slate-700 dark:text-slate-350 block text-[11px] mt-2 mb-1 uppercase tracking-wider">Metode Verifikasi Swafoto (Selfie)</span>
-                
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 dark:bg-white/1 border border-slate-200/60 dark:border-white/4">
-                  <div>
-                    <label className="font-semibold text-slate-750 dark:text-slate-250 block text-xs">Selfie Saat Absen Masuk</label>
-                    <span className="text-[10px] text-slate-450 dark:text-slate-500">Wajibkan mengambil foto selfie saat absen masuk.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.require_selfie_clock_in || false}
-                    onChange={e => setSettings({ ...settings, require_selfie_clock_in: e.target.checked })}
-                    className="w-4 h-4 rounded border-white/10 accent-blue-500 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 dark:bg-white/1 border border-slate-200/60 dark:border-white/4">
-                  <div>
-                    <label className="font-semibold text-slate-750 dark:text-slate-250 block text-xs">Selfie Saat Mulai Istirahat</label>
-                    <span className="text-[10px] text-slate-450 dark:text-slate-500">Wajibkan mengambil foto selfie saat mulai istirahat.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.require_selfie_break_out || false}
-                    onChange={e => setSettings({ ...settings, require_selfie_break_out: e.target.checked })}
-                    className="w-4 h-4 rounded border-white/10 accent-blue-500 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 dark:bg-white/1 border border-slate-200/60 dark:border-white/4">
-                  <div>
-                    <label className="font-semibold text-slate-750 dark:text-slate-250 block text-xs">Selfie Saat Kembali Istirahat</label>
-                    <span className="text-[10px] text-slate-450 dark:text-slate-500">Wajibkan mengambil foto selfie saat selesai istirahat.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.require_selfie_break_in || false}
-                    onChange={e => setSettings({ ...settings, require_selfie_break_in: e.target.checked })}
-                    className="w-4 h-4 rounded border-white/10 accent-blue-500 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 dark:bg-white/1 border border-slate-200/60 dark:border-white/4">
-                  <div>
-                    <label className="font-semibold text-slate-750 dark:text-slate-250 block text-xs">Selfie Saat Absen Pulang</label>
-                    <span className="text-[10px] text-slate-450 dark:text-slate-500">Wajibkan mengambil foto selfie saat absen pulang.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.require_selfie_clock_out || false}
-                    onChange={e => setSettings({ ...settings, require_selfie_clock_out: e.target.checked })}
-                    className="w-4 h-4 rounded border-white/10 accent-blue-500 cursor-pointer"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={settingsSubmitting}
-              className="px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
+  return (
+    <div className="space-y-4">
+      {dirtyCount > 0 && (
+        <div className="sticky top-20 z-30 card flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-primary/40">
+          <p className="text-xs text-muted">
+            <strong className="text-foreground">{dirtyCount} pengaturan</strong> diubah dan belum
+            disimpan.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={RotateCcw}
+              onClick={() => setValues(initial)}
+              disabled={saving}
             >
-              {settingsSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              Simpan Pengaturan
-            </button>
-          </form>
-        )
+              Kembalikan
+            </Button>
+            <Button size="sm" icon={Save} onClick={save} loading={saving}>
+              Simpan perubahan
+            </Button>
+          </div>
+        </div>
       )}
 
-      {/* --- Matriks Peran Tab --- */}
-      {activeTab === "roles" && (
-        rolesLoading ? (
-          <div className="h-48 flex items-center justify-center text-slate-550 dark:text-slate-400">
-            <Loader2 className="w-6 h-6 animate-spin text-slate-800 dark:text-slate-200" />
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
-            {/* Roles selection list */}
-            <div className="bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-4 flex flex-col space-y-4">
-              <div className="space-y-2">
-                <h3 className="text-xs font-bold text-slate-550 dark:text-slate-400 uppercase tracking-wider mb-3">Daftar Peran (Roles)</h3>
-                <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                  {roles.map(role => (
-                    <button
-                      key={role._id}
-                      onClick={() => setSelectedRole(role)}
-                      className={`w-full text-left px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all ${ selectedRole?._id === role._id ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-medium" : "text-slate-500 dark:text-slate-550 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white dark:bg-white/2" }`}
-                    >
-                      {role.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Add New Role Section */}
-              <div className="border-t border-slate-200 dark:border-white/4 pt-3 space-y-2">
-                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block uppercase tracking-wider">Tambah Peran Baru</span>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Nama Peran (e.g. SPV_MARKETING)"
-                    value={newRoleName}
-                    onChange={e => setNewRoleName(e.target.value.toUpperCase())}
-                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/8 text-[11px] text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
+      <div className="grid gap-6 lg:grid-cols-[220px_1fr] items-start">
+        <nav className="card p-1.5 lg:sticky lg:top-20">
+          <ul className="flex lg:flex-col gap-1 overflow-x-auto">
+            {groups.map((g) => {
+              const changedHere = Object.keys(dirty).filter(
+                (k) => fields.find((f) => f.key === k)?.group === g.id
+              ).length;
+              return (
+                <li key={g.id} className="shrink-0 lg:w-full">
                   <button
-                    type="button"
-                    onClick={handleAddRole}
-                    disabled={addingRole || !newRoleName.trim()}
-                    className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[10px] font-bold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 transition-all flex items-center justify-center shrink-0"
+                    onClick={() => setActiveGroup(g.id)}
+                    className={cn(
+                      "w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap",
+                      g.id === activeGroup
+                        ? "bg-primary-soft text-primary"
+                        : "text-muted hover:text-foreground hover:bg-surface-2"
+                    )}
                   >
-                    {addingRole ? <Loader2 className="w-3 h-3 animate-spin" /> : "Tambah"}
+                    {g.label}
+                    {changedHere > 0 && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" aria-label="ada perubahan" />
+                    )}
                   </button>
-                </div>
-              </div>
-            </div>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
 
-            {/* Matrix configurations */}
-            {selectedRole && (
-              <div className="md:col-span-3 bg-white dark:bg-white/2 border border-slate-200/60 dark:border-white/6 shadow-xs rounded-xl p-6 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/4 pb-4">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-200">Konfigurasi Akses: {selectedRole.name}</h3>
-                    <p className="text-[10px] text-slate-500 mt-1">Centang tindakan yang diizinkan dan tentukan cakupan (scope) filter data.</p>
-                  </div>
-                  <button
-                    onClick={handleSavePermissions}
-                    disabled={rolesSubmitting}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-200 dark:border-white/10 text-xs font-semibold cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-100 active:scale-[0.98] transition-all"
-                  >
-                    {rolesSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                    Simpan Akses
-                  </button>
-                </div>
+        <Card>
+          <CardHeader title={group?.label ?? ""} description={group?.description} icon={Sliders} />
+          <CardBody className="divide-y divide-[var(--border)] py-0">
+            {shown.map((f) => (
+              <SettingRow
+                key={f.key}
+                field={f}
+                value={values[f.key] ?? f.default}
+                changed={initial[f.key] !== values[f.key]}
+                onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
+              />
+            ))}
+          </CardBody>
+        </Card>
+      </div>
+    </div>
+  );
+}
 
-                <div className="overflow-x-auto overflow-y-hidden">
-                  <table className="w-full text-left text-xs border-collapse min-w-[600px]">
-                    <thead>
-                      <tr className="border-b border-slate-200 dark:border-white/8 text-slate-550 dark:text-slate-400">
-                        <th className="pb-3 font-semibold">Modul</th>
-                        {ACTIONS.map(act => (
-                          <th key={act} className="pb-3 font-semibold text-center capitalize">{act}</th>
-                        ))}
-                        <th className="pb-3 font-semibold text-center">Cakupan Data (Scope)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {MODULES.map(mod => {
-                        const perm = selectedRole.permissions.find(p => p.module === mod);
-                        const isSystem = selectedRole.isSystemDefault && selectedRole.name === "SUPERADMIN";
+function SettingRow({
+  field,
+  value,
+  changed,
+  onChange,
+}: {
+  field: SettingField;
+  value: SettingValue;
+  changed: boolean;
+  onChange: (v: SettingValue) => void;
+}) {
+  if (field.type === "boolean") {
+    return (
+      <div className={cn("py-1", changed && "-mx-5 px-5 bg-primary-soft/40")}>
+        <Toggle
+          checked={Boolean(value)}
+          onChange={onChange}
+          label={field.label}
+          description={field.description}
+        />
+      </div>
+    );
+  }
 
-                        return (
-                          <tr key={mod} className="border-b border-slate-200 dark:border-white/4">
-                            <td className="py-4 font-bold text-slate-900 dark:text-slate-200 capitalize">{mod}</td>
-                            
-                            {/* Actions checkmarks */}
-                            {ACTIONS.map(act => {
-                              const checked = perm ? perm.actions.includes(act) : false;
-                              return (
-                                <td key={act} className="py-4 text-center">
-                                  <input
-                                    type="checkbox"
-                                    disabled={isSystem}
-                                    checked={isSystem ? true : checked}
-                                    onChange={() => handlePermissionToggle(mod, act)}
-                                    className="w-4 h-4 rounded border-white/10 bg-slate-900 accent-blue-500 disabled:opacity-50 cursor-pointer"
-                                  />
-                                </td>
-                              );
-                            })}
+  return (
+    <div
+      className={cn(
+        "flex flex-wrap items-start justify-between gap-4 py-4",
+        changed && "-mx-5 px-5 bg-primary-soft/40"
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <label htmlFor={`set-${field.key}`} className="block text-sm font-medium">
+          {field.label}
+        </label>
+        {field.description && (
+          <p className="text-xs text-muted mt-0.5 leading-relaxed max-w-xl">{field.description}</p>
+        )}
+      </div>
 
-                            {/* Scope selector */}
-                            <td className="py-4 text-center">
-                              <select
-                                disabled={isSystem}
-                                value={isSystem ? "all" : (perm?.scope || "self")}
-                                onChange={e => handleScopeChange(mod, e.target.value as any)}
-                                className="px-2 py-1 rounded bg-white dark:bg-[#0e1017] border border-slate-200 dark:border-white/8 text-slate-900 dark:text-slate-300 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50 cursor-pointer"
-                              >
-                                <option value="self">Self (Sendiri)</option>
-                                <option value="division">Division (Divisi)</option>
-                                <option value="branch">Branch (Cabang)</option>
-                                <option value="all">All (Seluruh Perusahaan)</option>
-                              </select>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+      <div className="w-full sm:w-56 shrink-0">
+        {field.type === "select" ? (
+          <Select
+            id={`set-${field.key}`}
+            value={String(value)}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            {field.options?.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+        ) : field.type === "number" ? (
+          <div className="flex items-center gap-2">
+            <Input
+              id={`set-${field.key}`}
+              type="number"
+              inputMode="numeric"
+              min={field.min}
+              max={field.max}
+              value={String(value)}
+              onChange={(e) => onChange(e.target.value === "" ? 0 : Number(e.target.value))}
+              className="tabular-nums"
+            />
+            {field.unit && (
+              <span className="text-[11px] text-subtle whitespace-nowrap shrink-0">{field.unit}</span>
             )}
           </div>
-        )
+        ) : (
+          <Input
+            id={`set-${field.key}`}
+            value={String(value)}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Roles & permissions                                                  */
+/* ------------------------------------------------------------------ */
+
+function RolesPanel() {
+  const toast = useToast();
+  const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [meta, setMeta] = useState<RbacMeta | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+  const [draft, setDraft] = useState<Record<string, RolePermission>>({});
+  const [saving, setSaving] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<RoleRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api.get<{ roles: RoleRow[] } & RbacMeta>("/api/v1/roles");
+      const data = res.data!;
+      setRoles(data.roles);
+      setMeta({ modules: data.modules, actions: data.actions, scopes: data.scopes });
+      setSelectedId((cur) => cur || data.roles.find((r) => r.name !== "SUPERADMIN")?._id || data.roles[0]?._id || "");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const selected = roles.find((r) => r._id === selectedId) ?? null;
+
+  // Rebuild the editable matrix whenever the selected role changes: every
+  // module gets a row so a module with no grant is still visible and grantable.
+  useEffect(() => {
+    if (!selected || !meta) return;
+    const map: Record<string, RolePermission> = {};
+    for (const m of meta.modules) {
+      const found = selected.permissions.find((p) => p.module === m.id);
+      map[m.id] = found ?? { module: m.id, actions: [], scope: "self" };
+    }
+    setDraft(map);
+  }, [selected, meta]);
+
+  const isSuperadmin = selected?.name === "SUPERADMIN";
+
+  const toggleAction = (moduleId: string, action: string) => {
+    setDraft((prev) => {
+      const row = prev[moduleId];
+      const has = row.actions.includes(action);
+      return {
+        ...prev,
+        [moduleId]: {
+          ...row,
+          actions: has ? row.actions.filter((a) => a !== action) : [...row.actions, action],
+        },
+      };
+    });
+  };
+
+  const save = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      const res = await api.post("/api/v1/roles", {
+        roleId: selected._id,
+        permissions: Object.values(draft).filter((p) => p.actions.length > 0),
+      });
+      toast.success("Hak akses diperbarui", res.message);
+      await load();
+    } catch (err) {
+      toast.error("Gagal menyimpan", errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await api.post<{ _id: string }>("/api/v1/roles", { name: newName.trim() });
+      toast.success("Peran dibuat", res.message);
+      setCreateOpen(false);
+      setNewName("");
+      await load();
+      if (res.data?._id) setSelectedId(res.data._id);
+    } catch (err) {
+      toast.error("Gagal membuat peran", errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await api.delete(`/api/v1/roles?id=${deleteTarget._id}`);
+      toast.success("Peran dihapus", res.message);
+      setDeleteTarget(null);
+      setSelectedId("");
+      await load();
+    } catch (err) {
+      toast.error("Gagal menghapus", errorMessage(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  if (loading) return <SkeletonList rows={4} />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
+  if (!meta) return null;
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[240px_1fr] items-start">
+      <Card className="lg:sticky lg:top-20">
+        <CardHeader
+          title="Peran"
+          icon={Users}
+          actions={
+            <Button size="sm" variant="secondary" icon={Plus} onClick={() => setCreateOpen(true)}>
+              Baru
+            </Button>
+          }
+        />
+        <CardBody className="p-1.5">
+          <ul className="space-y-0.5 max-h-[28rem] overflow-y-auto">
+            {roles.map((r) => (
+              <li key={r._id}>
+                <button
+                  onClick={() => setSelectedId(r._id)}
+                  className={cn(
+                    "w-full px-3 py-2 rounded-lg text-left transition-colors cursor-pointer",
+                    r._id === selectedId ? "bg-primary-soft" : "hover:bg-surface-2"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "block text-xs font-semibold",
+                      r._id === selectedId ? "text-primary" : "text-foreground"
+                    )}
+                  >
+                    {r.name}
+                  </span>
+                  <span className="block text-[11px] text-subtle mt-0.5">
+                    {r.userCount} akun
+                    {r.isSystemDefault && " · bawaan sistem"}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </CardBody>
+      </Card>
+
+      {!selected ? (
+        <Card>
+          <EmptyState icon={Shield} title="Pilih peran" description="Pilih peran di samping untuk mengatur hak aksesnya." />
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader
+            icon={Shield}
+            title={selected.name}
+            description={`Digunakan oleh ${selected.userCount} akun. Perubahan berlaku pada permintaan berikutnya.`}
+            actions={
+              <>
+                {!selected.isSystemDefault && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={Trash2}
+                    className="text-danger"
+                    onClick={() => setDeleteTarget(selected)}
+                  >
+                    Hapus
+                  </Button>
+                )}
+                <Button size="sm" icon={Save} onClick={save} loading={saving} disabled={isSuperadmin}>
+                  Simpan
+                </Button>
+              </>
+            }
+          />
+          <CardBody className="space-y-4">
+            {isSuperadmin ? (
+              <Alert tone="warning" title="Peran ini tidak dapat dibatasi">
+                SUPERADMIN memiliki akses penuh secara mutlak dan melewati tabel hak akses.
+                Bila Anda memerlukan administrator dengan akses terbatas, buat peran baru lalu
+                berikan hanya modul yang diperlukan.
+              </Alert>
+            ) : (
+              <Alert tone="info">
+                Modul tanpa satu pun centang berarti peran ini <strong>tidak memiliki akses</strong>{" "}
+                ke modul tersebut. Lingkup menentukan seberapa luas data yang terlihat.
+              </Alert>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse min-w-[720px]">
+                <thead>
+                  <tr>
+                    <th className="text-left text-[11px] font-semibold uppercase tracking-wide text-subtle px-3 py-3 border-b border-line">
+                      Modul
+                    </th>
+                    {meta.actions.map((a) => (
+                      <th
+                        key={a.id}
+                        className="text-center text-[11px] font-semibold uppercase tracking-wide text-subtle px-2 py-3 border-b border-line whitespace-nowrap"
+                      >
+                        {a.label}
+                      </th>
+                    ))}
+                    <th className="text-left text-[11px] font-semibold uppercase tracking-wide text-subtle px-3 py-3 border-b border-line">
+                      Lingkup
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {meta.modules.map((m) => {
+                    const row = draft[m.id];
+                    if (!row) return null;
+                    const granted = row.actions.length > 0;
+                    return (
+                      <tr key={m.id} className={cn("border-b border-line", !granted && "opacity-60")}>
+                        <td className="px-3 py-3 align-top">
+                          <span className="block text-xs font-semibold">{m.label}</span>
+                          <span className="block text-[11px] text-subtle mt-0.5 max-w-56 leading-relaxed">
+                            {m.hint}
+                          </span>
+                        </td>
+                        {meta.actions.map((a) => (
+                          <td key={a.id} className="text-center px-2 py-3 align-top">
+                            <input
+                              type="checkbox"
+                              aria-label={`${a.label} pada modul ${m.label}`}
+                              disabled={isSuperadmin}
+                              checked={row.actions.includes(a.id)}
+                              onChange={() => toggleAction(m.id, a.id)}
+                              className="w-4 h-4 rounded accent-[var(--primary)] cursor-pointer disabled:cursor-not-allowed"
+                            />
+                          </td>
+                        ))}
+                        <td className="px-3 py-3 align-top">
+                          <Select
+                            aria-label={`Lingkup akses modul ${m.label}`}
+                            disabled={isSuperadmin || !granted}
+                            value={row.scope}
+                            onChange={(e) =>
+                              setDraft((prev) => ({
+                                ...prev,
+                                [m.id]: { ...prev[m.id], scope: e.target.value },
+                              }))
+                            }
+                            className="h-8 text-xs w-40"
+                          >
+                            {meta.scopes.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardBody>
+        </Card>
       )}
+
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Buat peran baru"
+        description="Peran baru dibuat tanpa hak akses apa pun; Anda menentukan sendiri modul yang boleh diakses."
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setCreateOpen(false)} disabled={saving}>
+              Batal
+            </Button>
+            <Button size="sm" type="submit" form="role-form" loading={saving}>
+              Buat peran
+            </Button>
+          </>
+        }
+      >
+        <form id="role-form" onSubmit={create}>
+          <Field
+            label="Nama peran"
+            required
+            htmlFor="role-name"
+            hint="Otomatis diubah menjadi HURUF_BESAR, misalnya 'Finance Staff' menjadi FINANCE_STAFF."
+          >
+            <Input
+              id="role-name"
+              required
+              maxLength={40}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Contoh: Finance Staff"
+            />
+          </Field>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={remove}
+        loading={deleting}
+        title="Hapus peran?"
+        confirmLabel="Ya, hapus"
+        message={`Peran ${deleteTarget?.name} beserta seluruh hak aksesnya akan dihapus permanen. Peran yang masih dipakai akun tidak dapat dihapus.`}
+      />
     </div>
   );
 }

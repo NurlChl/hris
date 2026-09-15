@@ -27,7 +27,7 @@ export const GET = wrapRouteHandler(async (req) => {
   })
   .populate("inventoryId")
   .sort({ handoverDate: -1 })
-  .lean() as any[];
+  .lean<Array<Record<string, unknown>>>();
 
   return apiSuccess(assignments, "Berhasil memuat inventaris karyawan");
 });

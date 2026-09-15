@@ -1,21 +1,44 @@
-import type { Metadata } from "next";
-import { DM_Sans, Plus_Jakarta_Sans } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
+import { ThemeProvider, themeInitScript } from "@/components/ThemeProvider";
+import { ToastProvider } from "@/components/ui/Toast";
 import "./globals.css";
 
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
+/**
+ * One family for the whole product.
+ *
+ * Hierarchy is carried by size, weight, and tracking rather than by mixing a
+ * display face with a text face — which is what the interface previously did
+ * and what made headings and body copy feel like they came from two different
+ * products. Inter's variable axis is loaded so 400/500/600 are real weights
+ * rather than synthesised ones.
+ */
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
-});
-
-const plusJakartaSans = Plus_Jakarta_Sans({
-  variable: "--font-plus-jakarta-sans",
-  subsets: ["latin"],
+  display: "swap",
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "HRIS - Human Resource Information System",
-  description: "HRIS platform with geofenced attendance, leaves approvals, recruitment and payroll.",
+  title: {
+    default: "HRIS — Sistem Informasi Kepegawaian",
+    template: "%s · HRIS",
+  },
+  description:
+    "Presensi bergeofence, pengajuan cuti berjenjang, rekrutmen ATS, slip gaji, dan KPI dalam satu sistem.",
+  applicationName: "HRIS",
+  robots: { index: false, follow: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f6f7f9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0c12" },
+  ],
 };
 
 export default function RootLayout({
@@ -25,12 +48,25 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
-      className={`${dmSans.variable} ${plusJakartaSans.variable} h-full antialiased font-sans`}
+      lang="id"
+      suppressHydrationWarning
+      className={`${inter.variable} h-full antialiased font-sans`}
     >
+      <head>
+        {/* Applies the stored theme before first paint to avoid a flash. */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="min-h-full flex flex-col font-sans">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-[200] focus:px-4 focus:py-2 focus:rounded-lg focus:bg-primary focus:text-primary-foreground focus:text-sm focus:font-semibold"
+        >
+          Lewati ke konten utama
+        </a>
         <SessionProvider>
-          {children}
+          <ThemeProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </ThemeProvider>
         </SessionProvider>
       </body>
     </html>

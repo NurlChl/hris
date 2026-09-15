@@ -1,18 +1,84 @@
-import { StorageProvider } from "./StorageProvider";
+import type { StorageProvider } from "./StorageProvider";
 import { LocalProvider } from "./LocalProvider";
 
-let storageProvider: StorageProvider;
+/**
+ * Provider selection happens once, from a single env variable, so swapping
+ * storage backends never touches application code. Cloudinary / Supabase / R2 /
+ * MinIO / B2 adapters plug in here by implementing `StorageProvider`.
+ */
+const providerType = (process.env.STORAGE_PROVIDER || "local").toLowerCase();
 
-const providerType = process.env.STORAGE_PROVIDER || "local";
+let instance: StorageProvider;
 
-switch (providerType.toLowerCase()) {
+switch (providerType) {
   case "local":
-  default:
-    storageProvider = new LocalProvider();
+    instance = new LocalProvider();
     break;
-  // Cloudinary, Supabase, R2, MinIO can be added here as classes when configured.
+  default:
+    // Fail loudly in production rather than silently writing to the wrong place.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        `STORAGE_PROVIDER="${providerType}" belum memiliki adapter. Gunakan "local" atau tambahkan adapternya di src/lib/storage/.`
+      );
+    }
+    console.warn(
+      `[STORAGE] Provider "${providerType}" belum tersedia — memakai penyimpanan lokal.`
+    );
+    instance = new LocalProvider();
 }
 
-export { storageProvider };
-export type { StorageProvider };
+export const storageProvider = instance;
 export { LocalProvider };
+export type { StorageProvider };
+export {
+  toStorageKey,
+  contentTypeForKey,
+  ALLOWED_UPLOAD_MIME,
+  MAX_UPLOAD_BYTES,
+} from "./StorageProvider";
+
+/**
+ * Decodes a client-supplied data URL into a validated buffer.
+ * Rejects anything that is not an allowed image/PDF or is over the size cap —
+ * this is the only place raw base64 from the browser becomes a file.
+ */
+export function decodeDataUrl(
+  dataUrl: string,
+  allowed: string[] = ["image/jpeg", "image/png", "image/webp"]
+): { buffer: Buffer; mime: string; ext: string } {
+  const match = /^data:([a-zA-Z0-9/+.-]+);base64,([\s\S]+)$/.exec(dataUrl ?? "");
+  if (!match) {
+    throw Object.assign(new Error("Format berkas tidak dikenali."), {
+      name: "HttpError",
+      status: 400,
+      code: "BAD_REQUEST",
+    });
+  }
+  const [, mime, b64] = match;
+  if (!allowed.includes(mime)) {
+    throw Object.assign(
+      new Error(`Tipe berkas ${mime} tidak diizinkan. Gunakan: ${allowed.join(", ")}.`),
+      { name: "HttpError", status: 400, code: "BAD_REQUEST" }
+    );
+  }
+  const buffer = Buffer.from(b64, "base64");
+  if (buffer.byteLength > MAX_UPLOAD_BYTES_LOCAL) {
+    throw Object.assign(
+      new Error(
+        `Ukuran berkas ${(buffer.byteLength / 1048576).toFixed(1)} MB melebihi batas ${
+          MAX_UPLOAD_BYTES_LOCAL / 1048576
+        } MB.`
+      ),
+      { name: "HttpError", status: 400, code: "PAYLOAD_TOO_LARGE" }
+    );
+  }
+  const extMap: Record<string, string> = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+  };
+  return { buffer, mime, ext: extMap[mime] ?? ".bin" };
+}
+
+const MAX_UPLOAD_BYTES_LOCAL = 8 * 1024 * 1024;

@@ -10,6 +10,19 @@ import { connectToDatabase } from "@/lib/db";
 // Force load models to prevent Mongoose populate errors
 import "@/models/Employee";
 
+/**
+ * The handler only reads `_id` off an asset and `inventoryId` off an assignment;
+ * everything else is passed straight through to the client, so the rest of each
+ * document stays untyped rather than being mirrored here and drifting.
+ */
+interface LeanAsset extends Record<string, unknown> {
+  _id: { toString(): string };
+}
+
+interface LeanAssignment extends Record<string, unknown> {
+  inventoryId?: { toString(): string } | null;
+}
+
 export const GET = wrapRouteHandler(async (req) => {
   const session = await auth();
   if (!session?.user) {
@@ -25,7 +38,7 @@ export const GET = wrapRouteHandler(async (req) => {
   await connectToDatabase();
 
   // Fetch all assets
-  const assets = await Inventory.find({}).lean() as any[];
+  const assets = await Inventory.find({}).lean<LeanAsset[]>();
 
   // For each asset, find the most recent assignment (pending or active or returned)
   const assetIds = assets.map(a => a._id);
@@ -39,10 +52,10 @@ export const GET = wrapRouteHandler(async (req) => {
       ]
     })
     .sort({ handoverDate: -1 })
-    .lean() as any[];
+    .lean<LeanAssignment[]>();
 
   // Group assignments by inventoryId (most recent first)
-  const assignmentMap = new Map();
+  const assignmentMap = new Map<string, LeanAssignment>();
   for (const asg of assignments) {
     if (asg.inventoryId) {
       const invIdStr = asg.inventoryId.toString();
