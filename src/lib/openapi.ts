@@ -157,7 +157,8 @@ export const API_GROUPS: ApiGroup[] = [
           { name: "clockOutTime", type: "string", required: true, description: "Jam pulang seharusnya (HH:MM)." },
           { name: "reasonType", type: "enum", required: true, description: "lupa_tap | kendala_aplikasi | dinas_luar | lainnya" },
           { name: "reasonNote", type: "string", required: true, description: "Penjelasan, minimal 15 karakter." },
-          { name: "evidence", type: "string", description: "Data URL bukti (gambar atau PDF)." },
+          { name: "attachment", type: "object", description: "Bukti: `{ kind: \"file\", token }` dari POST /uploads, atau `{ kind: \"link\", url }`." },
+          { name: "evidence", type: "string", description: "Data URL bukti. Format lama, masih diterima." },
         ],
       },
       {
@@ -196,7 +197,8 @@ export const API_GROUPS: ApiGroup[] = [
           { name: "startDate", type: "string", required: true, description: "Tanggal mulai (YYYY-MM-DD)." },
           { name: "endDate", type: "string", required: true, description: "Tanggal selesai (YYYY-MM-DD)." },
           { name: "reason", type: "string", required: true, description: "Alasan, minimal 10 karakter." },
-          { name: "evidence", type: "string", description: "Data URL bukti bila jenisnya mewajibkan." },
+          { name: "attachment", type: "object", description: "Bukti bila jenisnya mewajibkan: `{ kind: \"file\", token }` dari POST /uploads, atau `{ kind: \"link\", url }`." },
+          { name: "evidence", type: "string", description: "Data URL bukti. Format lama, masih diterima." },
         ],
         errors: [
           { code: "400 LEAD_TIME", when: "Diajukan lebih mepet dari batas H- jenis cuti tersebut." },
@@ -465,6 +467,7 @@ export const API_GROUPS: ApiGroup[] = [
         params: [
           { name: "q", in: "query", description: "Pencarian nama, NIP, atau email kantor." },
           { name: "status", in: "query", description: "active | onboarding | suspended | resigned | all" },
+          { name: "newHire", in: "query", description: "1 = hanya karyawan hasil rekrutmen yang datanya belum lengkap. Baris tersebut membawa `missingFields`." },
           { name: "page", in: "query", description: "Halaman, default 1." },
           { name: "limit", in: "query", description: "Baris per halaman, maksimal 500." },
         ],
@@ -474,8 +477,17 @@ export const API_GROUPS: ApiGroup[] = [
         path: "/employees",
         summary: "Tambah atau ubah karyawan",
         description:
-          "Tanpa `id` akan membuat karyawan baru beserta NIP otomatis, dan akun login bila `roleId` disertakan.",
+          "Tanpa `id` akan membuat karyawan baru beserta NIP otomatis, dan akun login bila `roleId` disertakan. Pada karyawan bertanda baru, tanda itu hilang otomatis ketika penyimpanan membuat seluruh data wajib terisi.",
         auth: "employees:write",
+      },
+      {
+        method: "PATCH",
+        path: "/employees",
+        summary: "Hapus tanda karyawan baru",
+        description:
+          "Untuk karyawan hasil rekrutmen yang dianggap HRD sudah cukup lengkap walau ada data yang memang kosong. Data yang masih kosong disebutkan pada pesan dan dicatat di jejak audit.",
+        auth: "employees:write",
+        body: [{ name: "id", type: "string", required: true, description: "ID karyawan." }],
       },
       {
         method: "GET",
@@ -500,6 +512,83 @@ export const API_GROUPS: ApiGroup[] = [
         description:
           "Mengubah status menjadi resign dan menutup akses login. Data tidak dihapus agar riwayat presensi dan payroll tetap utuh.",
         auth: "employees:delete",
+      },
+    ],
+  },
+
+  {
+    name: "Verifikasi Wajah",
+    description:
+      "Pendaftaran dan verifikasi wajah untuk presensi. Wajah dianalisis di server dari foto aslinya — tidak ada vektor wajah yang diterima dari atau dikirim ke klien. Fitur aktif bila setelan face_recognition_enabled menyala; pendaftaran tetap dapat dilakukan saat nonaktif.",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/face",
+        summary: "Status wajah milik sendiri",
+        description:
+          "Status pendaftaran, permintaan penggantian yang menunggu, keputusan terakhir, dan teks persetujuan yang berlaku. Foto acuan dikembalikan sebagai tautan bertanda tangan 10 menit.",
+        auth: "Perlu sesi karyawan",
+      },
+      {
+        method: "POST",
+        path: "/face",
+        summary: "Daftarkan wajah atau ajukan penggantian",
+        description:
+          "Tanpa wajah terdaftar: langsung didaftarkan dan SPV diberi tahu. Dengan wajah terdaftar: membuat permintaan penggantian yang harus disetujui SPV lewat mesin approval; wajah lama tetap berlaku sampai diputuskan. Ketiga foto harus berisi tepat satu wajah yang cukup besar dan saling cocok.",
+        auth: "Perlu sesi karyawan (10 per jam)",
+        body: [
+          { name: "photos", type: "string[]", required: true, description: "Tepat 3 data URL gambar JPEG/PNG/WebP." },
+          { name: "consent", type: "boolean", required: true, description: "Harus true." },
+          { name: "consentVersion", type: "string", required: true, description: "Versi teks persetujuan dari GET /face." },
+          { name: "reason", type: "string", description: "Wajib minimal 10 karakter untuk penggantian." },
+        ],
+        errors: [
+          { code: "422 FACE_QUALITY", when: "Salah satu foto tanpa wajah, berisi lebih dari satu wajah, atau wajah terlalu kecil." },
+          { code: "422 FACE_INCONSISTENT", when: "Foto-foto tidak terlihat sebagai orang yang sama." },
+          { code: "409 CONFLICT", when: "Sudah ada permintaan penggantian yang menunggu." },
+          { code: "503 FACE_BUSY", when: "Antrean analisis wajah penuh; coba lagi beberapa detik lagi." },
+        ],
+      },
+      {
+        method: "DELETE",
+        path: "/face",
+        summary: "Batalkan permintaan penggantian",
+        description: "Hanya selama SPV belum memprosesnya. Foto dan data wajah pengganti dihapus.",
+        auth: "Perlu sesi karyawan",
+      },
+      {
+        method: "GET",
+        path: "/face/admin",
+        summary: "Status wajah karyawan (HRD)",
+        description:
+          "Dengan employeeId: status satu karyawan beserta foto acuan. Tanpa parameter: ringkasan jumlah terdaftar tanpa foto.",
+        auth: "Peran SUPERADMIN atau HRD",
+        params: [{ name: "employeeId", in: "query", description: "ID karyawan." }],
+      },
+      {
+        method: "DELETE",
+        path: "/face/admin",
+        summary: "Reset data wajah karyawan",
+        description:
+          "Menghapus profil wajah, foto acuan, permintaan yang menunggu, dan data wajah dari seluruh permintaan lama. Dicatat di audit dan diberitahukan ke karyawan.",
+        auth: "Peran SUPERADMIN atau HRD",
+        params: [
+          { name: "employeeId", in: "query", required: true, description: "ID karyawan." },
+          { name: "reason", in: "query", required: true, description: "Alasan, minimal 10 karakter." },
+        ],
+      },
+      {
+        method: "POST",
+        path: "/attendance",
+        summary: "Presensi dengan verifikasi wajah",
+        description:
+          "Saat verifikasi wajah aktif, absen masuk dan pulang wajib berfoto, dan setiap foto dicocokkan dengan wajah terdaftar sebelum rekaman disimpan. Kegagalan pencocokan tidak mengembalikan angka jarak — nilainya hanya dicatat di audit sebagai FACE_MISMATCH.",
+        auth: "Perlu sesi karyawan",
+        errors: [
+          { code: "403 FACE_NOT_ENROLLED", when: "Karyawan belum mendaftarkan wajah." },
+          { code: "422 FACE_QUALITY", when: "Wajah tidak terdeteksi, lebih dari satu, atau terlalu jauh." },
+          { code: "422 FACE_MISMATCH", when: "Wajah tidak cocok dengan wajah terdaftar." },
+        ],
       },
     ],
   },
@@ -573,57 +662,162 @@ export const API_GROUPS: ApiGroup[] = [
         params: [{ name: "slug", in: "query", description: "Slug lowongan untuk mengambil satu detail." }],
       },
       {
+        method: "GET",
+        path: "/vacancies/{id}/form",
+        summary: "Formulir lamaran lowongan",
+        description:
+          "Definisi kolom formulir lamaran. Lowongan yang belum diatur memakai formulir bawaan (`isDefault: true`).",
+        auth: "recruitment:read",
+        params: [{ name: "id", in: "path", required: true, description: "ID lowongan." }],
+      },
+      {
+        method: "PUT",
+        path: "/vacancies/{id}/form",
+        summary: "Simpan formulir lamaran",
+        description:
+          "Urutan array adalah urutan tampil. Kolom sistem (nama, email, telepon, alamat, CV, dan lainnya) tidak dapat diubah jenisnya karena dipakai saat pelamar dijadikan karyawan; nama, email, dan telepon selalu wajib. Lamaran yang sudah masuk tidak berubah karena label dan jawaban disalin saat dikirim.",
+        auth: "recruitment:write",
+        body: [
+          {
+            name: "fields",
+            type: "object[]",
+            required: true,
+            description:
+              "`{ key, label, type, required, enabled, system, section, placeholder, helpText, options[{value,label}], maxFiles, allowLink }`. type: short_text | long_text | email | phone | number | currency | date | url | select | multi_select | radio | yes_no | file | address.",
+          },
+        ],
+        errors: [{ code: "400 BAD_REQUEST", when: "Label kosong, pilihan kurang dari dua, kode kolom ganda, atau kolom wajib sistem dihapus." }],
+      },
+      {
+        method: "POST",
+        path: "/public/uploads",
+        summary: "Unggah berkas lamaran (publik)",
+        description:
+          "multipart/form-data, satu berkas per permintaan (`file`, `vacancySlug`). Isi berkas diperiksa dari byte-nya, bukan dari nama: PDF, JPG, PNG, WebP, atau DOCX, maksimal 8 MB. Mengembalikan token yang berlaku 6 jam dan hanya dapat dipakai untuk lowongan yang sama.",
+        auth: "Publik (rate limited per IP)",
+      },
+      {
+        method: "POST",
+        path: "/uploads",
+        summary: "Unggah berkas (dalam aplikasi)",
+        description:
+          "multipart/form-data dengan `file` dan `context`: leave | correction | complaint | application. Context application hanya untuk pemegang izin recruitment:write. Token hanya dapat diklaim oleh akun yang mengunggah.",
+        auth: "Perlu sesi",
+      },
+      {
         method: "POST",
         path: "/public/candidates",
         summary: "Kirim lamaran",
         description:
-          "Menerima CV dan data pelamar dari halaman karier. Satu email hanya boleh melamar sekali per lowongan, sehingga email yang sama tetap dapat melamar lowongan lain.",
-        auth: "Publik (rate limited)",
+          "Jawaban divalidasi ulang terhadap formulir lowongan yang tersimpan: kolom yang dimatikan diabaikan, kolom wajib tidak bisa dilewati, dan pilihan di luar daftar ditolak. Berkas dikirim sebagai token dari POST /public/uploads atau sebagai tautan. Lamaran ganda dengan email yang sama dijawab dengan pesan yang sama seperti lamaran baru, agar endpoint ini tidak bisa dipakai untuk menebak siapa yang sudah melamar. Integrasi lama yang mengirim name/email/phone/cv datar tetap diterima.",
+        auth: "Publik (rate limited), atau x-api-key untuk integrasi eksternal",
         body: [
           { name: "vacancySlug", type: "string", required: true, description: "Slug lowongan yang dilamar." },
-          { name: "name", type: "string", required: true, description: "Nama pelamar." },
-          { name: "email", type: "string", required: true, description: "Email pelamar." },
-          { name: "phone", type: "string", required: true, description: "Nomor telepon." },
-          { name: "cv", type: "string", required: true, description: "Berkas CV berformat PDF." },
-          { name: "coverLetter", type: "string", description: "Surat pengantar." },
-          { name: "portfolioUrl", type: "string", description: "Tautan portofolio." },
+          { name: "answers", type: "object", required: true, description: "Jawaban per `key` kolom. File: `[{ kind: \"file\", token }]` atau `[{ kind: \"link\", url }]`. Alamat: `{ street, city, province, postalCode }`." },
+          { name: "turnstileToken", type: "string", description: "Token Turnstile bila diaktifkan." },
         ],
         errors: [
-          { code: "409 DUPLICATE", when: "Email ini sudah melamar lowongan yang sama." },
-          { code: "400 BAD_REQUEST", when: "Lowongan sudah ditutup atau tidak ditemukan." },
+          { code: "400 VALIDATION_ERROR", when: "Ada isian tidak valid; `details.fields` berisi pesan per kolom." },
+          { code: "400 UPLOAD_EXPIRED", when: "Token berkas kedaluwarsa atau bukan untuk lowongan ini." },
+          { code: "404 NOT_FOUND", when: "Lowongan sudah ditutup atau tidak ditemukan." },
+        ],
+      },
+      {
+        method: "GET",
+        path: "/candidates",
+        summary: "Daftar semua pelamar",
+        description:
+          "Lintas lowongan, dengan paginasi. `data.counts` berisi jumlah per kelompok status (active, passed, hired, rejected) mengikuti filter lain, untuk tab di atas daftar.",
+        auth: "recruitment:read",
+        params: [
+          { name: "q", in: "query", description: "Nama, email, telepon, kota, atau nomor referensi." },
+          { name: "vacancyId", in: "query", description: "Satu lowongan." },
+          { name: "stage", in: "query", description: "Nama tahap." },
+          { name: "status", in: "query", description: "active | passed | hired | rejected." },
+          { name: "source", in: "query", description: "career_page | manual | api." },
+          { name: "education", in: "query", description: "sma | d3 | d4s1 | s2 | s3." },
+          { name: "hasCv", in: "query", description: "1 = hanya yang melampirkan CV." },
+          { name: "minRating", in: "query", description: "Penilaian minimal 1–5." },
+          { name: "from", in: "query", description: "Tanggal melamar sejak (YYYY-MM-DD, WIB)." },
+          { name: "to", in: "query", description: "Tanggal melamar sampai." },
+          { name: "availableBy", in: "query", description: "Bisa mulai bekerja paling lambat tanggal ini." },
+          { name: "interview", in: "query", description: "upcoming = punya jadwal wawancara mendatang." },
+          { name: "sort", in: "query", description: "newest | oldest | activity | rating | available | interview | name." },
+          { name: "page", in: "query", description: "Halaman." },
+          { name: "limit", in: "query", description: "Baris per halaman, maksimal 100." },
         ],
       },
       {
         method: "POST",
         path: "/candidates",
         summary: "Tambah pelamar manual",
-        description: "Untuk pelamar yang masuk lewat jalur lain, misalnya referensi karyawan.",
+        description:
+          "Memakai formulir lowongan yang sama dengan halaman karier, tetapi hanya nama, email, dan telepon yang wajib. Berkas diunggah lewat POST /uploads dengan context application.",
         auth: "recruitment:write",
+        body: [
+          { name: "vacancyId", type: "string", required: true, description: "ID lowongan." },
+          { name: "answers", type: "object", required: true, description: "Sama seperti POST /public/candidates." },
+          { name: "note", type: "string", description: "Catatan internal, misalnya sumber referensi." },
+        ],
+      },
+      {
+        method: "GET",
+        path: "/candidates/{id}",
+        summary: "Detail pelamar",
+        description:
+          "Jawaban formulir dengan tautan berkas bertanda tangan berumur 15 menit, riwayat seleksi, lamaran lain dari email atau telepon yang sama, dan data karyawan bila sudah direkrut. Setiap pembukaan tercatat di jejak audit.",
+        auth: "recruitment:read",
+        params: [{ name: "id", in: "path", required: true, description: "ID pelamar." }],
+      },
+      {
+        method: "POST",
+        path: "/candidates/{id}",
+        summary: "Catatan, wawancara, penilaian, label",
+        description:
+          "`type: note` menambah catatan; `interview` menjadwalkan wawancara (`scheduledAt` ISO dengan zona waktu, `location`, `interviewerUserId`) dan memberi tahu pewawancara; `rating` 0–5 (0 menghapus); `tags` mengganti daftar label.",
+        auth: "recruitment:write",
+        params: [{ name: "id", in: "path", required: true, description: "ID pelamar." }],
+      },
+      {
+        method: "GET",
+        path: "/candidates/interviewers",
+        summary: "Calon pewawancara",
+        description: "Akun aktif selain peran STAFF, untuk dipilih sebagai pewawancara.",
+        auth: "recruitment:read",
       },
       {
         method: "PATCH",
         path: "/candidates",
-        summary: "Pindahkan tahap seleksi",
+        summary: "Pindahkan tahap atau putuskan",
         description:
-          "Memindahkan pelamar ke tahap berikutnya, menolaknya dengan alasan, atau menjadwalkan wawancara. Setiap perpindahan tercatat pada riwayat pelamar.",
+          "Tahap harus terdaftar pada lowongan. Menolak wajib menyertakan `rejectionReason`; mengirim status selain rejected pada pelamar yang ditolak membukanya kembali. Pelamar yang sudah direkrut tidak dapat diubah dari sini.",
         auth: "recruitment:write",
+        body: [
+          { name: "id", type: "string", required: true, description: "ID pelamar." },
+          { name: "stage", type: "string", description: "Tahap tujuan." },
+          { name: "status", type: "string", description: "pending | in_progress | passed | on_hold | rejected." },
+          { name: "rejectionReason", type: "string", description: "Wajib bila status rejected." },
+          { name: "notes", type: "string", description: "Catatan riwayat." },
+        ],
       },
       {
         method: "PUT",
         path: "/candidates",
         summary: "Rekrut pelamar menjadi karyawan",
         description:
-          "Membuat data karyawan, akun pengguna, dan NIP berurutan dari pelamar yang lolos, lalu menutup lowongan bila kuotanya sudah terpenuhi.",
+          "Membuat karyawan berstatus onboarding dengan NIP berurutan. Nama, email pribadi, telepon, alamat, tanggal lahir, dan jenis kelamin disalin dari jawaban; CV, portofolio, dan lampiran disalin ke folder karyawan. Karyawan ditandai `isNewHire` sampai HRD melengkapi datanya, dan HRD menerima notifikasi. Lowongan ditutup otomatis bila jumlah yang direkrut sudah memenuhi kuota.",
         auth: "recruitment:write",
         body: [
           { name: "id", type: "string", required: true, description: "ID pelamar." },
           { name: "branchId", type: "string", required: true, description: "Cabang penempatan." },
           { name: "divisionId", type: "string", required: true, description: "Divisi." },
           { name: "positionId", type: "string", required: true, description: "Jabatan." },
-          { name: "joinDate", type: "string", required: true, description: "Tanggal mulai bekerja." },
+          { name: "joinDate", type: "string", required: true, description: "Tanggal mulai bekerja (YYYY-MM-DD)." },
           { name: "officeEmail", type: "string", required: true, description: "Email kantor untuk akun barunya." },
           { name: "employmentStatus", type: "string", description: "probation | pkwt | pkwtt | outsource." },
+          { name: "roleId", type: "string", description: "Peran akun login; kosongkan bila akun dibuat belakangan." },
         ],
+        errors: [{ code: "409 CONFLICT", when: "Sudah direkrut, ditandai tidak lolos, atau email kantor/pribadi sudah dipakai." }],
       },
     ],
   },
@@ -738,7 +932,7 @@ export const API_GROUPS: ApiGroup[] = [
         method: "GET",
         path: "/notifications",
         summary: "Feed notifikasi pengguna",
-        description: "Selalu terbatas pada notifikasi milik pemanggil.",
+        description: "Selalu terbatas pada notifikasi milik pemanggil. `unread=1` hanya yang belum dibaca; `page` dan `limit` untuk memuat yang lebih lama. `data.unreadCount` untuk lencana lonceng.",
         auth: "Perlu sesi",
       },
       {
@@ -763,6 +957,10 @@ export const API_GROUPS: ApiGroup[] = [
         summary: "Kirim pengaduan",
         description: "Identitas selalu tercatat, namun disembunyikan dari penerima bila anonim dipilih.",
         auth: "Perlu sesi karyawan",
+        body: [
+          { name: "attachmentInput", type: "object", description: "Lampiran: `{ kind: \"file\", token }` dari POST /uploads (context complaint) atau `{ kind: \"link\", url }`." },
+          { name: "attachment", type: "string", description: "Data URL lampiran. Format lama, masih diterima." },
+        ],
       },
       {
         method: "PATCH",
@@ -807,7 +1005,7 @@ export const API_GROUPS: ApiGroup[] = [
         path: "/cron/daily",
         summary: "Jalankan tugas harian",
         description:
-          "Membatalkan tukar libur yang tidak dihadiri, mencatat lembur tanggal merah, mengirim pengingat kontrak dan ucapan ulang tahun. Idempoten.",
+          "Membatalkan tukar libur yang tidak dihadiri, mencatat lembur tanggal merah, mengirim pengingat kontrak dan ucapan ulang tahun, menghapus unggahan yang tidak jadi dilampirkan, lalu mengirim pengingat: absen pulang yang terlewat kemarin (ke karyawan), pengajuan yang tertahan lebih dari 2 hari (ke approver), wawancara besok (ke pewawancara dan HRD), dan setiap Senin data karyawan baru yang belum lengkap (ke HRD). Setiap pengingat hanya dikirim sekali per hari, jadi aman dijalankan ulang.",
         auth: "Header x-cron-secret harus cocok dengan CRON_SECRET",
       },
       {
@@ -816,22 +1014,6 @@ export const API_GROUPS: ApiGroup[] = [
         summary: "Lowongan aktif",
         description: "Dipakai halaman karir publik.",
         auth: "Publik",
-      },
-      {
-        method: "POST",
-        path: "/public/candidates",
-        summary: "Kirim lamaran",
-        description:
-          "Dibatasi laju per IP dan dilindungi Turnstile bila dikonfigurasi. Situs eksternal menyertakan header x-api-key.",
-        auth: "Publik, atau x-api-key untuk integrasi eksternal",
-        body: [
-          { name: "name", type: "string", required: true, description: "Nama lengkap pelamar." },
-          { name: "email", type: "string", required: true, description: "Email pelamar." },
-          { name: "phone", type: "string", required: true, description: "Nomor telepon." },
-          { name: "positionId", type: "string", required: true, description: "ID lowongan yang dilamar." },
-          { name: "cv", type: "string", description: "Data URL CV (PDF atau gambar)." },
-          { name: "turnstileToken", type: "string", description: "Token Turnstile bila diaktifkan." },
-        ],
       },
     ],
   },

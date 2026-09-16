@@ -99,7 +99,7 @@ export default function DocsPage() {
                   href={`#${s.id}`}
                   onClick={() => setNavOpen(false)}
                   className={cn(
-                    "block px-2 py-1.5 rounded-lg text-xs leading-snug transition-colors",
+                    "block px-2 py-1.5 rounded-lg text-label leading-snug transition-colors",
                     activeId === s.id
                       ? "bg-primary-soft text-primary font-semibold"
                       : "text-muted hover:text-foreground hover:bg-surface-2"
@@ -128,12 +128,12 @@ export default function DocsPage() {
               <Menu className="w-5 h-5" />
             </button>
             <Link href="/" className="flex items-center gap-2.5 min-w-0">
-              <span className="w-8 h-8 rounded-lg bg-primary text-primary-foreground grid place-items-center font-semibold text-xs shrink-0">
+              <span className="w-8 h-8 rounded-lg bg-primary text-primary-foreground grid place-items-center font-semibold text-label shrink-0">
                 HR
               </span>
               <span className="min-w-0">
-                <span className="block text-sm font-semibold truncate">Dokumentasi HRIS</span>
-                <span className="hidden sm:block text-[11px] text-subtle">
+                <span className="block text-body font-semibold truncate">Dokumentasi HRIS</span>
+                <span className="hidden sm:block text-caption text-subtle">
                   Panduan penggunaan &amp; acuan teknis
                 </span>
               </span>
@@ -150,7 +150,7 @@ export default function DocsPage() {
             </button>
             <Link
               href={sessionRole ? "/portal/attendance" : "/auth/login"}
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-xs font-semibold text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-label font-semibold text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               {sessionRole ? "Kembali ke aplikasi" : "Masuk"}
@@ -185,7 +185,7 @@ export default function DocsPage() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-semibold">Daftar isi</span>
+                <span className="text-body font-semibold">Daftar isi</span>
                 <button
                   onClick={() => setNavOpen(false)}
                   aria-label="Tutup"
@@ -210,14 +210,14 @@ export default function DocsPage() {
         {/* Content */}
         <main className="min-w-0">
           <div className="mb-8">
-            <h1 className="text-[28px] md:text-[34px] text-heading">Panduan Penggunaan HRIS</h1>
-            <p className="mt-2 text-sm text-muted leading-relaxed max-w-2xl">
+            <h1 className="text-display-sm md:text-display text-heading">Panduan Penggunaan HRIS</h1>
+            <p className="mt-2 text-body text-muted leading-relaxed max-w-2xl">
               Semua yang perlu Anda ketahui untuk memakai sistem ini, dari absen harian sampai
               mengatur aturan perusahaan. Gunakan penyaring peran di samping untuk menyembunyikan
               bagian yang tidak relevan dengan pekerjaan Anda.
             </p>
             {roleFilter !== "all" && (
-              <p className="mt-3 text-xs text-subtle">
+              <p className="mt-3 text-label text-subtle">
                 Menampilkan bagian untuk peran{" "}
                 <strong className="text-foreground">{ROLE_LABELS[roleFilter] ?? roleFilter}</strong>{" "}
                 dan bagian yang berlaku untuk semua orang.
@@ -243,7 +243,7 @@ export default function DocsPage() {
             <div className="space-y-14">
               {chapters.map((chapter) => (
                 <section key={chapter.id}>
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-primary mb-5 pb-2 border-b border-line">
+                  <h2 className="text-label font-semibold uppercase tracking-wider text-primary mb-5 pb-2 border-b border-line">
                     {chapter.title}
                   </h2>
                   <div className="space-y-10">
@@ -256,7 +256,7 @@ export default function DocsPage() {
             </div>
           )}
 
-          <footer className="mt-16 pt-6 border-t border-line flex flex-wrap items-center justify-between gap-3 text-[11px] text-subtle">
+          <footer className="mt-16 pt-6 border-t border-line flex flex-wrap items-center justify-between gap-3 text-caption text-subtle">
             <p>Dokumentasi ini menjelaskan perilaku sistem versi yang sedang berjalan.</p>
             <Link href="/api-docs" className="hover:text-foreground transition-colors">
               Referensi API →
@@ -288,16 +288,16 @@ function DocFilters({
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Cari di dokumentasi…"
           aria-label="Cari di dokumentasi"
-          className="pl-9 h-9 text-xs"
+          className="pl-9 h-9 text-label"
         />
       </div>
-      <div className="relative">
-        <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-subtle pointer-events-none z-10" />
+      <div>
         <Select
           value={roleFilter}
           onChange={(e) => setRoleFilter(e.target.value)}
           aria-label="Saring menurut peran"
-          className="pl-9 h-9 text-xs"
+          size="sm"
+          icon={Filter}
         >
           <option value="all">Semua peran</option>
           {Object.entries(ROLE_LABELS).map(([id, label]) => (
@@ -317,7 +317,7 @@ function SectionView({ section }: { section: DocSection }) {
       <h3
         id={section.id}
         data-doc-section
-        className="scroll-mt-24 text-lg font-semibold tracking-tight flex flex-wrap items-center gap-2"
+        className="scroll-mt-24 text-title-sm font-semibold tracking-tight flex flex-wrap items-center gap-2"
       >
         {section.title}
         {section.audience.length > 0 && (
@@ -330,7 +330,7 @@ function SectionView({ section }: { section: DocSection }) {
           </span>
         )}
       </h3>
-      <p className="mt-1 text-xs text-subtle">{section.summary}</p>
+      <p className="mt-1 text-label text-subtle">{section.summary}</p>
 
       <div className="mt-4 space-y-4">
         {section.blocks.map((block, i) => (
@@ -344,17 +344,17 @@ function SectionView({ section }: { section: DocSection }) {
 function BlockView({ block }: { block: DocBlock }) {
   switch (block.type) {
     case "p":
-      return <p className="text-sm text-foreground/85 leading-relaxed max-w-3xl">{block.text}</p>;
+      return <p className="text-body text-foreground/85 leading-relaxed max-w-3xl">{block.text}</p>;
 
     case "steps":
       return (
         <ol className="space-y-2.5 max-w-3xl">
           {block.items.map((item, i) => (
             <li key={i} className="flex gap-3">
-              <span className="grid place-items-center w-5 h-5 rounded-full bg-primary-soft text-primary text-[11px] font-semibold shrink-0 mt-0.5 tabular-nums">
+              <span className="grid place-items-center w-5 h-5 rounded-full bg-primary-soft text-primary text-caption font-semibold shrink-0 mt-0.5 tabular-nums">
                 {i + 1}
               </span>
-              <span className="text-sm text-foreground/85 leading-relaxed">{item}</span>
+              <span className="text-body text-foreground/85 leading-relaxed">{item}</span>
             </li>
           ))}
         </ol>
@@ -366,7 +366,7 @@ function BlockView({ block }: { block: DocBlock }) {
           {block.items.map((item, i) => (
             <li key={i} className="flex gap-3">
               <span className="mt-2 w-1.5 h-1.5 rounded-full bg-line-strong shrink-0" aria-hidden />
-              <span className="text-sm text-foreground/85 leading-relaxed">{item}</span>
+              <span className="text-body text-foreground/85 leading-relaxed">{item}</span>
             </li>
           ))}
         </ul>
@@ -382,13 +382,13 @@ function BlockView({ block }: { block: DocBlock }) {
     case "table":
       return (
         <div className="overflow-x-auto max-w-3xl">
-          <table className="w-full text-sm border-collapse min-w-[520px] card">
+          <table className="w-full text-body border-collapse min-w-[520px] card">
             <thead>
               <tr>
                 {block.head.map((h) => (
                   <th
                     key={h}
-                    className="text-left text-[11px] font-semibold uppercase tracking-wide text-subtle px-4 py-2.5 border-b border-line"
+                    className="text-left text-caption font-semibold uppercase tracking-wide text-subtle px-4 py-2.5 border-b border-line"
                   >
                     {h}
                   </th>
@@ -402,7 +402,7 @@ function BlockView({ block }: { block: DocBlock }) {
                     <td
                       key={j}
                       className={cn(
-                        "px-4 py-2.5 border-b border-line text-xs leading-relaxed align-top",
+                        "px-4 py-2.5 border-b border-line text-label leading-relaxed align-top",
                         j === 0 ? "font-semibold text-foreground" : "text-muted"
                       )}
                     >
@@ -418,7 +418,7 @@ function BlockView({ block }: { block: DocBlock }) {
 
     case "code":
       return (
-        <pre className="max-w-3xl overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 text-[12px] leading-relaxed">
+        <pre className="max-w-3xl overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 text-label leading-relaxed">
           <code className="font-mono">{block.text}</code>
         </pre>
       );

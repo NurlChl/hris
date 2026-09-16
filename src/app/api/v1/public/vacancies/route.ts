@@ -1,4 +1,5 @@
 import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import { publicFormFields, resolveFormFields } from "@/lib/hr/applications";
 import { NotFound } from "@/lib/guard";
 import { connectToDatabase } from "@/lib/db";
 import JobVacancy, {
@@ -18,6 +19,7 @@ import "@/models/Branch";
 
 interface LeanVacancy {
   _id: unknown;
+  formFields?: unknown;
   title: string;
   slug: string;
   summary: string;
@@ -91,7 +93,10 @@ export const GET = wrapRouteHandler(async (req) => {
     // Fire-and-forget: a failed counter must never block the page.
     void JobVacancy.updateOne({ slug }, { $inc: { viewCount: 1 } }).catch(() => {});
 
-    return apiSuccess(toPublic(vacancy, true), "Berhasil memuat detail lowongan");
+    return apiSuccess(
+      { ...toPublic(vacancy, true), formFields: publicFormFields(resolveFormFields(vacancy)) },
+      "Berhasil memuat detail lowongan"
+    );
   }
 
   const filter: Record<string, unknown> = { ...liveFilter };

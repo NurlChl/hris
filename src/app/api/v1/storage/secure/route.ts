@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { storageProvider, LocalProvider, toStorageKey } from "@/lib/storage";
 import { logActivity } from "@/lib/audit/logger";
 import { clientIp } from "@/lib/rate-limit";
+import { checkPermission } from "@/lib/rbac";
 
 /**
  * The single door to every stored file.
@@ -27,6 +28,19 @@ const EMPLOYEE_SCOPED_PREFIXES = [
 ];
 
 const PRIVILEGED_ROLES = ["SUPERADMIN", "HRD", "AUDIT", "DIREKSI", "GA", "SPV"];
+
+/** Biometric reference photos: see the check in GET. */
+const FACE_PREFIX = "faces/";
+const FACE_ROLES = ["SUPERADMIN", "HRD"];
+
+/**
+ * Applicants' CVs and documents: people outside the company, readable only by
+ * staff whose role can read recruitment. Being privileged elsewhere (GA, SPV,
+ * Audit) is not a reason to browse job applications.
+ */
+const CANDIDATE_PREFIX = "candidates/";
+/** Uploads not yet attached to a form. Never served on a session alone. */
+const PENDING_PREFIX = "tmp/";
 
 function jsonError(message: string, status: number) {
   return Response.json({ success: false, error: { code: "STORAGE", message } }, { status });
@@ -61,7 +75,31 @@ export async function GET(req: Request) {
   // --- Gate 2: ownership -------------------------------------------------
   // A signature alone is enough for a deliberately shared link; otherwise the
   // session must own the file or hold a privileged role.
-  if (!signatureValid && session?.user) {
+  // Face reference photos are biometric data and get a narrower door than any
+  // other folder: the owner, HRD and Superadmin only. A supervisor still sees a
+  // face while judging a change request — through a signed link minted by the
+  // approvals endpoint, which has already checked they may see that request.
+  // GA, Audit and Direksi, privileged for everything else, are not let in.
+  if (!signatureValid && session?.user && key.startsWith(FACE_PREFIX)) {
+    const ownerId = key.slice(FACE_PREFIX.length).split("/")[0];
+    const isOwner = Boolean(session.user.employeeId) && ownerId === session.user.employeeId;
+    if (!isOwner && !FACE_ROLES.includes(session.user.role)) {
+      return jsonError("Foto wajah hanya dapat dibuka pemiliknya, HRD, dan Superadmin.", 403);
+    }
+  }
+
+  if (!signatureValid && key.startsWith(PENDING_PREFIX)) {
+    return jsonError("Berkas ini belum dilampirkan ke formulir mana pun.", 403);
+  }
+
+  if (!signatureValid && session?.user && key.startsWith(CANDIDATE_PREFIX)) {
+    const permission = await checkPermission(session.user.id, "recruitment", "read");
+    if (!permission.allowed) {
+      return jsonError("Berkas pelamar hanya dapat dibuka tim rekrutmen.", 403);
+    }
+  }
+
+  if (!signatureValid && session?.user && !key.startsWith(FACE_PREFIX) && !key.startsWith(CANDIDATE_PREFIX)) {
     const role = session.user.role;
     const isPrivileged = PRIVILEGED_ROLES.includes(role);
     const scopedPrefix = EMPLOYEE_SCOPED_PREFIXES.find((p) => key.startsWith(p));
@@ -86,7 +124,13 @@ export async function GET(req: Request) {
   }
 
   // Sensitive documents are audited on every read, as the spec requires.
-  if (session?.user && (key.startsWith("payrolls/") || key.startsWith("employees/"))) {
+  if (
+    session?.user &&
+    (key.startsWith("payrolls/") ||
+      key.startsWith("employees/") ||
+      key.startsWith(FACE_PREFIX) ||
+      key.startsWith(CANDIDATE_PREFIX))
+  ) {
     void logActivity({
       userId: session.user.id,
       action: "VIEW_SECURE_FILE",

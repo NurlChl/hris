@@ -20,6 +20,28 @@ export interface ICandidate extends Document {
   cvUrl?: string;
   notes?: string;
   offeringSalary?: number;
+
+  /** Every answer from the application form, with labels as they were then. */
+  answers: Array<Record<string, unknown>>;
+  /* Copies of a few answers, so lists can be searched, filtered and sorted
+     without unpacking every application. The answers above stay the record. */
+  addressText: string;
+  city: string;
+  lastEducation: string;
+  availableFrom?: Date | null;
+  expectedSalary?: number | null;
+  hasCv: boolean;
+  /** HR's own 0–5 assessment; 0 means not rated yet. */
+  rating: number;
+  tags: string[];
+  /** Short code shown to the candidate after applying. */
+  reference: string;
+  /** Set once the candidate has been hired. */
+  employeeId?: mongoose.Types.ObjectId | null;
+  hiredAt?: Date | null;
+  /** Upcoming interview, kept on the candidate so lists can show it. */
+  nextInterviewAt?: Date | null;
+  lastActivityAt: Date;
 }
 
 const CandidateSchema = new Schema<ICandidate>(
@@ -49,6 +71,21 @@ const CandidateSchema = new Schema<ICandidate>(
     cvUrl: { type: String },
     notes: { type: String },
     offeringSalary: { type: Number },
+
+    answers: { type: Schema.Types.Mixed, default: () => [] },
+    addressText: { type: String, default: "" },
+    city: { type: String, default: "", index: true },
+    lastEducation: { type: String, default: "" },
+    availableFrom: { type: Date, default: null },
+    expectedSalary: { type: Number, default: null },
+    hasCv: { type: Boolean, default: false },
+    rating: { type: Number, default: 0, min: 0, max: 5 },
+    tags: { type: [String], default: [] },
+    reference: { type: String, default: "", index: true },
+    employeeId: { type: Schema.Types.ObjectId, ref: "Employee", default: null },
+    hiredAt: { type: Date, default: null },
+    nextInterviewAt: { type: Date, default: null },
+    lastActivityAt: { type: Date, default: () => new Date(), index: true },
   },
   {
     timestamps: true,
@@ -65,5 +102,9 @@ CandidateSchema.index(
 );
 // Backs the per-vacancy applicant board.
 CandidateSchema.index({ vacancyId: 1, currentStage: 1 });
+// Backs the all-applicants list: filtered by status, newest first.
+CandidateSchema.index({ status: 1, createdAt: -1 });
+// Free-text search across the fields people actually search by.
+CandidateSchema.index({ name: "text", email: "text", phone: "text", city: "text" });
 
 export default mongoose.models.Candidate || mongoose.model<ICandidate>("Candidate", CandidateSchema);

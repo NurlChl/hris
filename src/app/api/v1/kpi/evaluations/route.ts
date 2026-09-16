@@ -1,6 +1,7 @@
 import { z } from "zod";
 import mongoose from "mongoose";
 import { wrapRouteHandler, apiSuccess } from "@/lib/api";
+import { getSettings } from "@/lib/settings";
 import {
   requireUser,
   parseBody,
@@ -61,7 +62,10 @@ export const GET = wrapRouteHandler(async (req) => {
           { path: "branchId", select: "name" },
         ],
       })
-      .populate("templateId", "name description periodType scoreMode aspects grades allowSelfAssessment")
+      .populate(
+        "templateId",
+        "name description periodType scoreMode aspects grades allowSelfAssessment showLogo logoUrl logoHeight"
+      )
       .lean<Record<string, unknown> | null>();
 
     if (!evaluation) throw NotFound("Penilaian tidak ditemukan.");
@@ -78,7 +82,21 @@ export const GET = wrapRouteHandler(async (req) => {
       throw Forbidden("Penilaian ini masih disusun atasan Anda dan belum dibagikan.");
     }
 
-    return apiSuccess(evaluation, "Berhasil memuat penilaian");
+    // The printed appraisal carries a letterhead. Company identity lives in
+    // settings, which an employee cannot read directly, so it rides along here.
+    const settings = await getSettings();
+    const template = evaluation.templateId as
+      | { showLogo?: boolean; logoUrl?: string; logoHeight?: number }
+      | null;
+    const branding = {
+      companyName: String(settings.company_name ?? ""),
+      companyAddress: String(settings.company_address ?? ""),
+      showLogo: Boolean(template?.showLogo && template?.logoUrl),
+      logoUrl: template?.logoUrl ?? "",
+      logoHeight: template?.logoHeight ?? 14,
+    };
+
+    return apiSuccess({ ...evaluation, branding }, "Berhasil memuat penilaian");
   }
 
   /* --- list --- */

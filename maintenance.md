@@ -315,6 +315,34 @@ tidak terlihat oleh `tsc` maupun `next build` karena impornya sah secara tipe �
 hanya runtime di peramban yang jatuh. Aturannya: **berkas di `src/models/` tidak
 boleh diimpor dari berkas ber-`"use client"`.**
 
+**Resolver DNS mati membuat Atlas tak terjangkau.** Di Windows, resolver c-ares
+milik Node kadang gagal membaca konfigurasi DNS adapter lalu jatuh ke
+`127.0.0.1`. Bila tidak ada apa pun yang mendengarkan di sana, setiap lookup SRV
+mati dengan `querySrv ECONNREFUSED` — persis yang dibutuhkan connection string
+`mongodb+srv://`. Resolver sistem tetap normal sepanjang waktu, sehingga
+gejalanya membingungkan: `nslookup` berhasil, `fetch` ke internet berhasil, tapi
+Mongo tidak dapat me-resolve.
+
+Penangkalnya sudah ada di `lib/db.ts` berupa `dns.setServers()` di level modul,
+tetapi cacat: `dns.setServers()` melempar bila ada lookup yang sedang berjalan,
+dan kegagalan itu ditelan `catch` kosong tanpa pernah dicoba lagi. Pada dev
+server yang sibuk kondisi itu justru lumrah, jadi prosesnya memegang resolver
+mati seumur hidupnya. Sekarang pemeriksaan dijalankan tepat sebelum menyambung
+(`ensureUsableDns()`), hanya bila resolver yang aktif memang tidak mungkin
+menjawab, kegagalannya dicatat alih-alih disembunyikan, dan percobaan berikutnya
+mendapat kesempatan ulang. Server DNS penggantinya dapat diatur lewat
+`DNS_SERVERS`.
+
+**Database mati dilaporkan sebagai kata sandi salah.** `authorize()` mengembalikan
+`null` untuk semua kegagalan, termasuk saat basis data tidak terjangkau. Auth.js
+menerjemahkannya menjadi `CredentialsSignin`, sehingga halaman login berkata
+"Email atau kata sandi salah" — mengirim pengguna mereset kata sandi yang
+sebenarnya tidak bermasalah. Kini kegagalan infrastruktur dilempar sebagai
+`DatabaseUnavailableError` dengan kode `db_unavailable`, dan halaman login
+menampilkan pesan yang jujur. Predikatnya, `isDbUnreachable()`, tinggal bersama
+kode koneksi dan dipakai bersama oleh `wrapRouteHandler` agar jalur login dan
+jalur API tidak berbeda pendapat soal apa yang dihitung sebagai gangguan.
+
 **Daftar wilayah dipindah ke server.** Form karyawan mengambil daftar provinsi,
 kota, dan kecamatan langsung dari `emsifa.com` di sisi peramban, sementara CSP
 aplikasi membatasi `connect-src` ke `'self'` dan Nominatim. Akibatnya seluruh
@@ -342,6 +370,255 @@ itu pada baris berikutnya. Karyawan yang gagal diproses tidak menghasilkan
 tampilan apa pun. Sekarang setiap alasan kegagalan ditampilkan sebagai daftar di
 bawah formulir, dan hasil separuh berhasil dilaporkan sebagai peringatan, bukan
 sebagai sukses.
+
+---
+
+### 3.7 Rate limit, IP, hari libur, dan komponen bersama (2026-09-15)
+
+**Rate limit runtuh jadi satu ember untuk pengunjung anonim.** Limiternya memang
+sudah per-identitas — `enforceRateLimit(scope, identity, rule)` dengan identity
+berupa `employeeId`, id pengguna, atau alamat IP. Lubangnya ada di `clientIp()`:
+tanpa header proxy ia mengembalikan literal `"unknown"`, sehingga **seluruh
+pengunjung koneksi-langsung berbagi satu kunci**. Form lamaran publik dibatasi
+10 per jam, jadi pelamar ke-11 — orang lain, di benua lain — ikut terblokir
+karena sepuluh yang pertama.
+
+Sekarang `rateLimitKeyForIp()` menyebar pemanggil tak dikenal ke banyak ember
+memakai petunjuk lemah (user-agent, bahasa), menandainya `sharedBucket`, dan
+`enforceIpRateLimit()` melonggarkan batasnya 20× untuk ember bersama itu — jatah
+sebesar satu orang yang dipakai ramai-ramai hanya akan mengunci pengguna asli.
+Batas ketat per alamat tetap berlaku di mana alamatnya diketahui.
+
+`x-forwarded-for` kini hanya dipercaya bila `TRUST_PROXY=1`. Header itu gampang
+dipalsukan oleh siapa pun yang bicara langsung ke aplikasi; mempercayainya tanpa
+syarat berarti satu penyerang bisa menghabiskan jatah orang lain, atau menulis
+alamat apa pun ke jejak audit.
+
+Peta ember diberi plafon (`MAX_BUCKETS`) dengan pembuangan entri terlama. Ribuan
+karyawan tidak akan mendekatinya; plafon itu ada supaya penyerang tidak bisa
+mencetak kunci tanpa batas. Limiter yang kehabisan memori tidak melindungi
+apa pun, jadi saat penuh ia memaafkan — bukan memblokir.
+
+**`::1` di jejak audit.** `normaliseIp()` menyatukan semua ejaan loopback
+(`::1`, `0:0:0:0:0:0:0:1`, `[::1]`) menjadi `127.0.0.1`, dan membuka samaran
+IPv4 di dalam IPv6 (`::ffff:203.0.113.9` → `203.0.113.9`). Port pada alamat IPv4
+ikut dibuang.
+
+**Tautan panel admin dihapus dari halaman login karyawan.** Mengiklankannya ke
+setiap karyawan sama saja mengundang mereka mencoba pintunya. Ini bukan kontrol
+keamanan tersendiri — `proxy.ts` tetap menyaring per peran — tetapi undangannya
+hilang. Tautan lupa kata sandi dipindah ke dekat kolom kata sandi, tempat orang
+yang tidak bisa masuk memang sedang melihat.
+
+**Impor hari libur nasional.** Tiga sumber diuji lebih dulu:
+`api-harilibur.vercel.app` dan `dayoffapi.vercel.app`, dua API gratis yang
+paling sering disebut, **dua-duanya mati** (`DEPLOYMENT_DISABLED`).
+`date.nager.at` hidup dan reputasinya baik, tetapi untuk Indonesia hanya memuat
+hari libur bertanggal tetap: 8 entri untuk 2026, tanpa Idul Fitri, Idul Adha,
+Nyepi, Waisak, Imlek, dan tanpa satu pun cuti bersama. Mengimpornya berarti hari
+raya terbesar dalam setahun tidak tertandai.
+
+Sumber utamanya kini kalender publik `en.indonesian` milik Google: 28 entri untuk
+2026, lengkap dengan cuti bersama, tanpa API key. Nager dipakai sebagai cadangan
+dan hasilnya diberi label tegas sebagai daftar tidak lengkap. Alurnya pratinjau
+dulu baru terapkan — kalender ini menentukan hari mana yang memotong saldo cuti
+dan berapa hari kerja yang dihitung payroll, jadi tidak boleh ditimpa dari
+internet tanpa ada yang melihat selisihnya. Tanggal yang ditambahkan HRD sendiri
+tidak pernah disentuh impor, dan `isActive` hanya diisi saat pembuatan sehingga
+hari yang sengaja dimatikan tidak menyala lagi.
+
+Satu jebakan urutan sempat lolos: pola `new year's day` cocok lebih dulu dengan
+"Chinese New Year's Day", sehingga Imlek sempat dinamai "Tahun Baru Masehi" —
+tanggal benar, nama hari raya salah. Pola spesifik kini didahulukan.
+
+**Logo perusahaan di dokumen cetak.** `showLogo` dan `logoUrl` sudah ada di model
+sejak awal tetapi **tidak pernah dirender** — fiturnya dideklarasikan, bukan
+dibuat. Sekarang logo diunggah lewat `/api/v1/branding/logo`, divalidasi dan
+di-encode ulang di server, lalu disimpan sebagai **data URL di template**, bukan
+sebagai storage key. Itu disengaja: dokumen dicetak lewat dialog cetak peramban,
+dan gambar yang harus diambil dari jaringan berlomba dengan dialog itu — tautan
+bertanda tangan malah bisa kedaluwarsa di antara halaman dibuka dan tombol cetak
+ditekan, lalu dokumen tercetak tanpa logo. Byte yang sudah menyatu selalu ikut
+tercetak. Batasnya 256 KB karena byte itu ikut terbawa setiap kali template
+dibaca.
+
+**Komponen bersama baru.** `Combobox` (dropdown yang bisa dicari, kotak carinya
+baru muncul setelah daftar cukup panjang), `DatePicker`/`MonthPicker` (kalender
+sendiri; `input[type=date]` tidak bisa ditata, dan `type=month` bahkan tidak ada
+di Firefox), `ReorderList` (seret **atau** panah keyboard — seret saja tidak bisa
+dipakai tanpa tetikus), dan `Pagination`.
+
+Seret sempat tidak memindahkan apa pun: indeks baris asal disimpan di state
+React, yang belum ter-update ketika `drop` tiba pada tick yang sama, sehingga
+perpindahan hilang diam-diam. Indeksnya kini di ref; state hanya untuk tampilan.
+
+---
+
+### 3.8 Drag-and-drop ulang dan verifikasi wajah (2026-09-16)
+
+**Drag-and-drop ditulis ulang di atas pointer events.** Daftar di form lowongan
+punya ikon gagang tanpa perilaku apa pun — hanya gambar di samping tombol
+naik/turun, yang mengundang orang menyeret sesuatu yang tidak bisa diseret.
+`ReorderList` versi HTML5 drag-and-drop juga tidak layak dipasang di sana:
+drag HTML5 tidak berjalan untuk sentuhan di Android (form ini sering diisi di
+tablet), dan atribut `draggable` pada baris membuat teks di dalam `<input>`
+tidak bisa diseleksi di Chrome. Versi sekarang memakai pointer events — tetikus,
+sentuhan, dan pena satu jalur — hanya dari gagangnya, dengan baris lain bergeser
+memberi ruang. Gagang tetap bisa digerakkan dengan panah keyboard. Dipasang di
+daftar lowongan, aspek KPI, **indikator KPI** (sebelumnya tidak bisa diurutkan
+sama sekali, padahal urutannya ikut tercetak), dan blok slip gaji. Selektor
+fokus memakai anak langsung, karena daftar indikator bersarang di dalam aspek
+dan selektor turunan sempat menemukan gagang yang salah.
+
+**Verifikasi wajah presensi.** Keputusan desain yang menentukan:
+
+- **Pencocokan dihitung di server dari foto aslinya.** Bila browser yang
+  menghitung vektor wajah, vektor itu bisa direkam sekali lalu diputar ulang
+  untuk absen atas nama orang lain tanpa wajahnya.
+- **Inferensi berjalan di worker thread** (`workers/face-worker.mjs`,
+  `src/lib/face/engine.ts`). Satu foto memakan ~350–600 ms CPU murni; di thread
+  utama itu membekukan semua request. Terukur di laptop 4 core dengan 2 worker:
+  3,4 foto/detik dan jeda terburuk event loop 16 ms. Atur `FACE_WORKERS` di
+  server dengan core lebih banyak.
+- **`@vladmandic/face-api` dengan backend WASM**, tanpa build native, model dari
+  `node_modules`, tanpa akses jaringan. face-api dan tfjs harus dimuat dari satu
+  graf CommonJS: mencampur import ESM tfjs dengan build CommonJS face-api
+  menghasilkan dua engine tfjs terpisah, dan deteksi diam-diam tidak menemukan
+  wajah apa pun.
+- **Ambang deteksi rendah (0,3) + `normalise()`.** Selfie webcam asli dalam
+  cahaya redup hanya mendapat skor 0,45 pada ambang bawaan 0,5 — karyawan asli
+  akan ditolak. Peregangan kontras menaikkannya ke 0,83. Identitas diputuskan
+  oleh jarak pengenalan, bukan keyakinan detektor.
+- **Ambang jarak diukur, bukan ditebak.** Dua selfie orang yang sama: 0,242.
+  22 wajah orang lain: terdekat 0,641, median 0,780. Tak satu pun lolos hingga
+  0,6. Pilihan dibatasi ketat 0,45 / normal 0,50 / longgar 0,55.
+- **Penolakan tidak mengembalikan angka jarak** ke klien — angka itu gradien
+  yang bisa dipakai mengutak-atik foto rekan sampai lolos. Jarak dicatat di
+  audit (`FACE_MISMATCH`).
+- **`isManualFallback` tidak lagi dibaca dari klien.** Flag itu berarti "wajah
+  gagal, terima selfie biasa" dan bisa diklaim oleh request buatan tangan.
+  Karyawan yang wajahnya gagal diverifikasi memakai koreksi absen.
+- **Pendaftaran pertama langsung, penggantian lewat SPV.** Tipe approval baru
+  `face_change` dengan satu langkah SPV. Ketiga foto pendaftaran wajib orang yang
+  sama — tanpa itu, dua foto diri sendiri plus satu foto rekan membuat rekan itu
+  cocok untuk setiap absen. Pendaftaran pertama memberi tahu SPV.
+- **Perlindungan data (UU 27/2022).** Koleksi terpisah `FaceProfile`, vektor
+  dienkripsi AES-256-GCM, persetujuan dicatat dengan versi teksnya, satu foto
+  acuan saja. Folder `faces/` hanya bisa dibuka pemilik, HRD, dan Superadmin;
+  SPV lewat tautan bertanda tangan dari endpoint approval. Foto dan vektor dari
+  permintaan yang ditolak/dibatalkan dihapus; setelah disetujui, salinan vektor
+  di permintaan dikosongkan; reset menghapus semuanya.
+- **Frame kamera gelap.** Kamera ponsel mengirim frame hitam beberapa ratus
+  milidetik pertama. `SelfieCapture` sebelumnya menerima frame begitu
+  `videoWidth > 0`, sehingga ketukan cepat memotret layar hitam — dengan
+  verifikasi wajah aktif muncul sebagai "wajah tidak terdeteksi". Tombol kini
+  aktif 500 ms setelah video berjalan, frame tanpa kecerahan/detail ditolak di
+  browser, dan track kamera yang berakhir sendiri (layar terkunci, aplikasi lain
+  merebut kamera) menutup pratinjau dengan pesan alih-alih membeku.
+
+**Dua celah lama yang ikut tertutup.**
+
+- `GET /api/v1/approvals?view=history` hanya memfilter status. Karyawan STAFF
+  mana pun bisa membaca riwayat persetujuan seluruh perusahaan: alasan cuti dan
+  tautan bukti seperti surat dokter. Riwayat kini dibatasi ke peran yang ada di
+  langkah persetujuannya, dan pembatasan divisi SPV berlaku di kedua tampilan.
+- Tidak ada pemeriksaan bahwa penyetuju bukan pemohon. SPV bisa menyetujui cuti,
+  koreksi, atau penggantian wajahnya sendiri. Kini ditolak untuk semua tipe.
+
+**Batas yang disengaja.** Verifikasi wajah memastikan foto berisi wajah yang
+terdaftar, bukan bahwa wajah itu hadir langsung: foto wajah karyawan dari layar
+ponsel lain dapat lolos. Tidak ada deteksi keaktifan (*liveness*). Geofence
+tetap berlaku, jadi pelakunya tetap harus berada di lokasi kantor.
+
+**Deployment.** Worker dimuat dari `workers/face-worker.mjs` relatif terhadap
+direktori kerja, sehingga cocok untuk `next start` dari folder proyek. Mode
+`output: "standalone"` tidak menyalin folder itu dan `node_modules/@vladmandic`
+beserta modelnya — salin keduanya bila beralih ke standalone.
+
+### 3.9 Rekrutmen lengkap, unggahan berkas, dan notifikasi (2026-09-16)
+
+**Formulir lamaran per lowongan.** Definisi kolom disimpan di
+`JobVacancy.formFields` (kosong = formulir bawaan dari
+`lib/hr/application-form.ts#defaultFormFields`). Empat belas jenis isian;
+kolom `system` (nama, email, telepon, alamat, tanggal lahir, jenis kelamin,
+pendidikan, CV, portofolio, dokumen, bisa mulai, gaji, surat lamaran) dipakai
+saat perekrutan sehingga jenisnya dikunci di `PUT /vacancies/{id}/form`.
+Jawaban divalidasi di server dengan skema zod yang dibangun dari definisi yang
+tersimpan (`buildAnswersSchema`), bukan dari apa yang dikirim klien. Jawaban
+disimpan sebagai salinan berlabel (`Candidate.answers`), ditambah beberapa kolom
+datar (`city`, `lastEducation`, `availableFrom`, `expectedSalary`, `hasCv`)
+khusus untuk filter dan urutan. Builder: `/admin/vacancies/[id]/form`; renderer
+bersama: `components/recruitment/ApplicationFormRenderer.tsx` (halaman karier,
+tambah pelamar manual, pratinjau builder).
+
+**Unggahan dua tahap.** `POST /uploads` (sesi) dan `POST /public/uploads`
+(anonim, terikat slug lowongan terbuka, rate limit per IP) memeriksa isi berkas
+lewat magic bytes (`lib/storage/sniff.ts`; DOCX bermakro ditolak), menyimpannya
+di `tmp/`, dan mengembalikan token `PendingUpload` 6 jam. Form mengirim token;
+`claimAttachments` mengklaim token secara atomik (konteks, pemilik, dan scope
+harus cocok) lalu memindahkan berkas ke folder yang ditentukan server. Tautan
+http(s) diterima sebagai alternatif dan tidak pernah diambil server. Cuti,
+koreksi absen, dan pengaduan kini memakai alur ini (`resolveSingleAttachment`),
+data URL lama tetap diterima. Unggahan yang tidak jadi dipakai dibersihkan
+cron harian (`purgeExpiredUploads`). Foto BAST inventaris sengaja tetap memakai
+kamera langsung karena fungsinya bukti serah terima saat itu juga.
+
+**Akses berkas.** `storage/secure`: `candidates/` hanya untuk pemegang izin
+`recruitment:read` (sebelumnya semua peran "privileged" termasuk GA/SPV/Audit),
+`tmp/` tidak pernah dilayani lewat sesi. Pembukaan berkas pelamar dan detail
+pelamar diaudit.
+
+**API pelamar.** `GET /candidates` (filter lengkap, paginasi, jumlah per tab),
+`GET/POST /candidates/{id}` (detail; catatan, wawancara, penilaian, label),
+`GET /candidates/interviewers`. `PATCH` memvalidasi tahap terhadap lowongan dan
+mewajibkan alasan penolakan. `PUT` (rekrut) menyalin alamat, tanggal lahir,
+jenis kelamin, dan menyalin berkas lamaran ke `employees/<id>/` agar karyawan
+dapat membuka dokumennya sendiri; menandai `Employee.isNewHire`. API lama
+`/api/v1/recruitment` dan model `RecruitmentPipeline` yang menduplikasi alur ini
+dihapus (koleksinya di database tidak disentuh).
+
+**Karyawan baru.** `lib/hr/employee-completeness.ts` menentukan data wajib.
+`GET /employees?newHire=1` mengembalikan `missingFields`; penyimpanan yang
+melengkapi semua data menghapus tanda otomatis; `PATCH /employees` menghapusnya
+manual. Halaman Data Karyawan kini berpaginasi di server dan pencariannya ke
+server (sebelumnya memuat 200 baris lalu menyaring di browser).
+
+**Notifikasi.** `lib/notification/reminders.ts` dipanggil cron harian: absen
+pulang terlewat, pengajuan tertahan >48 jam (ringkasan per peran/divisi),
+wawancara besok (per pewawancara + ringkasan HRD), karyawan baru belum lengkap
+(Senin). Deduplikasi per hari lewat `refType` berkunci tanggal, jadi cron aman
+diulang. Mesin approval kini juga memberi tahu pemohon di setiap langkah yang
+disetujui, bukan hanya hasil akhir. Lonceng: ikon per jenis, tab belum dibaca,
+pengelompokan hari, muat lebih banyak, bottom sheet di ponsel (di-portal karena
+header ber-backdrop-blur menjadi containing block elemen `fixed`), polling
+berhenti saat tab tersembunyi.
+
+**Bug yang ditemukan saat pengujian.**
+
+- Aturan global `:where(.grid) { grid-template-columns: minmax(0,1fr) }` dari
+  3.7 mematikan semua kelas `grid-cols-*`: CSS di `globals.css` keluar tanpa
+  layer, dan CSS tanpa layer selalu mengalahkan utilitas Tailwind yang berada di
+  `@layer utilities`, berapa pun spesifisitasnya. Membungkusnya dengan
+  `@layer base` tidak membantu (pipeline tetap mengeluarkannya tanpa layer).
+  Diganti `grid-auto-columns: minmax(0,1fr)`, yang hanya mengatur track
+  implisit dan tidak pernah bentrok dengan `grid-cols-*`. Overflow 375px pada
+  dashboard/payroll tetap teratasi. Alasan yang sama berlaku untuk
+  `min-width: 0` pada anak grid/`flex-1`: empat elemen yang memakai `min-w-*`
+  dipindah ke `style`.
+- Form karyawan mengubah tanggal lahir/mulai kerja lewat `toISOString()`
+  sehingga tanggal WIB mundur sehari; server menyimpan `YYYY-MM-DD` sebagai
+  tengah malam UTC. Keduanya kini memakai hari kalender WIB.
+- `Select` menampilkan opsi bernilai kosong ("Pilih cabang…", "Semua status")
+  sebagai baris yang bisa dicentang; kini menjadi placeholder sekaligus aksi
+  kosongkan.
+- Riwayat cuti di portal menautkan storage key mentah sehingga lampiran tidak
+  bisa dibuka; kini ditandatangani seperti di halaman persetujuan.
+- Halaman Data Karyawan masih memakai `SearchSelect` lokal dengan panah "▼".
+
+**Konfigurasi.** SMTP di `.env` saat pengujian menolak login (535 Invalid
+credentials), jadi email notifikasi tidak terkirim sampai kredensialnya
+diperbaiki. `CRON_SECRET` belum diisi, sehingga tugas harian dan semua pengingat
+di atas belum berjalan.
 
 ---
 
@@ -373,8 +650,8 @@ sebagai sukses.
 
 Diurutkan menurut nilainya:
 
-1. **Face recognition** (`face-api.js`) — presensi saat ini memakai selfie
-   manual dengan penanda `isManualFallback`. Titik integrasinya sudah tersedia.
+1. **Deteksi keaktifan wajah (liveness)** — verifikasi wajah sudah berjalan
+   (lihat 3.8), tetapi foto wajah dari layar lain masih dapat lolos.
 2. **2FA (TOTP)** — field `is2faEnabled` dan `twoFactorSecret` sudah ada di model
    `User` tetapi alurnya belum dibuat.
 3. **Kontrak kerja** — model dan pengingat kedaluwarsa sudah jalan, tetapi

@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { attachmentRefHref } from "@/lib/uploads";
 import mongoose from "mongoose";
 import { wrapRouteHandler, apiSuccess } from "@/lib/api";
-import { requireUser, parseBody, BadRequest, NotFound } from "@/lib/guard";
+import { requireUser, parseBody, BadRequest, NotFound, Forbidden } from "@/lib/guard";
 import { logActivity } from "@/lib/audit/logger";
 import { decide, type RefType, REF_TYPE_LABEL } from "@/lib/approval/engine";
 import { formatDate, wibStartOfDay, wibTimeOnDay } from "@/lib/time";
@@ -13,6 +14,8 @@ import LeaveBalance from "@/models/LeaveBalance";
 import Attendance from "@/models/Attendance";
 import AttendanceCorrection from "@/models/AttendanceCorrection";
 import HolidaySwapRequest from "@/models/HolidaySwapRequest";
+import FaceChangeRequest from "@/models/FaceChangeRequest";
+import FaceProfile from "@/models/FaceProfile";
 import Employee from "@/models/Employee";
 import { CORRECTION_REASON_LABELS } from "@/lib/hr/labels";
 
@@ -27,9 +30,16 @@ export const GET = wrapRouteHandler(async (req) => {
 
   const roles = ctx.user.role === "SUPERADMIN" ? null : [ctx.user.role];
 
+  // Both views are limited to requests the caller's role takes part in. The
+  // history view used to filter on status alone, so any signed-in employee
+  // could list every decided request in the company — leave reasons, signed
+  // links to evidence such as medical letters, and now face photos.
   const filter: Record<string, unknown> =
     view === "history"
-      ? { status: { $in: ["approved", "rejected"] } }
+      ? {
+          status: { $in: ["approved", "rejected"] },
+          ...(roles ? { stepsStatus: { $elemMatch: { approverRole: { $in: roles } } } } : {}),
+        }
       : {
           status: "pending",
           ...(roles
@@ -59,7 +69,7 @@ export const GET = wrapRouteHandler(async (req) => {
   const byType: Record<string, mongoose.Types.ObjectId[]> = {};
   for (const inst of instances) (byType[inst.refType] ??= []).push(inst.refId);
 
-  const [leaves, corrections, swaps] = await Promise.all([
+  const [leaves, corrections, swaps, faceChanges] = await Promise.all([
     byType.leave?.length
       ? LeaveRequest.find({ _id: { $in: byType.leave } })
           .populate("employeeId", "name employeeId divisionId branchId")
@@ -76,10 +86,17 @@ export const GET = wrapRouteHandler(async (req) => {
           .populate("employeeId", "name employeeId divisionId branchId")
           .lean()
       : [],
+    byType.face_change?.length
+      ? FaceChangeRequest.find({ _id: { $in: byType.face_change } })
+          // The encrypted descriptors never leave the server.
+          .select("-descriptors")
+          .populate("employeeId", "name employeeId divisionId branchId")
+          .lean()
+      : [],
   ]);
 
   const index = new Map<string, Record<string, unknown>>();
-  for (const doc of [...leaves, ...corrections, ...swaps] as Array<Record<string, unknown>>) {
+  for (const doc of [...leaves, ...corrections, ...swaps, ...faceChanges] as Array<Record<string, unknown>>) {
     index.set(String(doc._id), doc);
   }
 
@@ -94,9 +111,8 @@ export const GET = wrapRouteHandler(async (req) => {
 
     const activeStep = inst.stepsStatus.find((s) => s.status === "pending" && s.stepNumber === inst.currentStep);
 
-    // An SPV only ever sees their own division's queue.
+    // An SPV only ever sees their own division, in the queue and in history.
     if (
-      view === "inbox" &&
       ctx.user.role === "SPV" &&
       employee?.divisionId &&
       ctx.user.divisionId !== employee.divisionId.toString()
@@ -134,7 +150,7 @@ async function describe(refType: RefType, doc: Record<string, unknown>) {
       period: `${formatDate(doc.startDate as Date)} – ${formatDate(doc.endDate as Date)}`,
       duration: `${doc.chargedDays ?? "-"} hari kerja`,
       reason: doc.reason as string,
-      evidenceUrl: evidence ? await storageProvider.getSignedUrl(evidence, 900) : "",
+      evidenceUrl: await attachmentRefHref(evidence),
     };
   }
   if (refType === "correction") {
@@ -144,9 +160,44 @@ async function describe(refType: RefType, doc: Record<string, unknown>) {
       period: formatDate(doc.date as Date),
       duration: `${doc.clockInTime} – ${doc.clockOutTime}`,
       reason: `${CORRECTION_REASON_LABELS[doc.reasonType as string] ?? doc.reasonType}: ${doc.reasonNote}`,
-      evidenceUrl: evidence ? await storageProvider.getSignedUrl(evidence, 900) : "",
+      evidenceUrl: await attachmentRefHref(evidence),
     };
   }
+  if (refType === "face_change") {
+    const employeeRef = doc.employeeId as { _id?: mongoose.Types.ObjectId } | undefined;
+    const current = employeeRef?._id
+      ? await FaceProfile.findOne({ employeeId: employeeRef._id })
+          .select("referencePhoto createdAt")
+          .lean<{ referencePhoto: string; createdAt: Date } | null>()
+      : null;
+    const distance = doc.distanceToCurrent as number | null;
+
+    // Signed links are the only way a supervisor reaches these photos: the
+    // storage route refuses face photos to a plain supervisor session, and the
+    // link is minted here only for someone already allowed to see this request.
+    return {
+      title: "Penggantian wajah presensi",
+      period: current ? `Wajah terdaftar sejak ${formatDate(current.createdAt)}` : "Belum ada wajah terdaftar",
+      duration: `${doc.sampleCount} foto baru`,
+      reason: (doc.reason as string) || "-",
+      evidenceUrl: "",
+      facePhotos: {
+        current: current ? await storageProvider.getSignedUrl(current.referencePhoto, 600) : "",
+        proposed: await storageProvider.getSignedUrl(doc.referencePhoto as string, 600),
+      },
+      // A hint for the approver, not a verdict: the system cannot know whether a
+      // big difference is a colleague or the same person after surgery.
+      faceSimilarity:
+        distance === null
+          ? "unknown"
+          : distance <= 0.5
+            ? "similar"
+            : distance <= 0.6
+              ? "uncertain"
+              : "different",
+    };
+  }
+
   return {
     title: "Tukar Libur",
     period: `Masuk ${formatDate(doc.holidayDate as Date)} → libur ${formatDate(doc.replacementDate as Date)}`,
@@ -183,6 +234,15 @@ export const POST = wrapRouteHandler(async (req) => {
 
   const refType = instance.refType as RefType;
   const { employeeId, summary } = await loadRef(refType, instance.refId);
+
+  // Nobody approves their own request. Without this a supervisor could submit
+  // leave, a correction, or — worst — a replacement of their own enrolled face,
+  // then clear it from their own inbox a second later.
+  if (ctx.user.employeeId && String(employeeId) === ctx.user.employeeId) {
+    throw Forbidden(
+      "Anda tidak dapat memutuskan pengajuan milik Anda sendiri. Pengajuan ini harus diputuskan oleh atasan atau HRD lain."
+    );
+  }
 
   const result = await decide({
     instanceId: body.instanceId,
@@ -237,6 +297,18 @@ async function loadRef(refType: RefType, refId: mongoose.Types.ObjectId) {
       summary: `Koreksi absen ${formatDate(doc.date)} (${doc.clockInTime}–${doc.clockOutTime})`,
     };
   }
+  if (refType === "face_change") {
+    const doc = await FaceChangeRequest.findById(refId)
+      .select("employeeId")
+      .populate("employeeId", "name")
+      .lean<{ employeeId: { _id: mongoose.Types.ObjectId; name?: string } } | null>();
+    if (!doc) throw NotFound("Permintaan penggantian wajah tidak ditemukan.");
+    return {
+      employeeId: doc.employeeId._id,
+      summary: `Penggantian wajah presensi ${doc.employeeId.name ?? ""}`.trim(),
+    };
+  }
+
   const doc = await HolidaySwapRequest.findById(refId).lean<{
     employeeId: mongoose.Types.ObjectId;
     holidayDate: Date;
@@ -341,5 +413,57 @@ async function finalize(
 
   if (refType === "holiday_swap") {
     await HolidaySwapRequest.updateOne({ _id: refId, status: "pending" }, { status });
+    return;
+  }
+
+  if (refType === "face_change") {
+    const request = await FaceChangeRequest.findById(refId);
+    if (!request || request.status !== "pending") return;
+
+    request.status = status;
+    request.decidedAt = new Date();
+    request.decisionNote = comment;
+    await request.save();
+
+    if (status !== "approved") {
+      // A refused face is not kept "just in case". The request document stays
+      // as the record that it was made and refused; the face data does not.
+      request.descriptors = "";
+      await request.save();
+      await storageProvider.delete(request.referencePhoto).catch(() => {});
+      return;
+    }
+
+    // The request becomes the profile. The previous reference photo is removed
+    // rather than archived: keeping faces nobody uses any more is exactly the
+    // biometric retention the consent text promises not to do.
+    const previous = await FaceProfile.findOne({ employeeId: request.employeeId })
+      .select("referencePhoto")
+      .lean<{ referencePhoto: string } | null>();
+
+    await FaceProfile.findOneAndUpdate(
+      { employeeId: request.employeeId },
+      {
+        $set: {
+          descriptors: request.descriptors,
+          sampleCount: request.sampleCount,
+          referencePhoto: request.referencePhoto,
+          consentAt: request.consentAt,
+          consentVersion: request.consentVersion,
+          source: "change_request",
+          lastVerifiedAt: null,
+        },
+      },
+      { upsert: true }
+    );
+
+    if (previous?.referencePhoto && previous.referencePhoto !== request.referencePhoto) {
+      await storageProvider.delete(previous.referencePhoto).catch(() => {});
+    }
+
+    // The profile now holds the descriptors; a second copy on the request would
+    // survive a later reset and quietly defeat an erasure request.
+    request.descriptors = "";
+    await request.save();
   }
 }

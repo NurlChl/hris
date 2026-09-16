@@ -1,7 +1,7 @@
 import mongoose, { Schema, Document } from "mongoose";
 
 export interface IApprovalFlow extends Document {
-  transactionType: "leave" | "correction" | "holiday_swap" | "contract";
+  transactionType: "leave" | "correction" | "holiday_swap" | "contract" | "face_change";
   steps: Array<{
     stepNumber: number;
     approverRole: string; // e.g. 'SPV', 'HRD', 'AUDIT', 'DIREKSI'
@@ -12,7 +12,7 @@ export interface IApprovalFlow extends Document {
 const ApprovalFlowSchema = new Schema<IApprovalFlow>({
   transactionType: { 
     type: String, 
-    enum: ["leave", "correction", "holiday_swap", "contract"], 
+    enum: ["leave", "correction", "holiday_swap", "contract", "face_change"], 
     required: true, 
     unique: true, 
     index: true 

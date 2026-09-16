@@ -61,6 +61,15 @@ export interface IEmployee extends Document {
   /** Storage key of the profile photo. */
   photoUrl: string;
   documents: Array<{ category: string; fileUrl: string; fileName: string }>;
+  /**
+   * Created from a hired candidate and not yet completed by HR. The record
+   * only holds what the candidate supplied; NIK, NPWP, bank details and the
+   * rest still have to be filled in, and the flag keeps these people visible
+   * until someone does.
+   */
+  isNewHire: boolean;
+  hiredFromCandidateId?: mongoose.Types.ObjectId | null;
+  profileCompletedAt?: Date | null;
 }
 
 const addressSchema = {
@@ -133,6 +142,9 @@ const EmployeeSchema = new Schema<IEmployee>(
       index: true,
     },
     photoUrl: { type: String, default: "" },
+    isNewHire: { type: Boolean, default: false, index: true },
+    hiredFromCandidateId: { type: Schema.Types.ObjectId, ref: "Candidate", default: null },
+    profileCompletedAt: { type: Date, default: null },
     documents: [
       {
         category: { type: String, required: true },

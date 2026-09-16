@@ -83,9 +83,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             >
               <Icon className="w-[18px] h-[18px] shrink-0 mt-px" strokeWidth={ICON_STROKE} />
               <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-semibold">{t.title}</p>
+                <p className="text-body-sm font-semibold">{t.title}</p>
                 {t.description && (
-                  <p className="text-[13px] mt-1 text-foreground/75 leading-relaxed break-words">
+                  <p className="text-body-sm mt-1 text-foreground/75 leading-relaxed break-words">
                     {t.description}
                   </p>
                 )}

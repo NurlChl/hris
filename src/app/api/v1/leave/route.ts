@@ -24,7 +24,8 @@ import {
   wibEndOfDay,
   inclusiveDayCount,
 } from "@/lib/time";
-import { storageProvider, decodeDataUrl } from "@/lib/storage";
+import { attachmentInputSchema } from "@/lib/attachments";
+import { attachmentRefHref, resolveSingleAttachment } from "@/lib/uploads";
 import LeaveType from "@/models/LeaveType";
 import LeaveBalance from "@/models/LeaveBalance";
 import LeaveRequest from "@/models/LeaveRequest";
@@ -68,7 +69,12 @@ export const GET = wrapRouteHandler(async (req) => {
     .limit(100)
     .lean();
 
-  return apiSuccess({ balances, history, year }, "Berhasil memuat data cuti");
+  // Stored keys are not openable URLs; each attachment gets a signed link.
+  const withLinks = await Promise.all(
+    history.map(async (h) => ({ ...h, evidenceUrl: await attachmentRefHref(h.evidenceUrl as string | undefined) }))
+  );
+
+  return apiSuccess({ balances, history: withLinks, year }, "Berhasil memuat data cuti");
 });
 
 /**
@@ -131,7 +137,9 @@ const createSchema = z.object({
   startDate: z.string().min(8),
   endDate: z.string().min(8),
   reason: z.string().trim().min(10, "Alasan minimal 10 karakter agar approver dapat menilai").max(1000),
-  /** Data URL of the supporting document, when the type requires one. */
+  /** Uploaded file token or pasted link, from the shared upload flow. */
+  attachment: attachmentInputSchema.optional(),
+  /** Inline data URL; still accepted from older app versions. */
   evidence: z.string().optional(),
 });
 
@@ -208,24 +216,18 @@ export const POST = wrapRouteHandler(async (req) => {
   const evidenceRequired =
     leaveType.requiresEvidence && breakdown.chargedDays >= evidenceThreshold;
 
-  if (evidenceRequired && !body.evidence) {
+  if (evidenceRequired && !body.evidence && !body.attachment) {
     throw BadRequest(
       `"${leaveType.name}" dengan durasi ${breakdown.chargedDays} hari wajib melampirkan bukti (misalnya surat dokter).`
     );
   }
-  if (body.evidence) {
-    const { buffer, ext, mime } = decodeDataUrl(body.evidence, [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
-    ]);
-    evidenceKey = await storageProvider.upload(
-      buffer,
-      `leaves/${ctx.employeeId}/${Date.now()}${ext}`,
-      mime
-    );
-  }
+  evidenceKey = await resolveSingleAttachment({
+    input: body.attachment,
+    legacyDataUrl: body.evidence,
+    context: "leave",
+    ownerUserId: ctx.user.id,
+    destination: `leaves/${ctx.employeeId}`,
+  });
 
   /* --- balance ------------------------------------------------------ */
   const year = Number(startKey.slice(0, 4));

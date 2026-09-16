@@ -16,7 +16,8 @@ import { checkPermission } from "@/lib/rbac";
 import { RATE_RULES } from "@/lib/rate-limit";
 import { logActivity } from "@/lib/audit/logger";
 import { getSettings } from "@/lib/settings";
-import { storageProvider, decodeDataUrl } from "@/lib/storage";
+import { attachmentInputSchema } from "@/lib/attachments";
+import { resolveSingleAttachment } from "@/lib/uploads";
 import ApprovalFlow from "@/models/ApprovalFlow";
 import ApprovalInstance from "@/models/ApprovalInstance";
 import AttendanceCorrection from "@/models/AttendanceCorrection";
@@ -104,6 +105,7 @@ const createSchema = z
       .min(15, "Jelaskan alasan minimal 15 karakter agar approver dapat menilai")
       .max(1000),
     evidence: z.string().optional(),
+    attachment: attachmentInputSchema.optional(),
   })
   .refine((v) => v.clockOutTime > v.clockInTime, {
     message: "Jam pulang harus lebih besar dari jam masuk",
@@ -173,19 +175,13 @@ export const POST = wrapRouteHandler(async (req) => {
 
   /* --- evidence ------------------------------------------------------ */
   let evidenceKey = "";
-  if (body.evidence) {
-    const { buffer, ext, mime } = decodeDataUrl(body.evidence, [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
-    ]);
-    evidenceKey = await storageProvider.upload(
-      buffer,
-      `corrections/${ctx.employeeId}/${dayKey}-${Date.now()}${ext}`,
-      mime
-    );
-  }
+  evidenceKey = await resolveSingleAttachment({
+    input: body.attachment,
+    legacyDataUrl: body.evidence,
+    context: "correction",
+    ownerUserId: ctx.user.id,
+    destination: `corrections/${ctx.employeeId}`,
+  });
 
   const correction = await AttendanceCorrection.create({
     employeeId: ctx.employeeId,

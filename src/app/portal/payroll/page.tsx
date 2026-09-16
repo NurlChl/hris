@@ -79,8 +79,8 @@ export default function PortalPayrollPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-[26px] md:text-[30px] text-heading">Slip Gaji Saya</h1>
-        <p className="text-sm text-muted mt-2 leading-relaxed">
+        <h1 className="text-display-sm md:text-display text-heading">Slip Gaji Saya</h1>
+        <p className="text-body text-muted mt-2 leading-relaxed">
           Riwayat slip gaji Anda tersimpan permanen dan hanya dapat diakses oleh Anda.
         </p>
       </header>
@@ -153,13 +153,13 @@ export default function PortalPayrollPage() {
                     className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 hover:bg-surface-2 transition-colors"
                   >
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold">{formatPeriod(p.period)}</p>
-                      <p className="text-[11px] text-subtle mt-0.5">
+                      <p className="text-body font-semibold">{formatPeriod(p.period)}</p>
+                      <p className="text-caption text-subtle mt-0.5">
                         Diterbitkan {formatDateTime(p.generatedAt)}
                       </p>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-sm font-semibold tabular-nums">{formatRupiah(p.netSalary)}</span>
+                      <span className="text-body font-semibold tabular-nums">{formatRupiah(p.netSalary)}</span>
                       <Button variant="secondary" size="sm" onClick={() => setDetail(p)}>
                         Rincian
                       </Button>
@@ -217,7 +217,7 @@ export default function PortalPayrollPage() {
 
             <Section title="Potongan">
               {detail.deductions.length === 0 ? (
-                <p className="text-xs text-muted py-2">Tidak ada potongan pada periode ini.</p>
+                <p className="text-label text-muted py-2">Tidak ada potongan pada periode ini.</p>
               ) : (
                 detail.deductions.map((d) => <Line key={d.name} label={d.name} amount={d.amount} />)
               )}
@@ -225,11 +225,11 @@ export default function PortalPayrollPage() {
             </Section>
 
             <div className="flex items-center justify-between gap-4 rounded-lg bg-primary-soft text-primary px-4 py-3.5">
-              <span className="text-xs font-semibold uppercase tracking-wide">Gaji bersih</span>
-              <span className="text-lg font-semibold tabular-nums">{formatRupiah(detail.netSalary)}</span>
+              <span className="text-label font-semibold uppercase tracking-wide">Gaji bersih</span>
+              <span className="text-title-sm font-semibold tabular-nums">{formatRupiah(detail.netSalary)}</span>
             </div>
 
-            <p className="text-[11px] text-subtle leading-relaxed">
+            <p className="text-caption text-subtle leading-relaxed">
               Dasar perhitungan: {detail.presentDays} kehadiran dari {detail.workingDays} hari kerja,
               {" "}
               {detail.lateMinutes} menit keterlambatan
@@ -254,8 +254,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Line({ label, amount, strong }: { label: string; amount: number; strong?: boolean }) {
   return (
     <div className={`flex items-center justify-between gap-4 py-2 ${strong ? "font-semibold" : ""}`}>
-      <span className="text-xs text-foreground/90">{label}</span>
-      <span className="text-xs tabular-nums shrink-0">{formatRupiah(amount)}</span>
+      <span className="text-label text-foreground/90">{label}</span>
+      <span className="text-label tabular-nums shrink-0">{formatRupiah(amount)}</span>
     </div>
   );
 }

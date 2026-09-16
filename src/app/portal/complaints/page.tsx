@@ -21,6 +21,12 @@ import {
   Toggle,
 } from "@/components/ui";
 import { useToast } from "@/components/ui/Toast";
+import {
+  FileOrLinkInput,
+  attachmentProblem,
+  toAttachmentInputs,
+  type AttachmentItem,
+} from "@/components/ui/FileOrLinkInput";
 import { api, errorMessage } from "@/lib/client-api";
 import { formatDateTime } from "@/lib/time";
 import { COMPLAINT_TARGET_LABELS } from "@/lib/hr/labels";
@@ -90,8 +96,8 @@ export default function PortalComplaintsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-[26px] md:text-[30px] text-heading">Pengaduan</h1>
-          <p className="text-sm text-muted mt-2 leading-relaxed">
+          <h1 className="text-display-sm md:text-display text-heading">Pengaduan</h1>
+          <p className="text-body text-muted mt-2 leading-relaxed">
             Sampaikan keluhan atau laporan, termasuk secara anonim.
           </p>
         </div>
@@ -138,7 +144,7 @@ export default function PortalComplaintsPage() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-mono text-subtle">{c.ticketCode}</span>
+                          <span className="text-label font-mono text-subtle">{c.ticketCode}</span>
                           {c.isAnonymous && (
                             <Badge tone="neutral" icon={EyeOff}>
                               Anonim
@@ -146,8 +152,8 @@ export default function PortalComplaintsPage() {
                           )}
                           <Badge tone="primary">{COMPLAINT_TARGET_LABELS[c.target] ?? c.target}</Badge>
                         </div>
-                        <p className="text-sm font-semibold mt-1.5 truncate">{c.subject}</p>
-                        <p className="text-[11px] text-subtle mt-0.5">
+                        <p className="text-body font-semibold mt-1.5 truncate">{c.subject}</p>
+                        <p className="text-caption text-subtle mt-0.5">
                           {CATEGORIES[c.category] ?? c.category} · {formatDateTime(c.createdAt)}
                           {c.responses.length > 0 && ` · ${c.responses.length} tanggapan`}
                         </p>
@@ -194,7 +200,7 @@ export default function PortalComplaintsPage() {
               <h3 className="eyebrow mb-1.5">
                 Uraian yang Anda kirim
               </h3>
-              <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap">
+              <p className="text-body text-foreground/90 leading-relaxed whitespace-pre-wrap">
                 {detail.description}
               </p>
               {detail.attachments && (
@@ -202,7 +208,7 @@ export default function PortalComplaintsPage() {
                   href={detail.attachments}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 mt-3 text-xs text-primary hover:underline"
+                  className="inline-flex items-center gap-1.5 mt-3 text-label text-primary hover:underline"
                 >
                   <Paperclip className="w-3.5 h-3.5" />
                   Lihat lampiran
@@ -215,15 +221,15 @@ export default function PortalComplaintsPage() {
                 Tindak lanjut
               </h3>
               {detail.responses.length === 0 ? (
-                <p className="text-xs text-muted">
+                <p className="text-label text-muted">
                   Belum ada tanggapan. Anda akan menerima notifikasi begitu ada perkembangan.
                 </p>
               ) : (
                 <ul className="space-y-2.5">
                   {detail.responses.map((r, i) => (
                     <li key={r._id ?? i} className="rounded-lg bg-surface-2 border border-line p-3">
-                      <p className="text-xs leading-relaxed whitespace-pre-wrap">{r.message}</p>
-                      <p className="text-[11px] text-subtle mt-1.5">{formatDateTime(r.createdAt)}</p>
+                      <p className="text-label leading-relaxed whitespace-pre-wrap">{r.message}</p>
+                      <p className="text-caption text-subtle mt-1.5">{formatDateTime(r.createdAt)}</p>
                     </li>
                   ))}
                 </ul>
@@ -251,8 +257,7 @@ function ComplaintForm({
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
   const [isAnonymous, setIsAnonymous] = useState(false);
-  const [attachment, setAttachment] = useState<string | null>(null);
-  const [fileName, setFileName] = useState("");
+  const [attachment, setAttachment] = useState<AttachmentItem[]>([]);
   const [fileError, setFileError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -263,34 +268,15 @@ function ComplaintForm({
     setSubject("");
     setDescription("");
     setIsAnonymous(false);
-    setAttachment(null);
-    setFileName("");
+    setAttachment([]);
     setFileError("");
   }, [open]);
 
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    setFileError("");
-    if (!file) {
-      setAttachment(null);
-      setFileName("");
-      return;
-    }
-    if (file.size > 8 * 1024 * 1024) {
-      setFileError("Ukuran berkas melebihi 8 MB.");
-      e.target.value = "";
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setAttachment(String(reader.result));
-      setFileName(file.name);
-    };
-    reader.readAsDataURL(file);
-  };
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const problem = attachmentProblem(attachment);
+    setFileError(problem ?? "");
+    if (problem) return;
     setSaving(true);
     try {
       const res = await api.post("/api/v1/complaints", {
@@ -299,7 +285,7 @@ function ComplaintForm({
         subject: subject.trim(),
         description: description.trim(),
         isAnonymous,
-        attachment: attachment ?? undefined,
+        attachmentInput: toAttachmentInputs(attachment)[0],
       });
       toast.success("Pengaduan terkirim", res.message);
       onDone();
@@ -382,20 +368,18 @@ function ComplaintForm({
           />
         </Field>
 
-        <Field label="Lampiran bukti (opsional)" htmlFor="cp-file" error={fileError} hint="JPG, PNG, WEBP, atau PDF. Maksimal 8 MB.">
-          <input
+        <Field label="Lampiran bukti (opsional)" htmlFor="cp-file" error={fileError} hint="Foto, tangkapan layar, PDF, atau tautan ke berkas pendukung.">
+          <FileOrLinkInput
             id="cp-file"
-            type="file"
-            accept="image/jpeg,image/png,image/webp,application/pdf"
-            onChange={onFile}
-            className="w-full text-xs text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-surface-2 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-foreground hover:file:bg-surface-hover file:cursor-pointer cursor-pointer"
+            value={attachment}
+            onChange={(next) => {
+              setAttachment(next);
+              setFileError("");
+            }}
+            context="complaint"
+            invalid={Boolean(fileError)}
+            disabled={saving}
           />
-          {fileName && (
-            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-success">
-              <Paperclip className="w-3 h-3" />
-              {fileName}
-            </p>
-          )}
         </Field>
 
         <div className="rounded-lg border border-line p-3">

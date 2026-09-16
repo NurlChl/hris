@@ -105,10 +105,10 @@ export default function LandingPage() {
       <header className="h-16 border-b border-line bg-background/85 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-6xl mx-auto w-full h-full px-5 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-[10px] bg-primary text-primary-foreground grid place-items-center font-semibold text-xs">
+            <span className="w-8 h-8 rounded-[10px] bg-primary text-primary-foreground grid place-items-center font-semibold text-label">
               HR
             </span>
-            <span className="font-semibold text-[15px] text-heading tracking-[-0.01em]">HRIS</span>
+            <span className="font-semibold text-body-lg text-heading tracking-[-0.01em]">HRIS</span>
           </Link>
 
           <nav className="hidden md:flex items-center gap-1">
@@ -131,7 +131,7 @@ export default function LandingPage() {
             </button>
             <Link
               href="/auth/login"
-              className="inline-flex items-center h-9 px-4 rounded-[var(--radius-control)] bg-primary text-primary-foreground text-[13px] font-semibold hover:bg-primary-hover transition-colors"
+              className="inline-flex items-center h-9 px-4 rounded-[var(--radius-control)] bg-primary text-primary-foreground text-body-sm font-semibold hover:bg-primary-hover transition-colors"
             >
               Masuk
             </Link>
@@ -153,18 +153,18 @@ export default function LandingPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
             >
-              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-line text-xs font-medium text-muted">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-line text-label font-medium text-muted">
                 <span className="w-1.5 h-1.5 rounded-full bg-success" aria-hidden />
                 Sistem informasi kepegawaian
               </span>
 
-              <h1 className="mt-6 text-[34px] sm:text-[44px] lg:text-[50px] leading-[1.08] text-heading">
+              <h1 className="mt-6 text-display sm:text-hero lg:text-hero leading-[1.08] text-heading">
                 Aturan HR Anda,
                 <br />
                 <span className="text-primary">dijalankan sistem.</span>
               </h1>
 
-              <p className="mt-6 text-[17px] text-muted leading-[1.65] max-w-xl">
+              <p className="mt-6 text-title-sm text-muted leading-[1.65] max-w-xl">
                 Toleransi keterlambatan, radius absen, kuota cuti, urutan approver, sampai tarif
                 potongan gaji diatur dari dashboard. Tidak ada angka kebijakan yang terkunci di
                 dalam kode program.
@@ -183,7 +183,7 @@ export default function LandingPage() {
                 </Link>
               </div>
 
-              <p className="mt-6 text-[13px] text-subtle">
+              <p className="mt-6 text-body-sm text-subtle">
                 Sudah termasuk portal karyawan, panel admin, dan dokumentasi lengkap.
               </p>
             </motion.div>
@@ -207,8 +207,8 @@ export default function LandingPage() {
                 <div key={g.title} className="flex gap-3.5">
                   <IconTile icon={g.icon} tone="primary" size="sm" />
                   <div className="min-w-0">
-                    <h3 className="text-[14px] font-semibold text-heading leading-snug">{g.title}</h3>
-                    <p className="mt-1.5 text-[13px] text-muted leading-relaxed">{g.body}</p>
+                    <h3 className="text-body font-semibold text-heading leading-snug">{g.title}</h3>
+                    <p className="mt-1.5 text-body-sm text-muted leading-relaxed">{g.body}</p>
                   </div>
                 </div>
               ))}
@@ -221,10 +221,10 @@ export default function LandingPage() {
           <div className="max-w-6xl mx-auto w-full px-5 py-16 md:py-20">
             <div className="max-w-2xl">
               <p className="eyebrow">Yang dikerjakan sistem</p>
-              <h2 className="mt-3 text-[28px] md:text-[34px] text-heading leading-[1.15]">
+              <h2 className="mt-3 text-display-sm md:text-display text-heading leading-[1.15]">
                 Enam modul, satu sumber data.
               </h2>
-              <p className="mt-4 text-[15px] text-muted leading-relaxed">
+              <p className="mt-4 text-body-lg text-muted leading-relaxed">
                 Presensi yang dicatat pagi ini adalah angka yang sama yang dipakai menghitung
                 potongan di slip gaji akhir bulan. Tidak ada rekap manual di antaranya.
               </p>
@@ -234,8 +234,8 @@ export default function LandingPage() {
               {MODULES.map((m) => (
                 <article key={m.title} className="card p-6">
                   <IconTile icon={m.icon} tone={m.tone} size="md" />
-                  <h3 className="mt-5 text-[16px] font-semibold text-heading">{m.title}</h3>
-                  <p className="mt-2.5 text-[13px] text-muted leading-relaxed">{m.body}</p>
+                  <h3 className="mt-5 text-body-lg font-semibold text-heading">{m.title}</h3>
+                  <p className="mt-2.5 text-body-sm text-muted leading-relaxed">{m.body}</p>
                 </article>
               ))}
             </div>
@@ -247,17 +247,17 @@ export default function LandingPage() {
           <div className="max-w-6xl mx-auto w-full px-5 py-16 md:py-20 grid lg:grid-cols-[0.9fr_1.1fr] gap-12 lg:gap-16 items-start">
             <div>
               <p className="eyebrow">Hak akses</p>
-              <h2 className="mt-3 text-[28px] md:text-[34px] text-heading leading-[1.15]">
+              <h2 className="mt-3 text-display-sm md:text-display text-heading leading-[1.15]">
                 Setiap peran melihat persis bagiannya.
               </h2>
-              <p className="mt-4 text-[15px] text-muted leading-relaxed">
+              <p className="mt-4 text-body-lg text-muted leading-relaxed">
                 Hak akses disusun sebagai matriks modul, aksi, dan lingkup data di dalam dashboard.
                 Menyembunyikan menu saja tidak dianggap cukup. Server memeriksa ulang izin yang
                 sama di setiap permintaan.
               </p>
               <Link
                 href="/docs#peran"
-                className="mt-6 inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline"
+                className="mt-6 inline-flex items-center gap-1.5 text-body font-semibold text-primary hover:underline"
               >
                 Lihat cara mengaturnya
                 <ArrowRight className="w-4 h-4" strokeWidth={ICON_STROKE} />
@@ -279,8 +279,8 @@ export default function LandingPage() {
                     strokeWidth={ICON_STROKE}
                   />
                   <div className="min-w-0">
-                    <p className="text-[14px] font-semibold text-heading">{role}</p>
-                    <p className="text-[13px] text-muted mt-1 leading-relaxed">{desc}</p>
+                    <p className="text-body font-semibold text-heading">{role}</p>
+                    <p className="text-body-sm text-muted mt-1 leading-relaxed">{desc}</p>
                   </div>
                 </li>
               ))}
@@ -312,10 +312,10 @@ export default function LandingPage() {
       {/* ---------------- footer ---------------- */}
       <footer className="border-t border-line bg-surface">
         <div className="max-w-6xl mx-auto w-full px-5 py-8 flex flex-wrap items-center justify-between gap-4">
-          <p className="text-[13px] text-subtle">
+          <p className="text-body-sm text-subtle">
             &copy; {new Date().getFullYear()} HRIS. Seluruh waktu dalam WIB.
           </p>
-          <nav className="flex items-center gap-5 text-[13px]">
+          <nav className="flex items-center gap-5 text-body-sm">
             <Link href="/docs" className="text-muted hover:text-foreground transition-colors">
               Panduan
             </Link>
@@ -338,7 +338,7 @@ function HeaderLink({ href, children }: { href: string; children: React.ReactNod
   return (
     <Link
       href={href}
-      className="px-3 py-2 rounded-[var(--radius-control)] text-[13px] font-medium text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
+      className="px-3 py-2 rounded-[var(--radius-control)] text-body-sm font-medium text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
     >
       {children}
     </Link>
@@ -362,10 +362,10 @@ function EntryCard({
       className="card-interactive group p-7 flex flex-col justify-between min-h-44 hover:border-primary"
     >
       <div>
-        <h3 className="text-[18px] font-semibold text-heading">{title}</h3>
-        <p className="mt-2.5 text-[14px] text-muted leading-relaxed max-w-sm">{body}</p>
+        <h3 className="text-title-sm font-semibold text-heading">{title}</h3>
+        <p className="mt-2.5 text-body text-muted leading-relaxed max-w-sm">{body}</p>
       </div>
-      <span className="mt-6 inline-flex items-center gap-1.5 text-[14px] font-semibold text-primary">
+      <span className="mt-6 inline-flex items-center gap-1.5 text-body font-semibold text-primary">
         {cta}
         <ArrowRight
           className="w-4 h-4 group-hover:translate-x-0.5 transition-transform"
@@ -397,12 +397,12 @@ function AttendancePreview() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="eyebrow">Presensi hari ini</p>
-            <p className="mt-2 text-[30px] font-semibold text-heading tabular-nums leading-none tracking-[-0.02em]">
+            <p className="mt-2 text-display font-semibold text-heading tabular-nums leading-none tracking-[-0.02em]">
               08:47
-              <span className="text-sm font-medium text-subtle ml-1.5 tracking-normal">WIB</span>
+              <span className="text-body font-medium text-subtle ml-1.5 tracking-normal">WIB</span>
             </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success-soft text-success border border-success/15 text-xs font-medium">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success-soft text-success border border-success/15 text-label font-medium">
             <span className="w-1.5 h-1.5 rounded-full bg-current" />
             Tepat waktu
           </span>
@@ -436,12 +436,12 @@ function AttendancePreview() {
               </div>
               <div className="flex-1 flex items-baseline justify-between gap-3 pb-2.5">
                 <span
-                  className={`text-[13px] ${step.done ? "text-foreground font-medium" : "text-primary font-semibold"}`}
+                  className={`text-body-sm ${step.done ? "text-foreground font-medium" : "text-primary font-semibold"}`}
                 >
                   {step.label}
                 </span>
-                <span className="text-[13px] font-semibold text-foreground tabular-nums">
-                  {step.time ?? <span className="text-xs text-primary">Giliran Anda</span>}
+                <span className="text-body-sm font-semibold text-foreground tabular-nums">
+                  {step.time ?? <span className="text-label text-primary">Giliran Anda</span>}
                 </span>
               </div>
             </div>
@@ -449,11 +449,11 @@ function AttendancePreview() {
         </div>
 
         <div className="mt-4 pt-4 border-t border-line flex items-center justify-between gap-3">
-          <span className="flex items-center gap-2 text-xs text-muted">
+          <span className="flex items-center gap-2 text-label text-muted">
             <Fingerprint className="w-4 h-4 text-subtle" strokeWidth={ICON_STROKE} />
             Kantor Pusat Jakarta · 12 m
           </span>
-          <span className="text-xs font-medium text-success">Dalam radius</span>
+          <span className="text-label font-medium text-success">Dalam radius</span>
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ import {
   LogOut,
   Plus,
   Utensils,
+  ScanFace,
 } from "lucide-react";
 import {
   Alert,
@@ -36,13 +37,21 @@ import {
   Th,
   Toggle,
 } from "@/components/ui";
+import Link from "next/link";
 import { SelfieCapture } from "@/components/portal/SelfieCapture";
 import { GeoStatus, type GeoState } from "@/components/portal/GeoStatus";
 import { useToast } from "@/components/ui/Toast";
+import {
+  FileOrLinkInput,
+  attachmentProblem,
+  toAttachmentInputs,
+  type AttachmentItem,
+} from "@/components/ui/FileOrLinkInput";
 import { api, errorMessage } from "@/lib/client-api";
 import { formatDate, formatDateLong, formatTime, wibDateKey } from "@/lib/time";
 import { CORRECTION_REASON_LABELS } from "@/lib/hr/labels";
 
+import { DatePicker } from "@/components/ui/DatePicker";
 type Action = "clock_in" | "break_out" | "break_in" | "clock_out";
 
 interface AttendanceLog {
@@ -65,6 +74,8 @@ interface AttendanceLog {
 }
 
 interface AttendanceSettings {
+  face_recognition_enabled: boolean;
+  face_enrolled: boolean;
   require_selfie_clock_in: boolean;
   require_selfie_break_out: boolean;
   require_selfie_break_in: boolean;
@@ -113,6 +124,12 @@ export default function AttendancePage() {
   const [confirmAction, setConfirmAction] = useState<Action | null>(null);
   const [correctionOpen, setCorrectionOpen] = useState(false);
 
+  // Opened directly from the missed clock-out reminder. Read after mount so
+  // the server render and the first client render agree.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("koreksi") === "1") setCorrectionOpen(true);
+  }, []);
+
   const todayKey = wibDateKey();
 
   /* ---------------------------------------------------------------- */
@@ -156,12 +173,21 @@ export default function AttendancePage() {
     return "clock_out";
   }, [todayLog, settings]);
 
-  const selfieRequired = nextAction && settings ? settings[`require_selfie_${nextAction}`] : false;
+  // Mirrors the server rule: with face verification on, clocking in and out
+  // always need a photo, whatever the per-step selfie settings say.
+  const faceOn = Boolean(settings?.face_recognition_enabled);
+  const selfieRequired =
+    nextAction && settings
+      ? settings[`require_selfie_${nextAction}`] ||
+        (faceOn && (nextAction === "clock_in" || nextAction === "clock_out"))
+      : false;
+  const faceBlocked = faceOn && !settings?.face_enrolled;
   const minNote = settings?.location_override_min_note ?? 15;
 
   const canSubmit =
     Boolean(nextAction) &&
     Boolean(geo) &&
+    !faceBlocked &&
     (!selfieRequired || Boolean(photo)) &&
     (!overrideMode || note.trim().length >= minNote);
 
@@ -184,6 +210,9 @@ export default function AttendancePage() {
       await load();
     } catch (err) {
       toast.error("Presensi gagal", errorMessage(err));
+      // A rejected face means this photo will never pass; drop it so the next
+      // attempt is a fresh shot rather than a resend of the same one.
+      if (/wajah/i.test(errorMessage(err))) setPhoto(null);
     } finally {
       setSubmitting(false);
       setConfirmAction(null);
@@ -204,8 +233,8 @@ export default function AttendancePage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-[26px] md:text-[30px] text-heading">Presensi Mandiri</h1>
-        <p className="text-sm text-muted mt-2 leading-relaxed">{formatDateLong(todayKey)}</p>
+        <h1 className="text-display-sm md:text-display text-heading">Presensi Mandiri</h1>
+        <p className="text-body text-muted mt-2 leading-relaxed">{formatDateLong(todayKey)}</p>
       </header>
 
       {loadError && <ErrorState message={loadError} onRetry={load} />}
@@ -267,15 +296,34 @@ export default function AttendancePage() {
                     </Button>
                   }
                 />
+              ) : faceBlocked ? (
+                <EmptyState
+                  icon={ScanFace}
+                  title="Daftarkan wajah untuk mulai absen"
+                  description="Perusahaan mewajibkan verifikasi wajah. Setiap foto presensi dicocokkan dengan wajah yang Anda daftarkan, jadi daftarkan wajah Anda lebih dulu."
+                  action={
+                    <Link href="/portal/profile?tab=face">
+                      <Button size="sm" icon={ScanFace}>
+                        Daftarkan wajah
+                      </Button>
+                    </Link>
+                  }
+                />
               ) : (
                 <>
                   <GeoStatus value={geo} onChange={setGeo} />
 
                   {selfieRequired && (
                     <div>
-                      <p className="text-xs font-semibold mb-2">
+                      <p className="text-label font-semibold mb-2">
                         Foto selfie <span className="text-danger">*</span>
                       </p>
+                      {faceOn && (
+                        <p className="text-caption text-muted mb-2 leading-relaxed">
+                          Wajah dicocokkan dengan wajah terdaftar Anda. Hadapkan wajah ke kamera di
+                          tempat yang terang.
+                        </p>
+                      )}
                       <SelfieCapture
                         photo={photo}
                         onCapture={setPhoto}
@@ -343,7 +391,7 @@ export default function AttendancePage() {
                   </Button>
 
                   {!canSubmit && (
-                    <p className="text-[11px] text-subtle text-center leading-relaxed">
+                    <p className="text-caption text-subtle text-center leading-relaxed">
                       {!geo
                         ? "Menunggu lokasi terdeteksi…"
                         : selfieRequired && !photo
@@ -404,7 +452,7 @@ export default function AttendancePage() {
                           {l.isLocationOverride && <Badge tone="danger">Kendala lokasi</Badge>}
                         </div>
                       </Td>
-                      <Td className="text-xs text-muted max-w-64">
+                      <Td className="text-label text-muted max-w-64">
                         <span className="line-clamp-2">{l.note || "—"}</span>
                       </Td>
                     </tr>
@@ -468,10 +516,10 @@ export default function AttendancePage() {
                           {c.clockInTime} – {c.clockOutTime}
                         </Td>
                         <Td className="max-w-80">
-                          <span className="block text-xs font-medium">
+                          <span className="block text-label font-medium">
                             {CORRECTION_REASON_LABELS[c.reasonType] ?? c.reasonType}
                           </span>
-                          <span className="block text-xs text-muted line-clamp-2">{c.reasonNote}</span>
+                          <span className="block text-label text-muted line-clamp-2">{c.reasonNote}</span>
                         </Td>
                         <Td>
                           <div className="flex flex-col items-start gap-1">
@@ -567,20 +615,20 @@ function Timeline({
             </div>
             <div className="pb-4 min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-3">
-                <p className={`text-sm ${current ? "font-semibold text-foreground" : done ? "font-semibold" : "text-muted"}`}>
+                <p className={`text-body ${current ? "font-semibold text-foreground" : done ? "font-semibold" : "text-muted"}`}>
                   {meta.label}
                 </p>
-                <p className="text-sm font-semibold tabular-nums shrink-0">
-                  {done ? formatTime(s.time) : current ? <span className="text-primary text-xs">Giliran Anda</span> : <span className="text-subtle">—</span>}
+                <p className="text-body font-semibold tabular-nums shrink-0">
+                  {done ? formatTime(s.time) : current ? <span className="text-primary text-label">Giliran Anda</span> : <span className="text-subtle">—</span>}
                 </p>
               </div>
               {s.action === "clock_in" && log?.isLate && (
-                <p className="text-[11px] text-warning mt-0.5">
+                <p className="text-caption text-warning mt-0.5">
                   Terlambat {log.lateMinutes} menit dari jadwal.
                 </p>
               )}
               {s.action === "clock_out" && log?.isEarlyLeave && (
-                <p className="text-[11px] text-warning mt-0.5">
+                <p className="text-caption text-warning mt-0.5">
                   Pulang {log.earlyLeaveMinutes} menit lebih awal.
                 </p>
               )}
@@ -611,17 +659,24 @@ function CorrectionModal({
   const [clockOutTime, setClockOutTime] = useState("17:00");
   const [reasonType, setReasonType] = useState("lupa_tap");
   const [reasonNote, setReasonNote] = useState("");
+  const [evidence, setEvidence] = useState<AttachmentItem[]>([]);
+  const [fileError, setFileError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
       setDate(wibDateKey());
       setReasonNote("");
+      setEvidence([]);
+      setFileError("");
     }
   }, [open]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const problem = attachmentProblem(evidence);
+    setFileError(problem ?? "");
+    if (problem) return;
     setSaving(true);
     try {
       const res = await api.post("/api/v1/attendance/correction", {
@@ -630,6 +685,7 @@ function CorrectionModal({
         clockOutTime,
         reasonType,
         reasonNote: reasonNote.trim(),
+        attachment: toAttachmentInputs(evidence)[0],
       });
       toast.success("Pengajuan terkirim", res.message);
       onDone();
@@ -664,13 +720,12 @@ function CorrectionModal({
         </Alert>
 
         <Field label="Tanggal yang dikoreksi" required htmlFor="corr-date">
-          <Input
+          <DatePicker
             id="corr-date"
-            type="date"
             required
             max={wibDateKey()}
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(value) => setDate(value)}
           />
         </Field>
 
@@ -728,6 +783,25 @@ function CorrectionModal({
             value={reasonNote}
             onChange={(e) => setReasonNote(e.target.value)}
             placeholder="Contoh: HP mati saat tiba di kantor, jam masuk sebenarnya 08.55 dan disaksikan rekan satu tim."
+          />
+        </Field>
+
+        <Field
+          label="Bukti pendukung (opsional)"
+          htmlFor="corr-file"
+          error={fileError}
+          hint="Misalnya tangkapan layar galat aplikasi, surat tugas dinas luar, atau tautan ke berkasnya."
+        >
+          <FileOrLinkInput
+            id="corr-file"
+            value={evidence}
+            onChange={(next) => {
+              setEvidence(next);
+              setFileError("");
+            }}
+            context="correction"
+            invalid={Boolean(fileError)}
+            disabled={saving}
           />
         </Field>
       </form>

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { CalendarPlus, PartyPopper, Trash2 } from "lucide-react";
+import { CalendarPlus, CloudDownload, PartyPopper, Trash2 } from "lucide-react";
 import {
   Alert,
   Badge,
@@ -23,9 +23,11 @@ import {
   Toggle,
 } from "@/components/ui";
 import { useToast } from "@/components/ui/Toast";
+import { ImportHolidaysModal } from "./ImportHolidaysModal";
 import { api, errorMessage } from "@/lib/client-api";
 import { formatDate, formatDateLong, wibDateKey } from "@/lib/time";
 
+import { DatePicker } from "@/components/ui/DatePicker";
 interface Holiday {
   _id: string;
   dateKey: string;
@@ -46,6 +48,7 @@ export default function HolidaysPage() {
   const [editing, setEditing] = useState<Holiday | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Holiday | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,8 +89,8 @@ export default function HolidaysPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-[26px] md:text-[30px] text-heading">Hari Libur Nasional</h1>
-          <p className="text-sm text-muted mt-2 leading-relaxed">
+          <h1 className="text-display-sm md:text-display text-heading">Hari Libur Nasional</h1>
+          <p className="text-body text-muted mt-2 leading-relaxed">
             Menentukan hari mana yang tidak memotong saldo cuti dan mana yang dapat ditukar libur.
           </p>
         </div>
@@ -104,6 +107,9 @@ export default function HolidaysPage() {
               </option>
             ))}
           </Select>
+          <Button variant="secondary" icon={CloudDownload} onClick={() => setImportOpen(true)}>
+            Impor kalender
+          </Button>
           <Button
             icon={CalendarPlus}
             onClick={() => {
@@ -172,8 +178,8 @@ export default function HolidaysPage() {
                         className={`hover:bg-surface-2 transition-colors ${past ? "opacity-60" : ""}`}
                       >
                         <Td className="whitespace-nowrap">
-                          <span className="block text-sm font-semibold">{formatDate(h.dateKey)}</span>
-                          <span className="block text-[11px] text-subtle">
+                          <span className="block text-body font-semibold">{formatDate(h.dateKey)}</span>
+                          <span className="block text-caption text-subtle">
                             {formatDateLong(h.dateKey).split(",")[0]}
                           </span>
                         </Td>
@@ -241,6 +247,13 @@ export default function HolidaysPage() {
         confirmLabel="Ya, hapus"
         message={`"${deleteTarget?.name}" pada ${deleteTarget ? formatDate(deleteTarget.dateKey) : ""} akan dihapus. Perhitungan cuti dan tukar libur untuk tanggal ini akan kembali dianggap hari kerja biasa.`}
       />
+      <ImportHolidaysModal
+        open={importOpen}
+        year={year}
+        onClose={() => setImportOpen(false)}
+        onImported={load}
+      />
+
     </div>
   );
 }
@@ -307,13 +320,12 @@ function HolidayForm({
     >
       <form id="holiday-form" onSubmit={submit} className="space-y-4">
         <Field label="Tanggal" required htmlFor="hd-date">
-          <Input
+          <DatePicker
             id="hd-date"
-            type="date"
             required
             disabled={Boolean(editing)}
             value={dateKey}
-            onChange={(e) => setDateKey(e.target.value)}
+            onChange={(value) => setDateKey(value)}
           />
         </Field>
 

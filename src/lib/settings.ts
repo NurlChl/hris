@@ -60,6 +60,12 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "require_selfie_break_out", label: "Wajib selfie saat mulai istirahat", description: "", type: "boolean", default: false, group: "attendance" },
   { key: "require_selfie_break_in", label: "Wajib selfie saat selesai istirahat", description: "", type: "boolean", default: false, group: "attendance" },
   { key: "require_selfie_clock_out", label: "Wajib selfie saat absen pulang", description: "", type: "boolean", default: true, group: "attendance" },
+  { key: "face_recognition_enabled", label: "Verifikasi wajah saat presensi", description: "Foto presensi dicocokkan dengan wajah yang didaftarkan karyawan. Bila aktif, absen masuk dan pulang selalu meminta foto, dan absen ditolak bila wajah tidak cocok. Karyawan yang belum mendaftarkan wajah tidak dapat absen sampai mendaftar.", type: "boolean", default: false, group: "attendance" },
+  { key: "face_match_strictness", label: "Tingkat kecocokan wajah", description: "Ketat lebih sulit ditembus orang lain tetapi lebih sering menolak foto asli dalam cahaya buruk. Normal disarankan.", type: "select", default: "normal", group: "attendance", options: [
+    { value: "ketat", label: "Ketat" },
+    { value: "normal", label: "Normal (disarankan)" },
+    { value: "longgar", label: "Longgar" },
+  ] },
   { key: "allow_location_override", label: "Izinkan menu \"Kendala Lokasi\"", description: "Karyawan dapat absen di luar radius dengan wajib mengisi alasan; entri ditandai untuk direview HRD.", type: "boolean", default: true, group: "attendance" },
   { key: "location_override_min_note", label: "Panjang minimal alasan kendala lokasi", description: "Mencegah alasan asal-asalan seperti \"a\".", type: "number", default: 15, unit: "karakter", min: 0, max: 500, group: "attendance" },
   { key: "max_absen_correction", label: "Kuota koreksi absen", description: "Maksimal pengajuan koreksi absen per karyawan per bulan.", type: "number", default: 3, unit: "x / bulan", min: 0, max: 31, group: "attendance" },

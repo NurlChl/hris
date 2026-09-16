@@ -41,6 +41,13 @@ export interface IJobVacancy extends Document {
   openings: number;
   /** Ordered selection stages for candidates of this vacancy. */
   stages: string[];
+  /**
+   * The application form for this vacancy. Empty on vacancies created before
+   * forms were configurable; readers fall back to `defaultFormFields()`.
+   * Validated by the API against `lib/hr/application-form`, stored loosely so
+   * adding a field type later needs no migration.
+   */
+  formFields: Array<Record<string, unknown>>;
 
   status: VacancyStatus;
   publishedAt?: Date | null;
@@ -112,6 +119,7 @@ const JobVacancySchema = new Schema<IJobVacancy>(
 
     openings: { type: Number, default: 1, min: 1 },
     stages: { type: [String], default: DEFAULT_STAGES },
+    formFields: { type: Schema.Types.Mixed, default: () => [] },
 
     status: {
       type: String,

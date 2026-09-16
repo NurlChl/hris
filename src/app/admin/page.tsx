@@ -101,8 +101,8 @@ export default function AdminDashboardPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-[26px] md:text-[30px] text-heading">Ringkasan Hari Ini</h1>
-        <p className="text-sm text-muted mt-2 leading-relaxed">
+        <h1 className="text-display-sm md:text-display text-heading">Ringkasan Hari Ini</h1>
+        <p className="text-body text-muted mt-2 leading-relaxed">
           {data ? formatDateLong(data.todayKey) : "Memuat…"} · seluruh waktu dalam WIB
         </p>
       </header>
@@ -126,10 +126,10 @@ export default function AdminDashboardPage() {
                     <ClipboardCheck className="w-5 h-5" />
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-sm font-semibold">
+                    <span className="block text-body font-semibold">
                       {data.cards.pendingApprovals} pengajuan menunggu Anda
                     </span>
-                    <span className="block text-xs text-muted">Buka antrean persetujuan →</span>
+                    <span className="block text-label text-muted">Buka antrean persetujuan →</span>
                   </span>
                 </Link>
               )}
@@ -139,10 +139,10 @@ export default function AdminDashboardPage() {
                     <FileWarning className="w-5 h-5" />
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-sm font-semibold">
+                    <span className="block text-body font-semibold">
                       {data.cards.flaggedToday} presensi perlu ditinjau
                     </span>
-                    <span className="block text-xs text-muted">
+                    <span className="block text-label text-muted">
                       Kendala lokasi, lintas cabang, atau foto manual
                     </span>
                   </span>
@@ -243,8 +243,8 @@ export default function AdminDashboardPage() {
                       {data.upcomingHolidays.map((h) => (
                         <li key={h.dateKey} className="flex items-center justify-between gap-3 px-5 py-3">
                           <span className="min-w-0">
-                            <span className="block text-xs font-semibold truncate">{h.name}</span>
-                            <span className="block text-[11px] text-subtle">{formatDate(h.dateKey)}</span>
+                            <span className="block text-label font-semibold truncate">{h.name}</span>
+                            <span className="block text-caption text-subtle">{formatDate(h.dateKey)}</span>
                           </span>
                           <Badge tone={h.type === "cuti_bersama" ? "warning" : "danger"}>
                             {h.type === "cuti_bersama" ? "Cuti bersama" : "Libur"}
@@ -265,8 +265,8 @@ export default function AdminDashboardPage() {
                     <ul className="divide-y divide-[var(--border)]">
                       {data.birthdays.map((b) => (
                         <li key={b._id} className="flex items-center justify-between gap-3 px-5 py-2.5">
-                          <span className="text-xs font-medium truncate">{b.name}</span>
-                          <span className="text-[11px] text-subtle tabular-nums shrink-0">
+                          <span className="text-label font-medium truncate">{b.name}</span>
+                          <span className="text-caption text-subtle tabular-nums shrink-0">
                             Tgl {b.day}
                           </span>
                         </li>
@@ -286,8 +286,8 @@ export default function AdminDashboardPage() {
 function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[11px] text-subtle">{label}</p>
-      <p className="text-base font-semibold tabular-nums mt-0.5">{value}</p>
+      <p className="text-caption text-subtle">{label}</p>
+      <p className="text-body-lg font-semibold tabular-nums mt-0.5">{value}</p>
     </div>
   );
 }
@@ -329,12 +329,12 @@ function TrendChart({
                   )}
                 </div>
               </div>
-              <span className="text-[11px] text-subtle tabular-nums">{t.dateKey.slice(-2)}</span>
+              <span className="text-caption text-subtle tabular-nums">{t.dateKey.slice(-2)}</span>
             </div>
           );
         })}
       </div>
-      <div className="flex flex-wrap items-center gap-4 mt-4 text-[11px] text-subtle">
+      <div className="flex flex-wrap items-center gap-4 mt-4 text-caption text-subtle">
         <LegendDot className="bg-primary" label="Hadir" />
         <LegendDot className="bg-warning" label="Terlambat" />
         <LegendDot className="bg-line-strong" label="Akhir pekan" />

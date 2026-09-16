@@ -181,7 +181,7 @@ export default function VacanciesPage() {
             { id: "closed", label: "Ditutup" },
           ]}
         />
-        <div className="relative flex-1 min-w-56 max-w-xs">
+        <div className="relative flex-1 max-w-xs" style={{ minWidth: "14rem" }}>
           <Search
             className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle pointer-events-none"
             strokeWidth={ICON_STROKE}
@@ -242,11 +242,11 @@ export default function VacanciesPage() {
                     </Badge>
                   </div>
 
-                  <h3 className="mt-2.5 text-[17px] font-semibold text-heading truncate">
+                  <h3 className="mt-2.5 text-title-sm font-semibold text-heading truncate">
                     {v.title}
                   </h3>
 
-                  <p className="mt-1 text-[13px] text-muted">
+                  <p className="mt-1 text-body-sm text-muted">
                     {[v.divisionId?.name, v.location || v.branchId?.name]
                       .filter(Boolean)
                       .join(" · ") || "Penempatan belum diatur"}
@@ -254,12 +254,12 @@ export default function VacanciesPage() {
                   </p>
 
                   {v.showSalary && v.salaryMax > 0 && (
-                    <p className="mt-1 text-[13px] text-muted">
+                    <p className="mt-1 text-body-sm text-muted">
                       {formatRupiah(v.salaryMin)} – {formatRupiah(v.salaryMax)}
                     </p>
                   )}
 
-                  <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-subtle">
+                  <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-label text-subtle">
                     <span className="inline-flex items-center gap-1.5">
                       <Users className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} />
                       {v.applicants.total} pelamar
@@ -300,7 +300,8 @@ export default function VacanciesPage() {
                       aria-label={`Ubah status lowongan ${v.title}`}
                       value={v.status}
                       onChange={(e) => changeStatus(v, e.target.value as Vacancy["status"])}
-                      className="h-8 text-xs w-28"
+                      size="sm"
+                      className="w-32"
                     >
                       <option value="draft">Draf</option>
                       <option value="open">Dibuka</option>
@@ -313,7 +314,7 @@ export default function VacanciesPage() {
                     <Link
                       href={`/career/${v.slug}`}
                       target="_blank"
-                      className="text-xs text-primary hover:underline text-center"
+                      className="text-label text-primary hover:underline text-center"
                     >
                       Lihat halaman publik
                     </Link>
@@ -394,7 +395,7 @@ function StageBar({
           const n = counts[s] ?? 0;
           if (!n) return null;
           return (
-            <span key={s} className="text-[11px] text-subtle">
+            <span key={s} className="text-caption text-subtle">
               {s} <span className="text-foreground font-medium tabular-nums">{n}</span>
             </span>
           );

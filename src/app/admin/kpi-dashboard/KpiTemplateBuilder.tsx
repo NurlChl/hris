@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Layers, Plus, Save, Trash2, TriangleAlert } from "lucide-react";
+import { Layers, Plus, Save, Trash2, TriangleAlert } from "lucide-react";
 import {
   Alert,
   Badge,
@@ -20,6 +20,8 @@ import {
   Toggle,
   cn,
 } from "@/components/ui";
+import { ReorderList } from "@/components/ui/Reorder";
+import { LogoField } from "@/components/print/LogoField";
 import { useToast } from "@/components/ui/Toast";
 import { api, errorMessage } from "@/lib/client-api";
 import { PERIOD_TYPE_LABELS, SCORE_MODE_LABELS } from "@/lib/hr/kpi";
@@ -50,6 +52,9 @@ export interface KpiTemplate {
   divisionIds: Array<{ _id: string; name: string }> | string[];
   positionIds: Array<{ _id: string; name: string }> | string[];
   allowSelfAssessment: boolean;
+  showLogo: boolean;
+  logoUrl: string;
+  logoHeight: number;
   isActive: boolean;
   usageCount?: number;
 }
@@ -139,8 +144,31 @@ export function KpiTemplateBuilder() {
       divisionIds: [],
       positionIds: [],
       allowSelfAssessment: false,
+      showLogo: false,
+      logoUrl: "",
+      logoHeight: 14,
       isActive: true,
     });
+  };
+
+  /* Most companies already put their logo on the payslip template; offering
+     that one saves uploading the same file twice. */
+  const copyPayslipLogo = async () => {
+    try {
+      const res = await api.get<{ templates: Array<{ isDefault: boolean; logoUrl?: string; logoHeight?: number }> }>(
+        "/api/v1/payroll/templates"
+      );
+      const list = res.data?.templates ?? [];
+      const source = list.find((t) => t.isDefault && t.logoUrl) ?? list.find((t) => t.logoUrl);
+      if (!source?.logoUrl) {
+        toast.error("Belum ada logo", "Template slip gaji belum punya logo. Unggah logo di sini.");
+        return;
+      }
+      setDraft((d) => (d ? { ...d, logoUrl: source.logoUrl!, logoHeight: source.logoHeight ?? 14, showLogo: true } : d));
+      toast.success("Logo disalin", "Tekan Simpan agar logo ikut tercetak.");
+    } catch (err) {
+      toast.error("Gagal menyalin logo", errorMessage(err));
+    }
   };
 
   const set = <K extends keyof KpiTemplate>(key: K, value: KpiTemplate[K]) =>
@@ -213,15 +241,6 @@ export function KpiTemplateBuilder() {
     set("aspects", draft.aspects.map((a, i) => (i === ai ? { ...a, ...patch } : a)));
   };
 
-  const moveAspect = (ai: number, dir: -1 | 1) => {
-    if (!draft) return;
-    const target = ai + dir;
-    if (target < 0 || target >= draft.aspects.length) return;
-    const next = [...draft.aspects];
-    [next[ai], next[target]] = [next[target], next[ai]];
-    set("aspects", next);
-  };
-
   const patchIndicator = (ai: number, ii: number, patch: Partial<Indicator>) => {
     if (!draft) return;
     set(
@@ -276,7 +295,7 @@ export function KpiTemplateBuilder() {
         />
         <CardBody className="p-2">
           {templates.length === 0 ? (
-            <p className="text-[13px] text-muted px-3 py-4 leading-relaxed">
+            <p className="text-body-sm text-muted px-3 py-4 leading-relaxed">
               Belum ada template. Buat satu untuk mulai menilai kinerja karyawan.
             </p>
           ) : (
@@ -293,7 +312,7 @@ export function KpiTemplateBuilder() {
                     <span className="flex items-center justify-between gap-2">
                       <span
                         className={cn(
-                          "text-[13px] font-medium truncate",
+                          "text-body-sm font-medium truncate",
                           t._id === activeId ? "text-primary" : "text-foreground"
                         )}
                       >
@@ -301,7 +320,7 @@ export function KpiTemplateBuilder() {
                       </span>
                       {!t.isActive && <Badge tone="neutral">Nonaktif</Badge>}
                     </span>
-                    <span className="block text-[11px] text-subtle mt-0.5">
+                    <span className="block text-caption text-subtle mt-0.5">
                       {PERIOD_TYPE_LABELS[t.periodType] ?? t.periodType} ·{" "}
                       {t.aspects?.length ?? 0} aspek
                       {t.usageCount ? ` · dipakai ${t.usageCount}×` : ""}
@@ -414,7 +433,7 @@ export function KpiTemplateBuilder() {
                           )
                         }
                         className={cn(
-                          "px-3 py-1.5 rounded-full border text-xs font-medium transition-colors cursor-pointer",
+                          "px-3 py-1.5 rounded-full border text-label font-medium transition-colors cursor-pointer",
                           checked
                             ? "bg-primary-soft text-primary border-primary/20"
                             : "bg-surface-2 text-muted border-line hover:text-foreground"
@@ -450,6 +469,26 @@ export function KpiTemplateBuilder() {
 
           <Card>
             <CardHeader
+              title="Kop dokumen"
+              description="Logo yang tercetak di formulir penilaian. Nama dan alamat perusahaan diambil dari Pengaturan."
+            />
+            <CardBody>
+              <LogoField
+                logoUrl={draft.logoUrl ?? ""}
+                showLogo={Boolean(draft.showLogo)}
+                logoHeight={draft.logoHeight ?? 14}
+                onChange={(patch) => setDraft((d) => (d ? { ...d, ...patch } : d))}
+                extraAction={
+                  <Button type="button" variant="ghost" size="sm" onClick={copyPayslipLogo}>
+                    Salin dari slip gaji
+                  </Button>
+                }
+              />
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
               title="Aspek penilaian"
               description="Bobot aspek harus berjumlah 100%, dan bobot indikator di dalam tiap aspek juga 100%."
               actions={
@@ -475,10 +514,10 @@ export function KpiTemplateBuilder() {
             />
             <CardBody className="space-y-4">
               <div className="flex items-center justify-between gap-3 pb-3 border-b border-line">
-                <span className="text-[13px] text-muted">Total bobot aspek</span>
+                <span className="text-body-sm text-muted">Total bobot aspek</span>
                 <span
                   className={cn(
-                    "text-[15px] font-semibold tabular-nums",
+                    "text-body-lg font-semibold tabular-nums",
                     Math.round(aspectTotal) === 100 ? "text-success" : "text-warning"
                   )}
                 >
@@ -487,26 +526,32 @@ export function KpiTemplateBuilder() {
               </div>
 
               {draft.aspects.length === 0 ? (
-                <p className="text-[13px] text-muted py-4">Belum ada aspek. Tambahkan minimal satu.</p>
+                <p className="text-body-sm text-muted py-4">Belum ada aspek. Tambahkan minimal satu.</p>
               ) : (
-                draft.aspects.map((aspect, ai) => (
-                  <AspectEditor
-                    key={aspect.key}
-                    aspect={aspect}
-                    index={ai}
-                    total={draft.aspects.length}
-                    onMove={moveAspect}
-                    onPatch={(patch) => patchAspect(ai, patch)}
-                    onPatchIndicator={(ii, patch) => patchIndicator(ai, ii, patch)}
-                    onDistribute={() => distributeEvenly(ai)}
-                    onRemove={() =>
-                      set(
-                        "aspects",
-                        draft.aspects.filter((_, i) => i !== ai)
-                      )
-                    }
-                  />
-                ))
+                <ReorderList
+                  items={draft.aspects}
+                  getKey={(aspect) => aspect.key}
+                  onReorder={(next) => set("aspects", next)}
+                  className="space-y-4"
+                  describeItem={(aspect, ai) =>
+                    aspect.name.trim() ? `Aspek ${aspect.name.trim()}` : `Aspek ${ai + 1}`
+                  }
+                  renderItem={(aspect, ai) => (
+                    <AspectEditor
+                      aspect={aspect}
+                      index={ai}
+                      onPatch={(patch) => patchAspect(ai, patch)}
+                      onPatchIndicator={(ii, patch) => patchIndicator(ai, ii, patch)}
+                      onDistribute={() => distributeEvenly(ai)}
+                      onRemove={() =>
+                        set(
+                          "aspects",
+                          draft.aspects.filter((_, i) => i !== ai)
+                        )
+                      }
+                    />
+                  )}
+                />
               )}
             </CardBody>
           </Card>
@@ -542,8 +587,6 @@ export function KpiTemplateBuilder() {
 function AspectEditor({
   aspect,
   index,
-  total,
-  onMove,
   onPatch,
   onPatchIndicator,
   onDistribute,
@@ -551,8 +594,6 @@ function AspectEditor({
 }: {
   aspect: Aspect;
   index: number;
-  total: number;
-  onMove: (i: number, dir: -1 | 1) => void;
   onPatch: (patch: Partial<Aspect>) => void;
   onPatchIndicator: (ii: number, patch: Partial<Indicator>) => void;
   onDistribute: () => void;
@@ -563,27 +604,6 @@ function AspectEditor({
   return (
     <div className="rounded-[var(--radius)] border border-line">
       <div className="flex items-start gap-3 p-4 border-b border-line bg-surface-2/50">
-        <div className="flex flex-col shrink-0 pt-2">
-          <button
-            type="button"
-            onClick={() => onMove(index, -1)}
-            disabled={index === 0}
-            aria-label="Naikkan aspek"
-            className="text-subtle hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-          >
-            <ChevronUp className="w-4 h-4" strokeWidth={ICON_STROKE} />
-          </button>
-          <button
-            type="button"
-            onClick={() => onMove(index, 1)}
-            disabled={index === total - 1}
-            aria-label="Turunkan aspek"
-            className="text-subtle hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-          >
-            <ChevronDown className="w-4 h-4" strokeWidth={ICON_STROKE} />
-          </button>
-        </div>
-
         <div className="flex-1 min-w-0 grid sm:grid-cols-[1fr_110px] gap-3">
           <Input
             value={aspect.name}
@@ -603,7 +623,7 @@ function AspectEditor({
               aria-label={`Bobot aspek ${index + 1}`}
               className="pr-8 tabular-nums"
             />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-subtle pointer-events-none">
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-body-sm text-subtle pointer-events-none">
               %
             </span>
           </div>
@@ -633,7 +653,7 @@ function AspectEditor({
           <span className="flex items-center gap-2">
             <span
               className={cn(
-                "text-xs font-semibold tabular-nums",
+                "text-label font-semibold tabular-nums",
                 Math.round(indicatorTotal) === 100 ? "text-success" : "text-warning"
               )}
             >
@@ -648,8 +668,15 @@ function AspectEditor({
           </span>
         </div>
 
-        {aspect.indicators.map((ind, ii) => (
-          <div key={ind.key} className="rounded-[var(--radius-control)] border border-line p-3 space-y-2.5">
+        <ReorderList
+          items={aspect.indicators}
+          getKey={(ind) => ind.key}
+          onReorder={(next) => onPatch({ indicators: next })}
+          describeItem={(ind, ii) =>
+            ind.name.trim() ? `Indikator ${ind.name.trim()}` : `Indikator ${ii + 1}`
+          }
+          renderItem={(ind, ii) => (
+          <div className="rounded-[var(--radius-control)] border border-line p-3 space-y-2.5">
             <div className="grid sm:grid-cols-[1fr_100px_auto] gap-2">
               <Input
                 value={ind.name}
@@ -671,7 +698,7 @@ function AspectEditor({
                   aria-label={`Bobot indikator ${ii + 1}`}
                   className="pr-8 tabular-nums"
                 />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-subtle pointer-events-none">
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-body-sm text-subtle pointer-events-none">
                   %
                 </span>
               </div>
@@ -694,7 +721,8 @@ function AspectEditor({
               aria-label={`Target indikator ${ii + 1}`}
             />
           </div>
-        ))}
+          )}
+        />
 
         <Button
           variant="ghost"

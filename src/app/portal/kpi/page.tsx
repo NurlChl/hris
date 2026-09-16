@@ -187,13 +187,13 @@ export default function PortalKpiPage() {
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[15px] font-semibold text-heading">{e.period}</span>
+                        <span className="text-body-lg font-semibold text-heading">{e.period}</span>
                         <Badge tone={STATUS_TONE[e.status] ?? "neutral"} dot>
                           {EVALUATION_STATUS_LABELS[e.status as keyof typeof EVALUATION_STATUS_LABELS] ??
                             e.status}
                         </Badge>
                       </div>
-                      <p className="text-[13px] text-muted mt-1">
+                      <p className="text-body-sm text-muted mt-1">
                         {e.templateId?.name ?? "Template dihapus"}
                         {e.finalizedAt && ` · final ${formatDateTime(e.finalizedAt)}`}
                       </p>
@@ -201,10 +201,10 @@ export default function PortalKpiPage() {
 
                     <div className="flex items-center gap-4 shrink-0">
                       <div className="text-right">
-                        <p className="text-[20px] font-semibold text-heading tabular-nums leading-none">
+                        <p className="text-title font-semibold text-heading tabular-nums leading-none">
                           {e.finalScore.toFixed(1)}
                         </p>
-                        <p className="text-[11px] text-subtle mt-1">{e.gradeLabel || "—"}</p>
+                        <p className="text-caption text-subtle mt-1">{e.gradeLabel || "—"}</p>
                       </div>
 
                       <div className="flex items-center gap-1">
@@ -298,14 +298,14 @@ function DetailModal({
         <div className="flex items-center justify-between gap-4 rounded-[var(--radius-control)] bg-primary-soft px-4 py-3.5">
           <div>
             <p className="eyebrow">Nilai akhir</p>
-            <p className="text-[28px] font-semibold text-primary tabular-nums leading-none mt-1">
+            <p className="text-display-sm font-semibold text-primary tabular-nums leading-none mt-1">
               {evaluation.finalScore.toFixed(2)}
-              <span className="text-[14px] text-muted font-normal"> / 100</span>
+              <span className="text-body text-muted font-normal"> / 100</span>
             </p>
           </div>
           <div className="text-right">
             <p className="eyebrow">Predikat</p>
-            <p className="text-[16px] font-semibold text-heading mt-1">
+            <p className="text-body-lg font-semibold text-heading mt-1">
               {evaluation.gradeLabel || "—"}
             </p>
           </div>
@@ -314,8 +314,8 @@ function DetailModal({
         {aspects.map((aspect) => (
           <section key={aspect.key}>
             <div className="flex items-baseline justify-between gap-3 mb-2.5">
-              <h3 className="text-[15px] font-semibold text-heading">{aspect.name}</h3>
-              <span className="text-xs text-subtle">Bobot {aspect.weight}%</span>
+              <h3 className="text-body-lg font-semibold text-heading">{aspect.name}</h3>
+              <span className="text-label text-subtle">Bobot {aspect.weight}%</span>
             </div>
             <ul className="space-y-2">
               {aspect.items.map((s) => (
@@ -325,17 +325,17 @@ function DetailModal({
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
-                      <p className="text-[13px] font-medium text-foreground">{s.indicatorName}</p>
+                      <p className="text-body-sm font-medium text-foreground">{s.indicatorName}</p>
                       {s.note && (
-                        <p className="text-xs text-muted mt-1 leading-relaxed">{s.note}</p>
+                        <p className="text-label text-muted mt-1 leading-relaxed">{s.note}</p>
                       )}
                     </div>
                     <div className="text-right shrink-0">
-                      <span className="text-[15px] font-semibold tabular-nums text-foreground">
+                      <span className="text-body-lg font-semibold tabular-nums text-foreground">
                         {s.rawScore}
-                        <span className="text-subtle font-normal text-[13px]"> / {max}</span>
+                        <span className="text-subtle font-normal text-body-sm"> / {max}</span>
                       </span>
-                      <span className="block text-[11px] text-subtle mt-0.5">{s.indicatorWeight}%</span>
+                      <span className="block text-caption text-subtle mt-0.5">{s.indicatorWeight}%</span>
                     </div>
                   </div>
                 </li>
@@ -356,11 +356,11 @@ function DetailModal({
           {evaluation.employeeComment && (
             <div className="rounded-[var(--radius-control)] bg-surface-2 border border-line p-4">
               <p className="eyebrow mb-1.5">Tanggapan Anda</p>
-              <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+              <p className="text-body-sm text-foreground/85 leading-relaxed whitespace-pre-wrap">
                 {evaluation.employeeComment}
               </p>
               {evaluation.acknowledgedAt && (
-                <p className="text-[11px] text-subtle mt-2">
+                <p className="text-caption text-subtle mt-2">
                   Dikirim {formatDateTime(evaluation.acknowledgedAt)}
                 </p>
               )}
@@ -475,7 +475,7 @@ function Narrative({ title, body }: { title: string; body: string }) {
   return (
     <div>
       <p className="eyebrow mb-1.5">{title}</p>
-      <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">{body}</p>
+      <p className="text-body-sm text-foreground/85 leading-relaxed whitespace-pre-wrap">{body}</p>
     </div>
   );
 }

@@ -11,6 +11,9 @@
     "seed": "tsx --env-file=.env src/scripts/seed.ts"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "4.22.0",
+    "@vladmandic/face-api": "1.7.15",
     "bcryptjs": "^3.0.3",
     "framer-motion": "^12.42.2",
     "leaflet": "^1.9.4",

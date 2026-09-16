@@ -29,9 +29,16 @@ function AdminLoginForm() {
     }).catch(() => null);
 
     if (!res || res.error) {
+      // A database outage is not a credential problem, and telling an
+      // administrator their password is wrong during one sends them to reset a
+      // password that works. Auth.js carries the specific reason in `code`.
       setError(
-        "Email atau kata sandi salah, atau akun ini tidak memiliki akses administrasi. " +
-          "Akun akan terkunci sementara setelah beberapa percobaan gagal."
+        res?.code === "db_unavailable"
+          ? "Server basis data sedang tidak dapat dihubungi, jadi login belum bisa diproses. " +
+              "Kata sandi Anda tidak bermasalah. Coba lagi beberapa saat lagi, atau periksa " +
+              "koneksi basis data bila terus berulang."
+          : "Email atau kata sandi salah, atau akun ini tidak memiliki akses administrasi. " +
+              "Akun akan terkunci sementara setelah beberapa percobaan gagal."
       );
       setLoading(false);
       return;
@@ -78,7 +85,7 @@ function AdminLoginForm() {
         </Field>
 
         <div className="flex justify-end">
-          <Link href="/auth/forgot-password" className="text-[11px] font-semibold text-primary hover:underline">
+          <Link href="/auth/forgot-password" className="text-caption font-semibold text-primary hover:underline">
             Lupa kata sandi?
           </Link>
         </div>

@@ -1,9 +1,9 @@
-import NextAuth, { DefaultSession } from "next-auth";
+import NextAuth, { CredentialsSignin, DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import User from "@/models/User";
 import Employee from "@/models/Employee";
-import { connectToDatabase } from "@/lib/db";
+import { connectToDatabase, isDbUnreachable } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { logActivity } from "@/lib/audit/logger";
 import { authConfig } from "./auth.config";
@@ -40,6 +40,19 @@ declare module "next-auth" {
  * Nothing here logs the submitted email or password — the previous
  * implementation printed both to the server console on every attempt.
  */
+/**
+ * Raised when sign-in fails because the database is unreachable, not because
+ * the credentials were wrong.
+ *
+ * Auth.js turns every `authorize()` failure into `CredentialsSignin`, so an
+ * outage used to reach the user as "email atau kata sandi salah" — sending
+ * people off to reset a password that was never the problem. Subclassing keeps
+ * the Auth.js contract while carrying a `code` the login page can read.
+ */
+class DatabaseUnavailableError extends CredentialsSignin {
+  code = "db_unavailable";
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   providers: [
@@ -140,6 +153,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             mustChangePassword: Boolean(user.mustChangePassword),
           };
         } catch (error) {
+          // An outage is not a credential failure. Returning null here would
+          // tell the user their password is wrong while the database is simply
+          // unreachable, so that case is re-raised with its own code.
+          if (isDbUnreachable(error)) {
+            console.error("[AUTH] database unreachable during sign-in:", (error as Error).message);
+            throw new DatabaseUnavailableError();
+          }
           console.error("[AUTH] authorize failed:", (error as Error).message);
           return null;
         }

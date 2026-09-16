@@ -11,10 +11,15 @@ import { Alert, Button, Field, Input } from "@/components/ui";
  * NextAuth reports every credential failure as `CredentialsSignin`; the server
  * deliberately does not distinguish "unknown email" from "wrong password" or
  * "account locked", so the copy here has to cover all three without guessing.
+ *
+ * The one case it does separate is the database being unreachable, which is not
+ * the user's fault and must not send them to reset a working password.
  */
 function messageFor(code: string | null): string {
   if (!code) return "";
   switch (code) {
+    case "db_unavailable":
+      return "Server basis data sedang tidak dapat dihubungi, jadi login belum bisa diproses. Kata sandi Anda tidak bermasalah. Coba lagi beberapa saat lagi, atau hubungi administrator bila terus berulang.";
     case "CredentialsSignin":
     case "Callback":
       return "Email atau kata sandi salah. Setelah beberapa percobaan gagal, akun akan terkunci sementara demi keamanan.";
@@ -35,7 +40,7 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(messageFor(params.get("error")));
+  const [error, setError] = useState(messageFor(params.get("code") ?? params.get("error")));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +54,9 @@ function LoginForm() {
     }).catch(() => null);
 
     if (!res || res.error) {
-      setError(messageFor(res?.error ?? "CredentialsSignin"));
+      // Auth.js puts a custom error subclass's `code` next to the generic
+      // `error`, so the specific reason is preferred when there is one.
+      setError(messageFor(res?.code ?? res?.error ?? "CredentialsSignin"));
       setLoading(false);
       return;
     }
@@ -65,12 +72,16 @@ function LoginForm() {
       badge="Portal Karyawan"
       title="Masuk ke akun Anda"
       subtitle="Gunakan email kantor dan kata sandi yang diberikan HRD."
+      // No link to the administration panel here on purpose. Advertising it to
+      // every employee invites them to try the door, and the people who need it
+      // already know the address. It is not a security control by itself — the
+      // panel is guarded by RBAC either way — but it removes the invitation.
+      // The password-reset link lives next to the password field instead, where
+      // someone who cannot get in is already looking.
       footer={
         <>
-          Administrator?{" "}
-          <Link href="/auth/admin" className="font-semibold text-primary hover:underline">
-            Masuk lewat panel admin
-          </Link>
+          Belum punya akun? Akun dibuatkan HRD saat Anda bergabung. Hubungi HRD
+          bila belum menerimanya.
         </>
       }
     >
@@ -97,7 +108,7 @@ function LoginForm() {
         <div className="flex justify-end">
           <Link
             href="/auth/forgot-password"
-            className="text-[11px] font-semibold text-primary hover:underline"
+            className="text-caption font-semibold text-primary hover:underline"
           >
             Lupa kata sandi?
           </Link>

@@ -321,27 +321,27 @@ export function EvaluationForm({
             {/* -top-5 cancels the dialog body's own padding, which would
                 otherwise leave a strip of content scrolling above the bar. */}
             <div className="sticky -top-5 z-10 -mx-5 px-5 py-3 bg-surface border-y border-line flex flex-wrap items-center justify-between gap-3">
-              <span className="text-[13px] text-muted">
+              <span className="text-body-sm text-muted">
                 Terisi <strong className="text-foreground">{preview.filled}</strong> dari{" "}
                 {preview.total} indikator
               </span>
               <span className="flex items-baseline gap-2">
-                <span className="text-[13px] text-muted">Nilai sementara</span>
-                <span className="text-[20px] font-semibold text-primary tabular-nums">
+                <span className="text-body-sm text-muted">Nilai sementara</span>
+                <span className="text-title font-semibold text-primary tabular-nums">
                   {preview.score.toFixed(2)}
                 </span>
-                <span className="text-[13px] text-subtle">/ 100</span>
+                <span className="text-body-sm text-subtle">/ 100</span>
               </span>
             </div>
 
             {template.aspects.map((aspect) => (
               <section key={aspect.key}>
                 <div className="flex items-baseline justify-between gap-3 mb-2.5">
-                  <h3 className="text-[15px] font-semibold text-heading">{aspect.name}</h3>
-                  <span className="text-xs text-subtle">Bobot {aspect.weight}%</span>
+                  <h3 className="text-body-lg font-semibold text-heading">{aspect.name}</h3>
+                  <span className="text-label text-subtle">Bobot {aspect.weight}%</span>
                 </div>
                 {aspect.description && (
-                  <p className="text-[13px] text-muted mb-3 leading-relaxed">{aspect.description}</p>
+                  <p className="text-body-sm text-muted mb-3 leading-relaxed">{aspect.description}</p>
                 )}
 
                 <div className="space-y-2.5">
@@ -352,15 +352,15 @@ export function EvaluationForm({
                       <div key={ind.key} className="rounded-[var(--radius-control)] border border-line p-4">
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="min-w-0 flex-1">
-                            <p className="text-[14px] font-medium text-foreground">{ind.name}</p>
+                            <p className="text-body font-medium text-foreground">{ind.name}</p>
                             {ind.target && (
-                              <p className="text-xs text-subtle mt-1 leading-relaxed">
+                              <p className="text-label text-subtle mt-1 leading-relaxed">
                                 Target: {ind.target}
                               </p>
                             )}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-xs text-subtle">{ind.weight}%</span>
+                            <span className="text-label text-subtle">{ind.weight}%</span>
                             <ScoreInput
                               max={max}
                               value={entry?.rawScore}
@@ -383,7 +383,7 @@ export function EvaluationForm({
                           }
                           placeholder="Catatan atau bukti pendukung (opsional)"
                           aria-label={`Catatan untuk ${ind.name}`}
-                          className="mt-3 h-10 text-[13px]"
+                          className="mt-3 h-10 text-body-sm"
                         />
                       </div>
                     );
@@ -497,7 +497,7 @@ function ScoreInput({
           onClick={() => onChange(n)}
           aria-pressed={value === n}
           className={cn(
-            "w-9 h-9 rounded-[var(--radius-control)] border text-[13px] font-semibold tabular-nums transition-colors cursor-pointer",
+            "w-9 h-9 rounded-[var(--radius-control)] border text-body-sm font-semibold tabular-nums transition-colors cursor-pointer",
             value === n
               ? "bg-primary text-primary-foreground border-primary"
               : "bg-surface border-line text-muted hover:border-line-strong hover:text-foreground"

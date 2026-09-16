@@ -1,90 +1,52 @@
-import React, { useState, useEffect, useRef } from "react";
+"use client";
+
+import React, { useId } from "react";
+import { Combobox } from "@/components/ui/Combobox";
 
 interface SearchSelectProps {
   label: string;
   value: string;
   onChange: (val: string) => void;
-  options: { label: string; value: string }[];
+  options: { label: string; value: string; hint?: string }[];
   placeholder?: string;
   disabled?: boolean;
+  required?: boolean;
 }
 
-export default function SearchSelect({ 
-  label, 
-  value, 
-  onChange, 
-  options, 
-  placeholder = "Pilih...", 
-  disabled = false 
+/**
+ * Labelled dropdown for the older admin forms.
+ *
+ * Once its own implementation — with a text "▼" for an arrow, a panel that a
+ * modal could clip, and no keyboard support. It now delegates to the shared
+ * `Combobox`, so these forms behave exactly like every other dropdown; only
+ * the label above it is added here.
+ */
+export default function SearchSelect({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder = "Pilih…",
+  disabled = false,
+  required,
 }: SearchSelectProps) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const dropdownRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const clickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", clickOutside);
-    return () => document.removeEventListener("mousedown", clickOutside);
-  }, []);
-
-  const filtered = options.filter(opt =>
-    opt.label.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const selectedOpt = options.find(opt => opt.value === value);
-
+  const id = useId();
   return (
-    <div className="space-y-1 relative w-full" ref={dropdownRef}>
-      <label className="font-semibold text-foreground block mb-1 text-[11px]">{label}</label>
-      <button
-        type="button"
+    <div className="w-full space-y-1.5">
+      <label htmlFor={id} className="block text-label font-medium text-foreground">
+        {label}
+        {required && <span className="text-danger"> *</span>}
+      </label>
+      <Combobox
+        id={id}
+        value={value}
+        onChange={onChange}
+        options={options}
+        placeholder={placeholder}
         disabled={disabled}
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary text-left min-h-[34px] disabled:opacity-50 cursor-pointer"
-      >
-        <span className="truncate">{selectedOpt ? selectedOpt.label : placeholder}</span>
-        <span className="text-[11px] text-subtle">▼</span>
-      </button>
-
-      {open && (
-        <div className="absolute z-50 w-full mt-1 bg-surface border border-line rounded-lg shadow-[var(--shadow-pop)] p-1.5 space-y-1.5 max-h-56 overflow-hidden flex flex-col">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari..."
-            className="w-full px-2.5 py-1.5 rounded bg-surface-2 border border-line text-xs text-foreground dark:text-foreground focus:outline-none placeholder:text-subtle"
-          />
-          <div className="space-y-0.5 overflow-y-auto max-h-40">
-            {filtered.length === 0 ? (
-              <div className="p-2 text-subtle text-center text-[11px]">Tidak ditemukan</div>
-            ) : (
-              filtered.map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => {
-                    onChange(opt.value);
-                    setOpen(false);
-                    setSearch("");
-                  }}
-                  className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-all cursor-pointer ${
-                    opt.value === value 
-                      ? "bg-primary text-primary-foreground font-semibold" 
-                      : "hover:bg-surface-2 text-foreground"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
+        required={required}
+        sheetTitle={label}
+      />
     </div>
   );
 }

@@ -97,8 +97,8 @@ export default function AdminComplaintsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-[26px] md:text-[30px] text-heading">Pengaduan Karyawan</h1>
-        <p className="text-sm text-muted mt-2 leading-relaxed">
+        <h1 className="text-display-sm md:text-display text-heading">Pengaduan Karyawan</h1>
+        <p className="text-body text-muted mt-2 leading-relaxed">
           Tindak lanjuti laporan yang ditujukan kepada peran Anda.
         </p>
       </header>
@@ -145,12 +145,12 @@ export default function AdminComplaintsPage() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-mono text-subtle">{c.ticketCode}</span>
+                          <span className="text-label font-mono text-subtle">{c.ticketCode}</span>
                           <Badge tone="neutral">{CATEGORIES[c.category] ?? c.category}</Badge>
                           <Badge tone="primary">{COMPLAINT_TARGET_LABELS[c.target] ?? c.target}</Badge>
                         </div>
-                        <p className="text-sm font-semibold mt-1.5 truncate">{c.subject}</p>
-                        <p className="text-[11px] text-subtle mt-0.5 flex items-center gap-1.5">
+                        <p className="text-body font-semibold mt-1.5 truncate">{c.subject}</p>
+                        <p className="text-caption text-subtle mt-0.5 flex items-center gap-1.5">
                           {c.isAnonymous && !c.isIdentityRevealed ? (
                             <>
                               <EyeOff className="w-3 h-3" />
@@ -270,23 +270,23 @@ function HandleModal({
 
           <div className="rounded-lg bg-surface-2 border border-line p-3.5">
             <p className="eyebrow mb-1">Pelapor</p>
-            <p className="text-sm">
+            <p className="text-body">
               {complaint.isAnonymous && !complaint.isIdentityRevealed
                 ? "Identitas disembunyikan sesuai permintaan pelapor."
                 : `${complaint.employeeId?.name ?? "Tidak diketahui"} (${complaint.employeeId?.employeeId ?? "-"})`}
             </p>
-            <p className="text-[11px] text-subtle mt-1">Dilaporkan {formatDateTime(complaint.createdAt)}</p>
+            <p className="text-caption text-subtle mt-1">Dilaporkan {formatDateTime(complaint.createdAt)}</p>
           </div>
 
           <div>
             <p className="eyebrow mb-1.5">Uraian</p>
-            <p className="text-sm leading-relaxed whitespace-pre-wrap">{complaint.description}</p>
+            <p className="text-body leading-relaxed whitespace-pre-wrap">{complaint.description}</p>
             {complaint.attachments && (
               <a
                 href={complaint.attachments}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1.5 mt-3 text-xs font-semibold text-primary hover:underline"
+                className="inline-flex items-center gap-1.5 mt-3 text-label font-semibold text-primary hover:underline"
               >
                 <Paperclip className="w-3.5 h-3.5" />
                 Buka lampiran bukti
@@ -302,8 +302,8 @@ function HandleModal({
               <ul className="space-y-2">
                 {complaint.responses.map((r, i) => (
                   <li key={r._id ?? i} className="rounded-lg bg-surface-2 border border-line p-3">
-                    <p className="text-xs leading-relaxed whitespace-pre-wrap">{r.message}</p>
-                    <p className="text-[11px] text-subtle mt-1.5 flex items-center gap-1.5">
+                    <p className="text-label leading-relaxed whitespace-pre-wrap">{r.message}</p>
+                    <p className="text-caption text-subtle mt-1.5 flex items-center gap-1.5">
                       {r.isInternal && (
                         <span className="inline-flex items-center gap-1 text-warning font-semibold">
                           <Lock className="w-2.5 h-2.5" />

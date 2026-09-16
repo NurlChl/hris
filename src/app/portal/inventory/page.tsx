@@ -173,10 +173,10 @@ export default function InventoryEmployeePage() {
         {/* Header */}
         <div className="flex items-center justify-between border-b border-line pb-6">
           <div>
-            <h1 className="text-[26px] md:text-[30px] text-heading">
+            <h1 className="text-display-sm md:text-display text-heading">
               Inventaris & Aset Saya
             </h1>
-            <p className="text-xs text-muted dark:text-muted mt-1">
+            <p className="text-label text-muted dark:text-muted mt-1">
               Daftar aset fasilitas kantor yang sedang Anda gunakan. Lakukan penandatanganan digital BAST untuk aset baru.
             </p>
           </div>
@@ -190,7 +190,7 @@ export default function InventoryEmployeePage() {
         ) : assignments.length === 0 ? (
           <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted bg-surface">
             <Package className="w-8 h-8 mb-2 opacity-50" />
-            <p className="text-sm font-medium">Tidak ada aset inventaris yang ditugaskan untuk Anda saat ini.</p>
+            <p className="text-body font-medium">Tidak ada aset inventaris yang ditugaskan untuk Anda saat ini.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -207,7 +207,7 @@ export default function InventoryEmployeePage() {
                       <div className="p-2.5 rounded-lg bg-surface-2 border border-line text-foreground">
                         <Package className="w-5 h-5" />
                       </div>
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                      <span className={`px-2 py-0.5 rounded text-caption font-semibold border ${
                         asg.status === "active"
                           ? "bg-success-soft text-success dark:text-success border-success/20"
                           : "bg-warning-soft text-warning dark:text-warning border-warning/20"
@@ -217,12 +217,12 @@ export default function InventoryEmployeePage() {
                     </div>
 
                     <div>
-                      <span className="text-[11px] font-mono font-semibold text-muted uppercase tracking-wider">{item.code}</span>
-                      <h3 className="text-base font-semibold text-foreground dark:text-foreground mt-0.5">{item.name}</h3>
-                      <p className="text-xs text-muted dark:text-muted capitalize">Kategori: {item.category}</p>
+                      <span className="text-caption font-mono font-semibold text-muted uppercase tracking-wider">{item.code}</span>
+                      <h3 className="text-body-lg font-semibold text-foreground dark:text-foreground mt-0.5">{item.name}</h3>
+                      <p className="text-label text-muted dark:text-muted capitalize">Kategori: {item.category}</p>
                     </div>
 
-                    <div className="border-t border-line pt-3 flex items-center justify-between text-xs text-muted">
+                    <div className="border-t border-line pt-3 flex items-center justify-between text-label text-muted">
                       <span>Tanggal Penyerahan:</span>
                       <span className="font-semibold text-foreground">
                         {new Date(asg.handoverDate).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
@@ -233,13 +233,13 @@ export default function InventoryEmployeePage() {
                   {isPending ? (
                     <button
                       onClick={() => setSelectedAsg(asg)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-primary text-xs font-semibold text-primary-foreground border border-line-strong dark:border-white hover:bg-surface-2 dark:hover:bg-surface-2 cursor-pointer transition-all"
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-primary text-label font-semibold text-primary-foreground border border-line-strong dark:border-white hover:bg-surface-2 dark:hover:bg-surface-2 cursor-pointer transition-all"
                     >
                       <FileText className="w-4 h-4" />
                       Tanda Tangan BAST Digital
                     </button>
                   ) : (
-                    <div className="flex items-center gap-1.5 justify-center py-2 text-[11px] font-semibold text-success dark:text-success bg-success-soft rounded-lg border border-success/15">
+                    <div className="flex items-center gap-1.5 justify-center py-2 text-caption font-semibold text-success dark:text-success bg-success-soft rounded-lg border border-success/15">
                       <CheckCircle2 className="w-4 h-4" />
                       Sudah Diserahterimakan
                     </div>
@@ -256,8 +256,8 @@ export default function InventoryEmployeePage() {
             <div className="w-full max-w-md bg-surface border border-line rounded-xl shadow-[var(--shadow-pop)] p-6 flex flex-col">
               <div className="flex justify-between items-center pb-4 border-b border-line">
                 <div>
-                  <h3 className="text-xs font-semibold text-foreground dark:text-foreground uppercase">Tanda Tangan Elektronik (BAST)</h3>
-                  <p className="text-xs text-muted mt-0.5">Konfirmasi penerimaan barang: {selectedAsg.inventoryId.name}</p>
+                  <h3 className="text-label font-semibold text-foreground dark:text-foreground uppercase">Tanda Tangan Elektronik (BAST)</h3>
+                  <p className="text-label text-muted mt-0.5">Konfirmasi penerimaan barang: {selectedAsg.inventoryId.name}</p>
                 </div>
                 <button
                   onClick={() => setSelectedAsg(null)}
@@ -272,20 +272,20 @@ export default function InventoryEmployeePage() {
                   <button
                     type="button"
                     onClick={() => setSignMethod("draw")}
-                    className={`px-3 py-1 rounded text-[11px] font-semibold cursor-pointer transition-all ${ signMethod === "draw" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground dark:hover:text-foreground" }`}
+                    className={`px-3 py-1 rounded text-caption font-semibold cursor-pointer transition-all ${ signMethod === "draw" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground dark:hover:text-foreground" }`}
                   >
                     Tulis Tanda Tangan
                   </button>
                   <button
                     type="button"
                     onClick={() => setSignMethod("upload")}
-                    className={`px-3 py-1 rounded text-[11px] font-semibold cursor-pointer transition-all ${ signMethod === "upload" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground dark:hover:text-foreground" }`}
+                    className={`px-3 py-1 rounded text-caption font-semibold cursor-pointer transition-all ${ signMethod === "upload" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground dark:hover:text-foreground" }`}
                   >
                     Unggah Berkas BAST
                   </button>
                 </div>
 
-                <div className="text-xs text-muted dark:text-muted leading-relaxed bg-surface-2 p-2.5 rounded border border-line">
+                <div className="text-label text-muted dark:text-muted leading-relaxed bg-surface-2 p-2.5 rounded border border-line">
                   {signMethod === "draw" 
                     ? "Dengan menandatangani di bawah ini, saya menyatakan telah menerima aset dengan baik dan bertanggung jawab atas pemeliharaannya."
                     : "Silakan unggah pindaian (scan) / foto berkas BAST fisik yang sudah ditandatangani secara basah."
@@ -307,7 +307,7 @@ export default function InventoryEmployeePage() {
                       onTouchMove={draw}
                       onTouchEnd={stopDrawing}
                     />
-                    <div className="absolute bottom-2 right-2 text-[11px] text-subtle select-none pointer-events-none">
+                    <div className="absolute bottom-2 right-2 text-caption text-subtle select-none pointer-events-none">
                       Gunakan Mouse / Layar Sentuh
                     </div>
                   </div>
@@ -322,16 +322,16 @@ export default function InventoryEmployeePage() {
                     />
                     <label
                       htmlFor="bast-file-upload"
-                      className="px-4 py-2 bg-primary text-xs font-semibold text-primary-foreground rounded-lg cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 transition-all border border-line"
+                      className="px-4 py-2 bg-primary text-label font-semibold text-primary-foreground rounded-lg cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 transition-all border border-line"
                     >
                       Pilih Berkas PDF / Gambar
                     </label>
                     {fileName ? (
-                      <div className="text-[11px] text-success dark:text-success font-semibold truncate max-w-xs">
+                      <div className="text-caption text-success dark:text-success font-semibold truncate max-w-xs">
                         Terpilih: {fileName}
                       </div>
                     ) : (
-                      <div className="text-[11px] text-subtle">Format yang diterima: PDF, PNG, JPG (Maks 5MB)</div>
+                      <div className="text-caption text-subtle">Format yang diterima: PDF, PNG, JPG (Maks 5MB)</div>
                     )}
                   </div>
                 )}
@@ -340,14 +340,14 @@ export default function InventoryEmployeePage() {
               <div className="border-t border-line pt-4 flex gap-3">
                 <button
                   onClick={signMethod === "draw" ? clearCanvas : () => { setUploadedFileBase64(""); setFileName(""); }}
-                  className="flex-1 py-2 rounded-lg border border-line text-xs font-semibold text-foreground dark:text-muted hover:bg-surface-2 transition-all cursor-pointer text-center"
+                  className="flex-1 py-2 rounded-lg border border-line text-label font-semibold text-foreground dark:text-muted hover:bg-surface-2 transition-all cursor-pointer text-center"
                 >
                   {signMethod === "draw" ? "Bersihkan" : "Hapus Berkas"}
                 </button>
                 <button
                   onClick={handleSubmitSignature}
                   disabled={submitting}
-                  className="flex-1 py-2 rounded-lg bg-primary text-xs font-semibold text-primary-foreground border border-line-strong dark:border-white hover:bg-surface-2 dark:hover:bg-surface-2 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                  className="flex-1 py-2 rounded-lg bg-primary text-label font-semibold text-primary-foreground border border-line-strong dark:border-white hover:bg-surface-2 dark:hover:bg-surface-2 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Konfirmasi & Simpan

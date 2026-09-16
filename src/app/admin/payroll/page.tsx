@@ -26,6 +26,7 @@ import { useToast } from "@/components/ui/Toast";
 import { api, errorMessage } from "@/lib/client-api";
 import { formatPeriod, formatRupiah, wibPeriodKey } from "@/lib/time";
 
+import { MonthPicker } from "@/components/ui/DatePicker";
 interface Employee {
   _id: string;
   name: string;
@@ -208,12 +209,11 @@ export default function PayrollPage() {
             <CardHeader title="Periode & karyawan" icon={CalendarDays} />
             <CardBody className="space-y-5">
               <Field label="Periode gaji" required htmlFor="pr-period">
-                <Input
+                <MonthPicker
                   id="pr-period"
-                  type="month"
                   value={period}
-                  onChange={(e) => {
-                    setPeriod(e.target.value);
+                  onChange={(value) => {
+                    setPeriod(value);
                     setSelected([]);
                     setFailures([]);
                   }}
@@ -222,14 +222,14 @@ export default function PayrollPage() {
 
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-[13px] font-medium text-foreground">
+                  <span className="text-body-sm font-medium text-foreground">
                     Belum punya slip ({pending.length})
                   </span>
                   {pending.length > 0 && (
                     <button
                       type="button"
                       onClick={() => setSelected(allSelected ? [] : pending.map((e) => e._id))}
-                      className="text-[13px] text-primary hover:underline"
+                      className="text-body-sm text-primary hover:underline"
                     >
                       {allSelected ? "Kosongkan pilihan" : "Pilih semua"}
                     </button>
@@ -237,7 +237,7 @@ export default function PayrollPage() {
                 </div>
 
                 {pending.length === 0 ? (
-                  <p className="text-[13px] text-muted leading-relaxed rounded-[var(--radius-control)] bg-surface-2 p-3.5">
+                  <p className="text-body-sm text-muted leading-relaxed rounded-[var(--radius-control)] bg-surface-2 p-3.5">
                     {employees.length === 0
                       ? "Belum ada karyawan aktif yang bisa diproses."
                       : "Seluruh " +
@@ -260,10 +260,10 @@ export default function PayrollPage() {
                           className="w-4 h-4 rounded border-line accent-[var(--primary)] cursor-pointer"
                         />
                         <span className="min-w-0">
-                          <span className="block text-[13px] text-foreground truncate">
+                          <span className="block text-body-sm text-foreground truncate">
                             {emp.name}
                           </span>
-                          <span className="block text-xs text-subtle">{emp.employeeId}</span>
+                          <span className="block text-label text-subtle">{emp.employeeId}</span>
                         </span>
                       </label>
                     ))}
@@ -295,10 +295,10 @@ export default function PayrollPage() {
                     key={f.id}
                     className="rounded-[var(--radius-control)] bg-danger-soft border border-danger/20 p-3.5"
                   >
-                    <p className="text-[13px] font-medium text-foreground">
+                    <p className="text-body-sm font-medium text-foreground">
                       {f.name ?? employees.find((e) => e._id === f.id)?.name ?? "Karyawan"}
                     </p>
-                    <p className="text-[13px] text-muted leading-relaxed mt-1">{f.message}</p>
+                    <p className="text-body-sm text-muted leading-relaxed mt-1">{f.message}</p>
                   </div>
                 ))}
               </CardBody>
@@ -337,7 +337,7 @@ export default function PayrollPage() {
                         <span className="block text-foreground font-medium">
                           {pr.employeeId?.name ?? "Karyawan terhapus"}
                         </span>
-                        <span className="block text-xs text-subtle">
+                        <span className="block text-label text-subtle">
                           {pr.employeeId?.employeeId ?? "—"}
                         </span>
                       </Td>

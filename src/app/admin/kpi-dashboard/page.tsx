@@ -218,14 +218,14 @@ function OverviewTab() {
           />
           <CardBody>
             {data.divisionAverages.length === 0 ? (
-              <p className="text-[13px] text-muted py-6 text-center">Belum ada data penilaian.</p>
+              <p className="text-body-sm text-muted py-6 text-center">Belum ada data penilaian.</p>
             ) : (
               <ul className="space-y-4">
                 {data.divisionAverages.map((d) => (
                   <li key={d.name}>
                     <div className="flex items-baseline justify-between gap-3 mb-1.5">
-                      <span className="text-[13px] font-medium text-foreground truncate">{d.name}</span>
-                      <span className="text-[13px] text-muted shrink-0">
+                      <span className="text-body-sm font-medium text-foreground truncate">{d.name}</span>
+                      <span className="text-body-sm text-muted shrink-0">
                         <strong className="text-foreground tabular-nums">{d.average.toFixed(1)}</strong>
                         <span className="text-subtle"> · {d.count} orang</span>
                       </span>
@@ -247,7 +247,7 @@ function OverviewTab() {
           <CardHeader title="Sebaran predikat" icon={Target} />
           <CardBody>
             {totalDistribution === 0 ? (
-              <p className="text-[13px] text-muted py-6 text-center">Belum ada data penilaian.</p>
+              <p className="text-body-sm text-muted py-6 text-center">Belum ada data penilaian.</p>
             ) : (
               <ul className="space-y-3.5">
                 {data.distribution.map((d, i) => {
@@ -256,11 +256,11 @@ function OverviewTab() {
                   return (
                     <li key={d.label}>
                       <div className="flex items-baseline justify-between gap-3 mb-1.5">
-                        <span className="text-[13px] text-foreground">
+                        <span className="text-body-sm text-foreground">
                           {d.label}
                           <span className="text-subtle"> · ≥ {d.min}</span>
                         </span>
-                        <span className="text-[13px] text-muted tabular-nums">
+                        <span className="text-body-sm text-muted tabular-nums">
                           {d.count} orang ({pct}%)
                         </span>
                       </div>
@@ -455,21 +455,21 @@ function EvaluationsTab() {
                 {rows.map((row) => (
                   <Tr key={row._id}>
                     <Td>
-                      <span className="block text-[13px] font-medium text-foreground">
+                      <span className="block text-body-sm font-medium text-foreground">
                         {row.employeeId?.name ?? "Karyawan dihapus"}
                       </span>
-                      <span className="block text-xs text-subtle mt-0.5">
+                      <span className="block text-label text-subtle mt-0.5">
                         {row.employeeId?.divisionId?.name ?? "—"}
                       </span>
                     </Td>
-                    <Td className="text-muted text-[13px]">{row.templateId?.name ?? "—"}</Td>
-                    <Td className="text-muted text-[13px]">{row.period}</Td>
+                    <Td className="text-muted text-body-sm">{row.templateId?.name ?? "—"}</Td>
+                    <Td className="text-muted text-body-sm">{row.period}</Td>
                     <Td className="text-right">
-                      <span className="text-[14px] font-semibold tabular-nums">
+                      <span className="text-body font-semibold tabular-nums">
                         {row.finalScore.toFixed(1)}
                       </span>
                       {row.gradeLabel && (
-                        <span className="block text-[11px] text-subtle mt-0.5">{row.gradeLabel}</span>
+                        <span className="block text-caption text-subtle mt-0.5">{row.gradeLabel}</span>
                       )}
                     </Td>
                     <Td>
@@ -477,7 +477,7 @@ function EvaluationsTab() {
                         {EVALUATION_STATUS_LABELS[row.status as keyof typeof EVALUATION_STATUS_LABELS] ??
                           row.status}
                       </Badge>
-                      <span className="block text-[11px] text-subtle mt-1">
+                      <span className="block text-caption text-subtle mt-1">
                         {formatRelative(row.updatedAt)}
                       </span>
                     </Td>

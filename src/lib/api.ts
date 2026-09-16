@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isDbUnreachable } from "@/lib/db";
 
 export interface ApiMeta {
   page?: number;
@@ -110,18 +111,10 @@ export function wrapRouteHandler<C = RouteContext>(
         return apiError("BAD_REQUEST", "Identitas data yang diminta tidak valid.", null, 400);
       }
 
-      // Database unreachable. Mongoose surfaces this in several shapes: a named
-      // selection/network error, or — when the Atlas SRV record cannot be
-      // resolved at all — a bare DNS error whose only marker is the syscall.
-      const dbUnreachable =
-        err?.name === "MongooseServerSelectionError" ||
-        err?.name === "MongoNetworkError" ||
-        err?.name === "MongoServerSelectionError" ||
-        (err as { syscall?: string }).syscall === "querySrv" ||
-        (typeof err?.code === "string" &&
-          ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT"].includes(err.code));
-
-      if (dbUnreachable) {
+      // Database unreachable. The predicate lives with the connection code so
+      // the sign-in path and the route handlers cannot drift apart on what
+      // counts as an outage.
+      if (isDbUnreachable(raw)) {
         console.error("[API ERROR] database unreachable:", err.message);
         return apiError(
           "DB_UNAVAILABLE",

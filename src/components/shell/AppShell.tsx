@@ -56,11 +56,11 @@ function ClockPanel() {
   const now = useWibNow();
   return (
     <div className="rounded-[var(--radius-control)] bg-surface-2 border border-line px-3.5 py-3">
-      <p className="text-[19px] font-semibold text-heading tabular-nums tracking-[-0.02em] leading-none">
+      <p className="text-title-sm font-semibold text-heading tabular-nums tracking-[-0.02em] leading-none">
         {fmt(now, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }, "--:--:--")}
-        <span className="text-xs font-medium text-subtle ml-1.5 tracking-normal">WIB</span>
+        <span className="text-label font-medium text-subtle ml-1.5 tracking-normal">WIB</span>
       </p>
-      <p className="text-xs text-muted mt-1.5 truncate">
+      <p className="text-label text-muted mt-1.5 truncate">
         {fmt(now, { weekday: "long", day: "numeric", month: "long" }, "Memuat…")}
       </p>
     </div>
@@ -71,10 +71,10 @@ function ClockInline() {
   const now = useWibNow();
   return (
     <span className="hidden md:flex items-baseline gap-1.5 px-3 py-1.5 rounded-full bg-surface-2 border border-line">
-      <span className="text-[13px] font-semibold text-foreground tabular-nums">
+      <span className="text-body-sm font-semibold text-foreground tabular-nums">
         {fmt(now, { hour: "2-digit", minute: "2-digit", hour12: false }, "--:--")}
       </span>
-      <span className="text-[11px] font-medium text-subtle">WIB</span>
+      <span className="text-caption font-medium text-subtle">WIB</span>
     </span>
   );
 }
@@ -129,14 +129,14 @@ function UserMenu() {
         aria-label="Menu akun"
         className="flex items-center gap-2.5 pl-1 pr-2 py-1 rounded-full hover:bg-surface-2 transition-colors cursor-pointer"
       >
-        <span className="w-8 h-8 rounded-full bg-primary text-primary-foreground grid place-items-center text-xs font-semibold shrink-0">
+        <span className="w-8 h-8 rounded-full bg-primary text-primary-foreground grid place-items-center text-label font-semibold shrink-0">
           {initials || <UserRound className="w-4 h-4" strokeWidth={ICON_STROKE} />}
         </span>
         <span className="hidden lg:block text-left min-w-0">
-          <span className="block text-[13px] font-medium text-foreground truncate max-w-36 leading-tight">
+          <span className="block text-body-sm font-medium text-foreground truncate max-w-36 leading-tight">
             {user?.employeeName || user?.email || "Pengguna"}
           </span>
-          <span className="block text-[11px] text-subtle leading-tight mt-0.5">{user?.role ?? "-"}</span>
+          <span className="block text-caption text-subtle leading-tight mt-0.5">{user?.role ?? "-"}</span>
         </span>
         <ChevronDown className="w-4 h-4 text-subtle hidden lg:block" strokeWidth={ICON_STROKE} />
       </button>
@@ -147,11 +147,11 @@ function UserMenu() {
           style={{ boxShadow: "var(--shadow-pop)" }}
         >
           <div className="px-4 py-3.5 border-b border-line">
-            <p className="text-sm font-semibold text-heading truncate">
+            <p className="text-body font-semibold text-heading truncate">
               {user?.employeeName || "Pengguna"}
             </p>
-            <p className="text-xs text-muted truncate mt-0.5">{user?.email}</p>
-            <p className="text-[11px] text-subtle mt-1.5">Peran {user?.role}</p>
+            <p className="text-label text-muted truncate mt-0.5">{user?.email}</p>
+            <p className="text-caption text-subtle mt-1.5">Peran {user?.role}</p>
           </div>
           <div className="p-1.5">
             <MenuLink href="/portal/profile" icon={UserRound} onClick={() => setOpen(false)}>
@@ -162,7 +162,7 @@ function UserMenu() {
             </MenuLink>
             <button
               onClick={() => signOut({ callbackUrl: "/auth/login" })}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-danger hover:bg-danger-soft transition-colors cursor-pointer font-medium"
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-body-sm text-danger hover:bg-danger-soft transition-colors cursor-pointer font-medium"
             >
               <LogOut className="w-4 h-4" strokeWidth={ICON_STROKE} />
               Keluar
@@ -189,7 +189,7 @@ function MenuLink({
     <Link
       href={href}
       onClick={onClick}
-      className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
+      className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-body-sm text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
     >
       <Icon className="w-4 h-4" strokeWidth={ICON_STROKE} />
       {children}
@@ -259,7 +259,7 @@ export function AppShell({
                     href={item.href}
                     aria-current={active ? "page" : undefined}
                     className={cn(
-                      "group relative flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-control)] text-[13px] transition-colors",
+                      "group relative flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-control)] text-body-sm transition-colors",
                       active
                         ? "bg-primary-soft text-primary font-semibold"
                         : "text-muted hover:text-foreground hover:bg-surface-2 font-medium"
@@ -290,14 +290,14 @@ export function AppShell({
 
   const brandBlock = (
     <Link href={brandHref} className="flex items-center gap-3 min-w-0">
-      <span className="w-9 h-9 rounded-[10px] bg-primary text-primary-foreground grid place-items-center font-semibold text-[13px] shrink-0">
+      <span className="w-9 h-9 rounded-[10px] bg-primary text-primary-foreground grid place-items-center font-semibold text-body-sm shrink-0">
         HR
       </span>
       <span className="min-w-0">
-        <span className="block font-semibold text-sm text-heading truncate leading-tight">
+        <span className="block font-semibold text-body text-heading truncate leading-tight">
           {brand.title}
         </span>
-        <span className="block text-[11px] text-subtle truncate leading-tight mt-0.5">
+        <span className="block text-caption text-subtle truncate leading-tight mt-0.5">
           {brand.subtitle}
         </span>
       </span>
@@ -355,7 +355,7 @@ export function AppShell({
             >
               <Menu className="w-5 h-5" strokeWidth={ICON_STROKE} />
             </button>
-            <h1 className="text-[15px] font-semibold text-heading truncate">{currentTitle}</h1>
+            <h1 className="text-body-lg font-semibold text-heading truncate">{currentTitle}</h1>
           </div>
 
           <div className="flex items-center gap-1.5">

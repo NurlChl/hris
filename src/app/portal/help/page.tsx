@@ -121,6 +121,11 @@ const FAQS: Faq[] = [
       "Tekan Tanggapi dan tuliskan keberatan Anda pada kolom komentar. Menanggapi menandakan Anda sudah membaca hasilnya, bukan menyetujuinya. Komentar tersebut ikut tercetak pada dokumen penilaian dan terbaca oleh HRD sebelum penilaian difinalkan.",
   },
   {
+    q: "Absen saya ditolak karena wajah tidak cocok, padahal itu saya sendiri.",
+    a:
+      "Paling sering penyebabnya cahaya. Absen di tempat yang terang, hindari cahaya kuat dari belakang kepala, lepas masker, dan dekatkan ponsel sampai wajah mengisi sebagian besar bingkai. Bila tetap gagal, ajukan koreksi absen untuk hari itu dan beri tahu atasan. Bila penampilan Anda banyak berubah, ajukan penggantian wajah di Profil & Keamanan, tab Wajah Presensi.",
+  },
+  {
     q: "Apakah pengaduan anonim benar-benar anonim?",
     a:
       "Identitas Anda tidak ditampilkan kepada atasan. Identitas tetap tersimpan terbatas untuk HRD dan Audit agar laporan dapat dipertanggungjawabkan dan agar Anda tetap bisa memantau tindak lanjut serta menerima notifikasi atas tiket Anda.",
@@ -157,8 +162,8 @@ export default function HelpPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-[26px] md:text-[30px] text-heading">Panduan Penggunaan</h1>
-        <p className="text-sm text-muted mt-2 leading-relaxed">
+        <h1 className="text-display-sm md:text-display text-heading">Panduan Penggunaan</h1>
+        <p className="text-body text-muted mt-2 leading-relaxed">
           Jawaban cepat untuk pertanyaan yang paling sering muncul
           {role ? ` untuk peran ${ROLE_LABELS[role] ?? role}` : ""}.
         </p>
@@ -187,10 +192,10 @@ export default function HelpPage() {
               <span className="grid place-items-center w-9 h-9 rounded-lg bg-primary-soft text-primary">
                 <l.icon className="w-4 h-4" />
               </span>
-              <h3 className="mt-3 text-sm font-semibold group-hover:text-primary transition-colors">
+              <h3 className="mt-3 text-body font-semibold group-hover:text-primary transition-colors">
                 {l.title}
               </h3>
-              <p className="mt-1 text-xs text-muted leading-relaxed">{l.body}</p>
+              <p className="mt-1 text-label text-muted leading-relaxed">{l.body}</p>
             </Link>
           ))}
         </div>
@@ -213,7 +218,7 @@ export default function HelpPage() {
                     aria-expanded={expanded}
                     className="w-full flex items-start justify-between gap-4 px-5 py-4 text-left hover:bg-surface-2 transition-colors cursor-pointer"
                   >
-                    <span className="text-sm font-semibold leading-snug">{f.q}</span>
+                    <span className="text-body font-semibold leading-snug">{f.q}</span>
                     <span className="flex items-center gap-2 shrink-0">
                       {f.roles && (
                         <Badge tone="neutral">
@@ -230,7 +235,7 @@ export default function HelpPage() {
                   </button>
                   {expanded && (
                     <div className="px-5 pb-4 -mt-1">
-                      <p className="text-sm text-muted leading-relaxed max-w-3xl">{f.a}</p>
+                      <p className="text-body text-muted leading-relaxed max-w-3xl">{f.a}</p>
                     </div>
                   )}
                 </li>
@@ -246,11 +251,11 @@ export default function HelpPage() {
             <BookOpen className="w-4 h-4" />
           </span>
           <span className="min-w-0">
-            <span className="flex items-center gap-1.5 text-sm font-semibold">
+            <span className="flex items-center gap-1.5 text-body font-semibold">
               Dokumentasi lengkap
               <ExternalLink className="w-3 h-3 text-subtle" />
             </span>
-            <span className="block text-xs text-muted mt-1 leading-relaxed">
+            <span className="block text-label text-muted mt-1 leading-relaxed">
               Alur setiap modul, aturan bisnis, dan acuan teknis sistem.
             </span>
           </span>
@@ -264,8 +269,8 @@ export default function HelpPage() {
             <ShieldCheck className="w-4 h-4" />
           </span>
           <span className="min-w-0">
-            <span className="block text-sm font-semibold">Keamanan akun</span>
-            <span className="block text-xs text-muted mt-1 leading-relaxed">
+            <span className="block text-body font-semibold">Keamanan akun</span>
+            <span className="block text-label text-muted mt-1 leading-relaxed">
               Ganti kata sandi dan baca tips menjaga akun Anda tetap aman.
             </span>
           </span>

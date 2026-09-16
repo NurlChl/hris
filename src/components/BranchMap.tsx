@@ -90,13 +90,13 @@ export default function BranchMap({ lat, lng, radius, onChange }: BranchMapProps
 
   return (
     <div className="space-y-1">
-      <label className="text-xs text-subtle font-semibold">Titik Lokasi & Radius Absen</label>
+      <label className="text-label text-subtle font-semibold">Titik Lokasi & Radius Absen</label>
       <div 
         ref={mapRef} 
         className="w-full h-64 rounded-lg border border-white/8 relative z-10"
         style={{ minHeight: "250px" }}
       />
-      <p className="text-xs text-muted italic mt-1">
+      <p className="text-label text-muted italic mt-1">
         * Geser penanda pin merah atau klik pada peta untuk menentukan koordinat presisi.
       </p>
     </div>

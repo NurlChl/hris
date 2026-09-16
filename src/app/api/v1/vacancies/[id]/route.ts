@@ -55,7 +55,11 @@ export const GET = wrapRouteHandler<Ctx>(async (req, ctxParams) => {
   const enriched: Array<Record<string, unknown>> = await Promise.all(
     candidates.map(async (c) => ({
       ...c,
-      cvUrl: c.cvUrl ? await storageProvider.getSignedUrl(c.cvUrl as string, 900) : "",
+      cvUrl: !c.cvUrl
+        ? ""
+        : /^https?:\/\//.test(String(c.cvUrl))
+          ? String(c.cvUrl)
+          : await storageProvider.getSignedUrl(c.cvUrl as string, 900),
       history: historyByCandidate.get(String(c._id)) ?? [],
     }))
   );

@@ -16,19 +16,35 @@ export function SelfieCapture({
   onCapture,
   onClear,
   disabled,
+  autoStart,
+  idleHint = "Kamera belum aktif. Foto selfie dipakai untuk memverifikasi bahwa Anda sendiri yang melakukan presensi.",
 }: {
   photo: string | null;
   onCapture: (dataUrl: string) => void;
   onClear: () => void;
   disabled?: boolean;
+  /** Opens the camera on mount — for the second and later shots of a series,
+   *  where permission has already been granted and a click would be busywork. */
+  autoStart?: boolean;
+  idleHint?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [active, setActive] = useState(false);
+  /**
+   * True once the camera has been delivering frames for a moment.
+   *
+   * A camera reports its size as soon as it opens, but for the first few
+   * hundred milliseconds most phone sensors send black or very dark frames
+   * while exposure settles. Capturing then stores a black image — which, with
+   * face verification on, reaches the employee as a baffling "no face found".
+   */
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [facing, setFacing] = useState<"user" | "environment">("user");
 
   const stop = useCallback(() => {
+    setReady(false);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -53,6 +69,15 @@ export function SelfieCapture({
           audio: false,
         });
         streamRef.current = stream;
+        // A camera can end on its own: the phone locks, another app takes the
+        // camera, or permission is revoked mid-session. Left alone, the preview
+        // freezes on a dead track and every shot is refused as a blank frame,
+        // with nothing telling the user to switch the camera back on.
+        stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+          if (streamRef.current !== stream) return;
+          stop();
+          setError("Kamera terputus. Nyalakan kamera lagi untuk melanjutkan.");
+        });
         setActive(true);
         // Assigning after the state flip guarantees the <video> element exists.
         requestAnimationFrame(() => {
@@ -76,9 +101,45 @@ export function SelfieCapture({
     [facing, stop]
   );
 
+  useEffect(() => {
+    if (autoStart && !photo && !disabled) void start();
+    // Only on mount: re-running when `start` changes identity would reopen the
+    // camera after the user deliberately closed it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const capture = () => {
     const video = videoRef.current;
-    if (!video || !video.videoWidth) return;
+    if (!video || !video.videoWidth || !ready) return;
+
+    // Second line of defence behind `ready`: a camera can still hand over a
+    // blank frame (lens covered, sensor stalled). Sample a thumbnail and refuse
+    // one with no brightness or no detail, instead of sending it off to fail.
+    const probe = document.createElement("canvas");
+    probe.width = 32;
+    probe.height = 24;
+    const probeCtx = probe.getContext("2d", { willReadFrequently: true });
+    if (probeCtx) {
+      probeCtx.drawImage(video, 0, 0, probe.width, probe.height);
+      const px = probeCtx.getImageData(0, 0, probe.width, probe.height).data;
+      let sum = 0;
+      let sumSq = 0;
+      const n = px.length / 4;
+      for (let i = 0; i < px.length; i += 4) {
+        const l = (px[i] + px[i + 1] + px[i + 2]) / 3;
+        sum += l;
+        sumSq += l * l;
+      }
+      const mean = sum / n;
+      const spread = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
+      if (mean < 12 || spread < 6) {
+        setError(
+          "Gambar dari kamera masih gelap atau kosong. Tunggu hingga wajah Anda terlihat jelas di layar, lalu ambil foto lagi."
+        );
+        return;
+      }
+    }
+    setError("");
 
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
@@ -138,6 +199,12 @@ export function SelfieCapture({
               ref={videoRef}
               playsInline
               muted
+              // Frames are flowing; give exposure a moment before allowing a shot.
+              onPlaying={() => {
+                window.setTimeout(() => {
+                  if (streamRef.current) setReady(true);
+                }, 500);
+              }}
               className="w-full h-full object-cover"
               style={{ transform: facing === "user" ? "scaleX(-1)" : undefined }}
             />
@@ -153,10 +220,7 @@ export function SelfieCapture({
         ) : (
           <div className="text-center px-6">
             <Camera className="w-7 h-7 text-subtle mx-auto" />
-            <p className="mt-2 text-xs text-muted leading-relaxed">
-              Kamera belum aktif. Foto selfie dipakai untuk memverifikasi bahwa Anda sendiri yang
-              melakukan presensi.
-            </p>
+            <p className="mt-2 text-label text-muted leading-relaxed">{idleHint}</p>
           </div>
         )}
       </div>
@@ -168,10 +232,10 @@ export function SelfieCapture({
               type="button"
               icon={Camera}
               onClick={capture}
-              disabled={disabled}
+              disabled={disabled || !ready}
               className="flex-1 justify-center"
             >
-              Ambil foto
+              {ready ? "Ambil foto" : "Menyiapkan kamera…"}
             </Button>
             <Button
               type="button"

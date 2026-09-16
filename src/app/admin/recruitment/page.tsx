@@ -1,849 +1,503 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
-import { 
-  Users, Search, Calendar, ChevronRight, UserPlus, Info, Check, Ban, X, Loader2, 
-  AlertCircle, FileText, ArrowRight, Building2, CalendarDays, ExternalLink, Briefcase
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  CalendarClock,
+  FileText,
+  MapPin,
+  Search,
+  SlidersHorizontal,
+  Star,
+  UserPlus,
+  Users,
+  X,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import SearchSelect from "@/components/SearchSelect";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Field,
+  ICON_STROKE,
+  Input,
+  PageHeader,
+  SkeletonList,
+  StatusBadge,
+  Tabs,
+  TableWrap,
+  Td,
+  Th,
+  Tr,
+  cn,
+} from "@/components/ui";
+import { Combobox } from "@/components/ui/Combobox";
+import { DatePicker } from "@/components/ui/DatePicker";
+import { Pagination } from "@/components/ui/Pagination";
+import { AddCandidateModal } from "@/components/recruitment/AddCandidateModal";
+import { api, errorMessage } from "@/lib/client-api";
+import { EDUCATION_OPTIONS } from "@/lib/hr/application-form";
+import { formatDate, formatDateTime, formatRelative, formatRupiah } from "@/lib/time";
 
-interface Candidate {
+interface Row {
   _id: string;
   name: string;
   email: string;
   phone: string;
-  source: string;
-  positionId: { _id: string; name: string; } | null;
+  city?: string;
+  lastEducation?: string;
   currentStage: string;
-  status: "pending" | "in_progress" | "passed" | "rejected" | "on_hold";
-  cvUrl?: string;
-  notes?: string;
-  offeringSalary?: number;
-  history: Array<{
-    stage: string;
-    status: string;
-    notes: string;
-    createdAt: string;
-  }>;
+  status: string;
+  rating?: number;
+  hasCv?: boolean;
+  source: string;
+  reference?: string;
+  availableFrom?: string | null;
+  expectedSalary?: number | null;
+  nextInterviewAt?: string | null;
+  employeeId?: string | null;
+  createdAt: string;
+  vacancyId?: { _id: string; title: string; stages: string[] } | null;
+  tags?: string[];
 }
 
-interface Position { _id: string; name: string; }
-interface Branch { _id: string; name: string; }
-interface Division { _id: string; name: string; }
+interface ListData {
+  rows: Row[];
+  counts: Record<string, number>;
+}
 
-const DEFAULT_STAGES = [
-  "Apply",
-  "Screening CV",
-  "Interview HRD",
-  "Offering",
-  "Onboarding"
+interface VacancyOption {
+  _id: string;
+  title: string;
+  stages: string[];
+  status: string;
+}
+
+type StatusTab = "all" | "active" | "passed" | "hired" | "rejected";
+
+const FILTER_KEYS = ["q", "vacancyId", "stage", "source", "education", "hasCv", "minRating", "from", "to", "availableBy", "interview"] as const;
+
+const SOURCE_OPTIONS = [
+  { value: "career_page", label: "Halaman karier" },
+  { value: "manual", label: "Input manual" },
+  { value: "api", label: "API eksternal" },
 ];
 
-/**
- * A selection pipeline for one position. `positionId` comes back populated on
- * some responses and as a bare id on others, so both forms are matched when
- * looking a pipeline up.
- */
-interface Pipeline {
-  _id: string;
-  positionId: { _id: string; name: string } | string | null;
-  stages: string[];
+const SORT_OPTIONS = [
+  { value: "newest", label: "Terbaru melamar" },
+  { value: "oldest", label: "Terlama melamar" },
+  { value: "activity", label: "Aktivitas terakhir" },
+  { value: "rating", label: "Penilaian tertinggi" },
+  { value: "available", label: "Paling cepat bisa mulai" },
+  { value: "interview", label: "Jadwal wawancara terdekat" },
+  { value: "name", label: "Nama (A–Z)" },
+];
+
+const educationLabel = (v?: string) => EDUCATION_OPTIONS.find((o) => o.value === v)?.label ?? v ?? "";
+
+export default function ApplicantsPage() {
+  return (
+    <Suspense fallback={<SkeletonList rows={6} />}>
+      <ApplicantsView />
+    </Suspense>
+  );
 }
 
-export default function RecruitmentPage() {
-  const [activeTab, setActiveTab] = useState<"candidates" | "jobs">("candidates");
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [divisions, setDivisions] = useState<Division[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
+function ApplicantsView() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const sp = useSearchParams();
 
-  // Pipelines state
-  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
-  const [pipelinesLoading, setPipelinesLoading] = useState(false);
-  const [pipelineModalOpen, setPipelineModalOpen] = useState(false);
-  const [selectedPipelinePositionId, setSelectedPipelinePositionId] = useState("");
-  const [pipelineStages, setPipelineStages] = useState<string[]>([]);
-  const [newStageInput, setNewStageInput] = useState("");
+  // Filters live in the URL, so a filtered list can be bookmarked, shared with
+  // a colleague, and survives going into an applicant and coming back.
+  const get = (key: string) => sp.get(key) ?? "";
+  const status = (get("status") || "all") as StatusTab;
+  const sort = get("sort") || "newest";
+  const page = Math.max(1, Number(get("page")) || 1);
+  const limit = Number(get("limit")) || 25;
 
-  // Modals
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
-
-  // Form states
-  const [formOpen, setFormOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [positionId, setPositionId] = useState("");
-
-  // Migration states
-  const [migrateOpen, setMigrateOpen] = useState(false);
-  const [branchId, setBranchId] = useState("");
-  const [divisionId, setDivisionId] = useState("");
-  const [joinDate, setJoinDate] = useState("");
-
-  const [actionStage, setActionStage] = useState("");
-  const [actionStatus, setActionStatus] = useState<"pending" | "in_progress" | "passed" | "rejected" | "on_hold">("passed");
-  const [actionNotes, setActionNotes] = useState("");
-  const [offeringSalary, setOfferingSalary] = useState(0);
-
-  const [submitting, setSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-
-  const fetchCandidates = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/v1/recruitment");
-      const data = await res.json();
-      if (data.success) {
-        setCandidates(data.data || []);
+  const setParams = useCallback(
+    (patch: Record<string, string | number | null>, resetPage = true) => {
+      const next = new URLSearchParams(sp.toString());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === "" || v === undefined) next.delete(k);
+        else next.set(k, String(v));
       }
+      if (resetPage && !("page" in patch)) next.delete("page");
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, sp]
+  );
+
+  const [data, setData] = useState<ListData | null>(null);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [vacancies, setVacancies] = useState<VacancyOption[]>([]);
+  const [search, setSearch] = useState(get("q"));
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+
+  const query = sp.toString();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams(query);
+      if (!params.get("limit")) params.set("limit", "25");
+      const res = await api.get<ListData>(`/api/v1/candidates?${params.toString()}`);
+      setData(res.data ?? null);
+      setTotal(res.meta?.total ?? 0);
     } catch (err) {
-      console.error("Gagal memuat kandidat:", err);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  const fetchPipelines = useCallback(async () => {
-    setPipelinesLoading(true);
-    try {
-      const res = await fetch("/api/v1/recruitment?type=pipelines");
-      const data = await res.json();
-      if (data.success) {
-        setPipelines(data.data || []);
-      }
-    } catch (err) {
-      console.error("Gagal memuat pipeline:", err);
-    } finally {
-      setPipelinesLoading(false);
-    }
-  }, []);
-
-  const handleSavePipeline = async () => {
-    if (!selectedPipelinePositionId) return;
-    setSubmitting(true);
-    setErrorMessage("");
-
-    try {
-      const res = await fetch("/api/v1/recruitment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "save_pipeline",
-          positionId: selectedPipelinePositionId,
-          stages: pipelineStages
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        fetchPipelines();
-        setPipelineModalOpen(false);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal menyimpan pipeline");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi ke server");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const fetchMetadata = useCallback(async () => {
-    try {
-      const [rPos, rBr, rDiv] = await Promise.all([
-        fetch("/api/v1/positions"),
-        fetch("/api/v1/branches"),
-        fetch("/api/v1/divisions")
-      ]);
-      const [dPos, dBr, dDiv] = await Promise.all([
-        rPos.json(),
-        rBr.json(),
-        rDiv.json()
-      ]);
-      if (dPos.success) setPositions(dPos.data);
-      if (dBr.success) setBranches(dBr.data);
-      if (dDiv.success) setDivisions(dDiv.data);
-    } catch (err) {
-      console.error("Gagal memuat meta:", err);
-    }
-  }, []);
+  }, [query]);
 
   useEffect(() => {
-    void fetchMetadata();
-    if (activeTab === "candidates") {
-      void fetchCandidates();
-    } else {
-      void fetchPipelines();
-    }
-  }, [activeTab, fetchMetadata, fetchCandidates, fetchPipelines]);
+    void load();
+  }, [load]);
 
-  const handleOpenAdd = () => {
-    setName("");
-    setEmail("");
-    setPhone("");
-    setPositionId(positions[0]?._id || "");
-    setErrorMessage("");
-    setFormOpen(true);
-  };
+  useEffect(() => {
+    api
+      .get<VacancyOption[]>("/api/v1/vacancies?status=all&limit=200")
+      .then((res) => setVacancies(res.data ?? []))
+      .catch(() => {});
+  }, []);
 
-  const handleAddSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setErrorMessage("");
+  // Search applies after a short pause in typing, not on every keystroke.
+  useEffect(() => {
+    if (search === get("q")) return;
+    const t = window.setTimeout(() => setParams({ q: search.trim() || null }), 350);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
-    try {
-      const res = await fetch("/api/v1/recruitment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "create", name, email, phone, positionId }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        fetchCandidates();
-        setFormOpen(false);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal menambah pelamar");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi ke server");
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const selectedVacancy = vacancies.find((v) => v._id === get("vacancyId"));
+  const stageOptions = useMemo(() => {
+    const stages = selectedVacancy ? selectedVacancy.stages : Array.from(new Set(vacancies.flatMap((v) => v.stages)));
+    return stages.map((s) => ({ value: s, label: s }));
+  }, [selectedVacancy, vacancies]);
 
-  const handleOpenDetails = (c: Candidate) => {
-    setSelectedCandidate(c);
-    setActionStage(c.currentStage);
-    setActionStatus(c.status);
-    setActionNotes("");
-    setOfferingSalary(c.offeringSalary || 0);
-    setDetailsOpen(true);
-  };
-
-  const handleUpdateStage = async () => {
-    if (!selectedCandidate) return;
-    setSubmitting(true);
-    setErrorMessage("");
-
-    try {
-      const res = await fetch("/api/v1/recruitment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "update_stage",
-          id: selectedCandidate._id,
-          stage: actionStage,
-          status: actionStatus,
-          notes: actionNotes,
-          offeringSalary: actionStage === "Offering" ? offeringSalary : undefined
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        fetchCandidates();
-        setDetailsOpen(false);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal memperbarui tahapan");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi ke server");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleOpenMigrate = () => {
-    setBranchId(branches[0]?._id || "");
-    setDivisionId(divisions[0]?._id || "");
-    setJoinDate(new Date().toISOString().split("T")[0]);
-    setErrorMessage("");
-    setMigrateOpen(true);
-  };
-
-  const handleMigrateSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCandidate) return;
-    setSubmitting(true);
-    setErrorMessage("");
-
-    try {
-      const res = await fetch("/api/v1/recruitment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "migrate",
-          id: selectedCandidate._id,
-          branchId,
-          divisionId,
-          joinDate
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        fetchCandidates();
-        setMigrateOpen(false);
-        setDetailsOpen(false);
-      } else {
-        setErrorMessage(data.error?.message || "Gagal melakukan onboarding karyawan");
-      }
-    } catch (err) {
-      setErrorMessage("Kesalahan koneksi ke server");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const filteredCandidates = candidates.filter(c =>
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (c.positionId?.name || "").toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const activeFilters = FILTER_KEYS.filter((k) => k !== "q" && get(k)).length;
+  const counts = data?.counts ?? {};
+  const allCount = (counts.active ?? 0) + (counts.passed ?? 0) + (counts.hired ?? 0) + (counts.rejected ?? 0);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
-    <div className="space-y-6 font-sans">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4 gap-4">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground dark:text-foreground">Recruitment & ATS Pipeline</h1>
-          <p className="text-xs text-muted dark:text-muted mt-1">Pantau pipeline pelamar kerja, jadwalkan tes, dan migrasikan pelamar yang lulus menjadi karyawan baru</p>
-        </div>
-        {activeTab === "candidates" && (
-          <button
-            onClick={handleOpenAdd}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all w-fit"
-          >
-            <UserPlus className="w-4 h-4" />
-            Tambah Pelamar
-          </button>
-        )}
+    <div>
+      <PageHeader
+        eyebrow="Rekrutmen"
+        title="Pelamar"
+        description="Semua lamaran dari seluruh lowongan. Saring berdasarkan tahap, pendidikan, kesiapan mulai kerja, atau penilaian, lalu buka pelamar untuk melihat detail dan memprosesnya."
+        actions={
+          <>
+            <Link href="/admin/vacancies">
+              <Button variant="secondary">Kelola lowongan</Button>
+            </Link>
+            <Button icon={UserPlus} onClick={() => setAddOpen(true)}>
+              Tambah pelamar
+            </Button>
+          </>
+        }
+      />
+
+      <div className="mb-4">
+        <Tabs<StatusTab>
+          value={status}
+          onChange={(id) => setParams({ status: id === "all" ? null : id })}
+          tabs={[
+            { id: "all", label: "Semua", count: allCount },
+            { id: "active", label: "Dalam proses", count: counts.active },
+            { id: "passed", label: "Lolos", count: counts.passed },
+            { id: "hired", label: "Direkrut", count: counts.hired },
+            { id: "rejected", label: "Tidak lolos", count: counts.rejected },
+          ]}
+        />
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 p-1 bg-surface-2 border border-line rounded-lg w-fit">
-        <button
-          onClick={() => setActiveTab("candidates")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "candidates" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          Kandidat Pelamar
-        </button>
-        <button
-          onClick={() => setActiveTab("jobs")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "jobs" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
-        >
-          <Briefcase className="w-3.5 h-3.5" />
-          Kelola Lowongan (Loker)
-        </button>
-      </div>
-
-      {activeTab === "candidates" ? (
-        <>
-          <div className="flex items-center relative w-full sm:max-w-xs">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Cari pelamar, lowongan..."
-              className="w-full pl-10 pr-4 py-2 rounded-lg bg-surface border border-line text-xs text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-muted"
+      <Card className="p-3 sm:p-4 mb-4">
+        <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] xl:grid-cols-[minmax(0,1fr)_16rem_14rem_auto]">
+          <div className="relative sm:col-span-3 xl:col-span-1">
+            <Search
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle pointer-events-none"
+              strokeWidth={ICON_STROKE}
+            />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Cari nama, email, telepon, kota, atau nomor referensi"
+              className="pl-10"
+              aria-label="Cari pelamar"
             />
           </div>
+          <Combobox
+            value={get("vacancyId")}
+            onChange={(v) => setParams({ vacancyId: v || null, stage: null })}
+            options={vacancies.map((v) => ({
+              value: v._id,
+              label: v.title,
+              hint: v.status === "open" ? "Tayang" : v.status === "closed" ? "Ditutup" : "Draf",
+            }))}
+            placeholder="Semua lowongan"
+            clearable
+            aria-label="Lowongan"
+          />
+          <Combobox
+            value={sort}
+            onChange={(v) => setParams({ sort: v === "newest" ? null : v })}
+            options={SORT_OPTIONS}
+            aria-label="Urutkan"
+          />
+          <Button
+            variant={filtersOpen || activeFilters ? "secondary" : "ghost"}
+            icon={SlidersHorizontal}
+            onClick={() => setFiltersOpen((o) => !o)}
+            aria-expanded={filtersOpen}
+            className="justify-center"
+          >
+            Filter{activeFilters ? ` (${activeFilters})` : ""}
+          </Button>
+        </div>
 
-          {loading ? (
-            <div className="h-64 flex items-center justify-center text-muted dark:text-muted">
-              <Loader2 className="w-8 h-8 animate-spin text-foreground" />
+        {filtersOpen && (
+          <div className="mt-4 pt-4 border-t border-line grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Tahap">
+              <Combobox
+                value={get("stage")}
+                onChange={(v) => setParams({ stage: v || null })}
+                options={stageOptions}
+                placeholder="Semua tahap"
+                clearable
+                size="sm"
+              />
+            </Field>
+            <Field label="Pendidikan terakhir">
+              <Combobox
+                value={get("education")}
+                onChange={(v) => setParams({ education: v || null })}
+                options={EDUCATION_OPTIONS}
+                placeholder="Semua jenjang"
+                clearable
+                size="sm"
+              />
+            </Field>
+            <Field label="Sumber lamaran">
+              <Combobox
+                value={get("source")}
+                onChange={(v) => setParams({ source: v || null })}
+                options={SOURCE_OPTIONS}
+                placeholder="Semua sumber"
+                clearable
+                size="sm"
+              />
+            </Field>
+            <Field label="Penilaian minimal">
+              <Combobox
+                value={get("minRating")}
+                onChange={(v) => setParams({ minRating: v || null })}
+                options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: `${"★".repeat(n)} ${n} ke atas` }))}
+                placeholder="Semua"
+                clearable
+                size="sm"
+              />
+            </Field>
+            <Field label="Melamar sejak">
+              <DatePicker value={get("from")} onChange={(v) => setParams({ from: v || null })} max={get("to") || undefined} clearable />
+            </Field>
+            <Field label="Melamar sampai">
+              <DatePicker value={get("to")} onChange={(v) => setParams({ to: v || null })} min={get("from") || undefined} clearable />
+            </Field>
+            <Field label="Bisa mulai paling lambat">
+              <DatePicker value={get("availableBy")} onChange={(v) => setParams({ availableBy: v || null })} clearable />
+            </Field>
+            <div className="flex flex-col justify-end gap-2.5 pb-1">
+              <CheckFilter label="Hanya yang melampirkan CV" checked={get("hasCv") === "1"} onChange={(on) => setParams({ hasCv: on ? "1" : null })} />
+              <CheckFilter
+                label="Ada jadwal wawancara"
+                checked={get("interview") === "upcoming"}
+                onChange={(on) => setParams({ interview: on ? "upcoming" : null })}
+              />
             </div>
-          ) : filteredCandidates.length === 0 ? (
-            <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
-              <Users className="w-8 h-8 mb-2 opacity-50 text-muted" />
-              <p className="text-sm font-medium">Pelamar tidak ditemukan</p>
-              <p className="text-xs mt-1">Belum ada pelamar baru atau sesuaikan kata kunci pencarian.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-  
-          {DEFAULT_STAGES.map(stage => {
-            const list = filteredCandidates.filter(c => c.currentStage === stage);
-            return (
-              <div key={stage} className="bg-surface border border-line/60 dark:border-white/6 rounded-xl p-4 flex flex-col gap-3 min-h-[300px]">
-                <div className="flex items-center justify-between border-b border-line pb-2 mb-1">
-                  <h3 className="text-xs font-semibold text-foreground">{stage}</h3>
-                  <span className="px-1.5 py-0.5 rounded bg-white/4 text-[11px] font-semibold text-muted dark:text-muted">{list.length}</span>
-                </div>
-
-                <div className="flex-1 space-y-3">
-                  {list.map(c => (
-                    <div
-                      key={c._id}
-                      onClick={() => handleOpenDetails(c)}
-                      className="p-3 bg-white border border-line rounded-lg hover:border-white/12 hover:bg-surface transition-all duration-200 cursor-pointer text-left space-y-2 group"
-                    >
-                      <div>
-                        <span className="font-semibold text-xs text-foreground dark:text-foreground group-hover:text-foreground dark:group-hover:text-white transition-all block">{c.name}</span>
-                        <span className="text-xs text-muted font-medium">{c.positionId?.name || "Posisi Lain"}</span>
-                      </div>
-
-                      <div className="flex justify-between items-center text-[11px]">
-                        <span className="capitalize text-muted font-mono">Src: {c.source.replace(/_/g, " ")}</span>
-                        <span className={`px-1 rounded font-semibold capitalize ${
-                          c.status === "passed"
-                            ? "bg-success-soft text-success dark:text-success"
-                            : c.status === "rejected"
-                            ? "bg-danger-soft text-danger dark:text-danger"
-                            : "bg-warning-soft text-warning dark:text-warning"
-                        }`}>
-                          {c.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            {activeFilters > 0 && (
+              <div className="sm:col-span-2 lg:col-span-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={X}
+                  onClick={() => setParams(Object.fromEntries(FILTER_KEYS.filter((k) => k !== "q").map((k) => [k, null])))}
+                >
+                  Hapus semua filter
+                </Button>
               </div>
-            );
-          })}
+            )}
+          </div>
+        )}
+      </Card>
+
+      {error ? (
+        <ErrorState message={error} onRetry={load} />
+      ) : loading && !data ? (
+        <SkeletonList rows={6} />
+      ) : !data?.rows.length ? (
+        <Card>
+          <EmptyState
+            icon={Users}
+            title={activeFilters || get("q") || status !== "all" ? "Tidak ada pelamar yang cocok" : "Belum ada pelamar"}
+            description={
+              activeFilters || get("q") || status !== "all"
+                ? "Coba longgarkan filter atau ubah kata kunci pencarian."
+                : "Lamaran dari halaman karier akan muncul di sini begitu lowongan ditayangkan."
+            }
+          />
+        </Card>
+      ) : (
+        <div className={cn("transition-opacity", loading && "opacity-60")}>
+          {/* Phones: cards. A seven-column table is unreadable at 375px. */}
+          <div className="md:hidden space-y-2.5">
+            {data.rows.map((r) => (
+              <Link key={r._id} href={`/admin/recruitment/${r._id}`} className="block card p-4 hover:border-primary transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-body font-semibold text-heading truncate">{r.name}</p>
+                    <p className="text-label text-muted truncate">{r.vacancyId?.title ?? "Lowongan dihapus"}</p>
+                  </div>
+                  <RowStatus row={r} />
+                </div>
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-label text-muted">
+                  <span className="font-medium text-foreground/80">{r.currentStage}</span>
+                  {r.city && (
+                    <span className="inline-flex items-center gap-1">
+                      <MapPin className="w-3 h-3" strokeWidth={ICON_STROKE} />
+                      {r.city}
+                    </span>
+                  )}
+                  {(r.rating ?? 0) > 0 && <Rating value={r.rating ?? 0} />}
+                  <span className="text-subtle">{formatRelative(r.createdAt)}</span>
+                </div>
+                {r.nextInterviewAt && !r.employeeId && r.status !== "rejected" && <InterviewLine at={r.nextInterviewAt} />}
+              </Link>
+            ))}
+          </div>
+
+          <Card className="hidden md:block overflow-hidden">
+            <TableWrap>
+              <thead>
+                <tr>
+                  <Th>Pelamar</Th>
+                  <Th>Lowongan & tahap</Th>
+                  <Th>Profil</Th>
+                  <Th>Bisa mulai</Th>
+                  <Th>Penilaian</Th>
+                  <Th>Status</Th>
+                  <Th>Melamar</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r) => (
+                  <Tr key={r._id}>
+                    <Td>
+                      <Link href={`/admin/recruitment/${r._id}`} className="block min-w-0 group">
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-body-sm font-semibold text-heading group-hover:text-primary transition-colors truncate max-w-[220px]">
+                            {r.name}
+                          </span>
+                          {r.hasCv && (
+                            <FileText className="w-3.5 h-3.5 text-subtle shrink-0" strokeWidth={ICON_STROKE} aria-label="Melampirkan CV" />
+                          )}
+                        </span>
+                        <span className="block text-label text-muted truncate max-w-[240px]">{r.email}</span>
+                      </Link>
+                    </Td>
+                    <Td>
+                      <p className="text-body-sm text-foreground truncate max-w-[220px]">{r.vacancyId?.title ?? "—"}</p>
+                      <p className="text-label text-muted">{r.currentStage}</p>
+                      {r.nextInterviewAt && !r.employeeId && r.status !== "rejected" && <InterviewLine at={r.nextInterviewAt} />}
+                    </Td>
+                    <Td>
+                      <p className="text-body-sm text-foreground">{educationLabel(r.lastEducation) || "—"}</p>
+                      <p className="text-label text-muted">
+                        {[r.city, r.expectedSalary ? formatRupiah(r.expectedSalary) : ""].filter(Boolean).join(" · ") || "—"}
+                      </p>
+                    </Td>
+                    <Td className="text-body-sm whitespace-nowrap">{r.availableFrom ? formatDate(r.availableFrom) : "—"}</Td>
+                    <Td>{(r.rating ?? 0) > 0 ? <Rating value={r.rating ?? 0} /> : <span className="text-label text-subtle">Belum</span>}</Td>
+                    <Td>
+                      <RowStatus row={r} />
+                    </Td>
+                    <Td className="text-label text-muted whitespace-nowrap">{formatRelative(r.createdAt)}</Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </TableWrap>
+          </Card>
+
+          <Pagination
+            className="mt-4"
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            limit={limit}
+            onPage={(p) => setParams({ page: p === 1 ? null : p }, false)}
+            onLimit={(l) => setParams({ limit: l === 25 ? null : l })}
+          />
         </div>
       )}
-      </>
-    ) : (
-      <div className="space-y-4">
-        {pipelinesLoading ? (
-          <div className="h-64 flex items-center justify-center text-muted dark:text-muted">
-            <Loader2 className="w-8 h-8 animate-spin text-foreground" />
-          </div>
-        ) : positions.length === 0 ? (
-          <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
-            <Briefcase className="w-8 h-8 mb-2 opacity-50 text-muted" />
-            <p className="text-sm font-medium">Jabatan tidak ditemukan</p>
-            <p className="text-xs mt-1">Buat jabatan/posisi terlebih dahulu di menu divisi & jabatan.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {positions.map(pos => {
-              const pipe = pipelines.find((p) =>
-                typeof p.positionId === "object" && p.positionId !== null
-                  ? p.positionId._id === pos._id
-                  : p.positionId === pos._id
-              );
-              const stages = pipe?.stages || DEFAULT_STAGES;
 
-              return (
-                <div key={pos._id} className="p-5 bg-surface border border-line/60 dark:border-white/6 rounded-xl flex flex-col justify-between gap-4">
-                  <div className="space-y-2">
-                    <h3 className="font-semibold text-sm text-foreground dark:text-foreground">{pos.name}</h3>
-                    <div className="flex flex-wrap gap-1.5 items-center text-xs text-muted dark:text-muted">
-                      <span className="font-semibold text-foreground dark:text-muted">Tahapan:</span>
-                      {stages.map((st: string, idx: number) => (
-                        <span key={st} className="flex items-center gap-1">
-                          <span className="px-1.5 py-0.5 rounded bg-surface-2 dark:bg-white/4 text-foreground dark:text-muted font-semibold text-[11px]">{st}</span>
-                          {idx < stages.length - 1 && <ChevronRight className="w-3 h-3 opacity-60" />}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setSelectedPipelinePositionId(pos._id);
-                      setPipelineStages(stages);
-                      setNewStageInput("");
-                      setErrorMessage("");
-                      setPipelineModalOpen(true);
-                    }}
-                    className="w-fit px-3 py-1.5 text-xs font-semibold bg-primary text-primary-foreground hover:bg-surface-2 dark:hover:bg-surface-2 rounded-lg cursor-pointer transition-all border border-line"
-                  >
-                    Edit Tahapan Alur
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    )}
-
-      {/* Slide-over Details Panel */}
-      <AnimatePresence>
-        {detailsOpen && selectedCandidate && (
-          <div className="fixed inset-0 z-50 flex items-center justify-end font-sans">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={() => setDetailsOpen(false)} className="absolute inset-0 bg-black" />
-            <motion.div
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="w-full max-w-lg h-full bg-surface border-l border-line shadow-[var(--shadow-pop)] relative z-10 p-6 flex flex-col justify-between overflow-y-auto"
-            >
-              <div className="space-y-6">
-                <div className="flex items-center justify-between border-b border-line pb-4">
-                  <div>
-                    <h2 className="text-base font-semibold text-foreground dark:text-foreground">Detail & Evaluasi Pelamar</h2>
-                    <p className="text-xs text-muted dark:text-muted mt-1">Update tahapan evaluasi rekrutmen kandidat secara berkala</p>
-                  </div>
-                  <button onClick={() => setDetailsOpen(false)} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {errorMessage && (
-                  <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{errorMessage}</span>
-                  </div>
-                )}
-
-                {/* Candidate Info */}
-                <div className="p-4 rounded-xl bg-white/1 border border-line space-y-2 text-xs">
-                  <p className="font-semibold text-foreground dark:text-foreground text-sm">{selectedCandidate.name}</p>
-                  <p className="text-muted dark:text-muted">Email: {selectedCandidate.email}</p>
-                  <p className="text-muted dark:text-muted">No. HP: {selectedCandidate.phone}</p>
-                  <p className="text-muted dark:text-muted font-semibold">Lamaran Lowongan: {selectedCandidate.positionId?.name || "-"}</p>
-                  {selectedCandidate.cvUrl && (
-                    <a href={selectedCandidate.cvUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-foreground hover:text-foreground underline font-medium mt-1">
-                      <FileText className="w-3.5 h-3.5" /> Lihat Berkas CV <ExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
-                </div>
-
-                {/* Evaluator Update Form */}
-                <div className="space-y-4 text-xs border-t border-line pt-4">
-                  <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">Update Evaluasi Tahapan</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-muted dark:text-muted font-semibold">Tentukan Tahap</label>
-                      <select value={actionStage} onChange={e => setActionStage(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
-                        {DEFAULT_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-muted dark:text-muted font-semibold">Status Tahap</label>
-                      <select value={actionStatus} onChange={e => setActionStatus(e.target.value as "pending" | "in_progress" | "passed" | "rejected" | "on_hold")} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
-                        <option value="pending">Pending</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="passed">Passed (Lolos)</option>
-                        <option value="rejected">Rejected (Gagal)</option>
-                        <option value="on_hold">On Hold</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {actionStage === "Offering" && (
-                    <div className="space-y-1">
-                      <label className="text-muted dark:text-muted font-semibold">Negosiasi Gaji Offering (Rupiah)</label>
-                      <input type="number" value={offeringSalary} onChange={e => setOfferingSalary(Number.isFinite(e.target.valueAsNumber) ? e.target.valueAsNumber : 0)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
-                    </div>
-                  )}
-
-                  <div className="space-y-1">
-                    <label className="text-muted dark:text-muted font-semibold">Catatan Evaluasi / Interview</label>
-                    <textarea value={actionNotes} onChange={e => setActionNotes(e.target.value)} placeholder="Tulis hasil wawancara, catatan skor psikotes, dll..." rows={3} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs placeholder:text-muted" />
-                  </div>
-
-                  <button onClick={handleUpdateStage} disabled={submitting} className="px-4 py-2 rounded-lg bg-surface border border-line text-xs font-semibold text-foreground hover:text-foreground hover:bg-white/4 cursor-pointer transition-all flex items-center gap-1.5 w-fit">
-                    {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    Simpan Evaluasi
-                  </button>
-                </div>
-
-                {/* Candidate History / Timeline */}
-                <div className="space-y-4 border-t border-line pt-4 text-xs">
-                  <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">Candidate Timeline History</h3>
-                  {selectedCandidate.history.length === 0 ? (
-                    <p className="text-muted italic">Belum ada riwayat timeline.</p>
-                  ) : (
-                    <div className="space-y-4 pl-2 border-l border-line">
-                      {selectedCandidate.history.map((h, i) => (
-                        <div key={i} className="relative pl-4 space-y-1">
-                          <div className="absolute left-[-21px] top-1 w-2.5 h-2.5 rounded-full bg-primary border border-line" />
-                          <span className="font-semibold text-foreground block">{h.stage} ({h.status})</span>
-                          <span className="text-xs text-muted block">{new Date(h.createdAt).toLocaleString("id-ID")}</span>
-                          {h.notes && (
-                            <p className="text-xs text-muted dark:text-muted italic">
-                              &ldquo;{h.notes}&rdquo;
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Action buttons footer */}
-              <div className="border-t border-line pt-4 mt-6 flex items-center justify-between gap-3 bg-surface relative z-20">
-                {selectedCandidate.currentStage === "Offering" && selectedCandidate.status === "passed" ? (
-                  <button
-                    onClick={handleOpenMigrate}
-                    className="px-4 py-2.5 rounded-lg bg-primary text-xs font-semibold text-primary-foreground hover:bg-surface-2 dark:hover:bg-surface-2 flex items-center gap-1.5 active:scale-[0.98] transition-all border border-line-strong dark:border-white cursor-pointer"
-                  >
-                    Onboard Karyawan Baru <ArrowRight className="w-4 h-4" />
-                  </button>
-                ) : (
-                  <div />
-                )}
-                
-                <button
-                  onClick={() => setDetailsOpen(false)}
-                  className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground transition-all cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Manual Candidate Creation Form Modal */}
-      <AnimatePresence>
-        {formOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={() => setFormOpen(false)} className="absolute inset-0 bg-black" />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
-            >
-              <div className="flex items-center justify-between border-b border-line pb-4 mb-4">
-                <h3 className="text-sm font-semibold text-foreground dark:text-foreground">Tambah Pelamar Kerja Baru</h3>
-                <button onClick={() => setFormOpen(false)} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {errorMessage && (
-                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2 mb-4">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleAddSubmit} className="space-y-4 text-xs">
-                <div className="space-y-1">
-                  <label className="text-foreground font-semibold">Nama Lengkap</label>
-                  <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Alice Johnson" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-foreground font-semibold">Alamat Email</label>
-                  <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="alice@example.com" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-foreground font-semibold">No. Telepon / HP</label>
-                  <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} placeholder="08xxxxxxxx" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
-                </div>
-
-                <SearchSelect
-                  label="Melamar Posisi Lowongan"
-                  value={positionId}
-                  onChange={setPositionId}
-                  options={positions.map(p => ({ label: p.name, value: p._id }))}
-                  placeholder="Pilih posisi..."
-                />
-
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-6">
-                  <button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground transition-all">Batal</button>
-                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
-                    {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    Tambah Pelamar
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Migration / Onboarding Form Modal */}
-      <AnimatePresence>
-        {migrateOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={() => setMigrateOpen(false)} className="absolute inset-0 bg-black" />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden"
-            >
-              <div className="flex items-center justify-between border-b border-line pb-4 mb-4">
-                <h3 className="text-sm font-semibold text-foreground dark:text-foreground">Onboarding Karyawan Baru</h3>
-                <button onClick={() => setMigrateOpen(false)} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {errorMessage && (
-                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2 mb-4">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleMigrateSubmit} className="space-y-4 text-xs">
-                <SearchSelect
-                  label="Cabang Kantor Penempatan"
-                  value={branchId}
-                  onChange={setBranchId}
-                  options={branches.map(b => ({ label: b.name, value: b._id }))}
-                  placeholder="Pilih cabang..."
-                />
-
-                <SearchSelect
-                  label="Divisi / Departemen"
-                  value={divisionId}
-                  onChange={setDivisionId}
-                  options={divisions.map(d => ({ label: d.name, value: d._id }))}
-                  placeholder="Pilih divisi..."
-                />
-
-                <div className="space-y-1">
-                  <label className="text-foreground font-semibold">Tanggal Mulai Kontrak Kerja</label>
-                  <input type="date" required value={joinDate} onChange={e => setJoinDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-6">
-                  <button type="button" onClick={() => setMigrateOpen(false)} className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground transition-all">Batal</button>
-                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5">
-                    {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    Migrasikan & Onboard
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Pipeline Edit Modal */}
-      <AnimatePresence>
-        {pipelineModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center font-sans p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={() => setPipelineModalOpen(false)} className="absolute inset-0 bg-black" />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-md relative z-10 p-6 overflow-hidden flex flex-col gap-4 text-xs"
-            >
-              <div className="flex items-center justify-between border-b border-line pb-3">
-                <h3 className="text-sm font-semibold text-foreground dark:text-foreground">Konfigurasi Alur Tahapan Rekrutmen</h3>
-                <button onClick={() => setPipelineModalOpen(false)} className="p-1 rounded bg-surface border border-line text-muted dark:text-muted hover:text-foreground cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {errorMessage && (
-                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
-
-              {/* Current Stages List */}
-              <div className="space-y-2">
-                <label className="font-semibold text-foreground dark:text-muted">Tahapan Aktif (Urutan Alur):</label>
-                <div className="space-y-1.5 border border-line dark:border-white/6 rounded-lg p-3 max-h-56 overflow-y-auto bg-surface-2">
-                  {pipelineStages.map((st, idx) => (
-                    <div key={st + idx} className="flex items-center justify-between p-2 rounded bg-surface border border-line">
-                      <span className="font-semibold text-foreground dark:text-foreground">{idx + 1}. {st}</span>
-                      <div className="flex items-center gap-1.5">
-                        {/* Move Up */}
-                        <button
-                          type="button"
-                          disabled={idx === 0}
-                          onClick={() => {
-                            const updated = [...pipelineStages];
-                            const temp = updated[idx];
-                            updated[idx] = updated[idx - 1];
-                            updated[idx - 1] = temp;
-                            setPipelineStages(updated);
-                          }}
-                          className="p-1 rounded hover:bg-surface-2 disabled:opacity-30 cursor-pointer text-muted dark:text-muted"
-                        >
-                          ▲
-                        </button>
-                        {/* Move Down */}
-                        <button
-                          type="button"
-                          disabled={idx === pipelineStages.length - 1}
-                          onClick={() => {
-                            const updated = [...pipelineStages];
-                            const temp = updated[idx];
-                            updated[idx] = updated[idx + 1];
-                            updated[idx + 1] = temp;
-                            setPipelineStages(updated);
-                          }}
-                          className="p-1 rounded hover:bg-surface-2 disabled:opacity-30 cursor-pointer text-muted dark:text-muted"
-                        >
-                          ▼
-                        </button>
-                        {/* Delete */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPipelineStages(pipelineStages.filter((_, i) => i !== idx));
-                          }}
-                          className="p-1 rounded text-danger hover:bg-danger-soft cursor-pointer"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {pipelineStages.length === 0 && (
-                    <p className="text-center py-4 text-subtle text-[11px]">Belum ada tahapan ditentukan</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Add New Stage */}
-              <div className="space-y-2 border-t border-line pt-3">
-                <label className="font-semibold text-foreground dark:text-muted">Tambah Tahapan Baru:</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newStageInput}
-                    onChange={e => setNewStageInput(e.target.value)}
-                    placeholder="Contoh: Tes Psikotes, BI Checking"
-                    className="flex-1 px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const trimmed = newStageInput.trim();
-                      if (trimmed && !pipelineStages.includes(trimmed)) {
-                        setPipelineStages([...pipelineStages, trimmed]);
-                        setNewStageInput("");
-                      }
-                    }}
-                    className="px-3 py-2 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-surface-2 dark:hover:bg-surface-2 cursor-pointer"
-                  >
-                    Tambah
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-line mt-2">
-                <button type="button" onClick={() => setPipelineModalOpen(false)} className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground transition-all">Batal</button>
-                <button
-                  type="button"
-                  onClick={handleSavePipeline}
-                  disabled={submitting}
-                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
-                >
-                  {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  Simpan Alur
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <AddCandidateModal
+        open={addOpen}
+        vacancyId={get("vacancyId") || undefined}
+        vacancies={vacancies.filter((v) => v.status !== "archived")}
+        onClose={() => setAddOpen(false)}
+        onSaved={(id) => {
+          setAddOpen(false);
+          if (id) router.push(`/admin/recruitment/${id}`);
+          else void load();
+        }}
+      />
     </div>
+  );
+}
+
+function RowStatus({ row }: { row: Row }) {
+  if (row.employeeId) return <Badge tone="success">Direkrut</Badge>;
+  return <StatusBadge status={row.status} />;
+}
+
+function Rating({ value }: { value: number }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 text-warning" aria-label={`Penilaian ${value} dari 5`}>
+      {Array.from({ length: 5 }, (_, i) => (
+        <Star key={i} className={cn("w-3.5 h-3.5", i < value ? "fill-current" : "text-line-strong")} strokeWidth={ICON_STROKE} />
+      ))}
+    </span>
+  );
+}
+
+function InterviewLine({ at }: { at: string }) {
+  if (new Date(at) < new Date()) return null;
+  return (
+    <p className="mt-1 inline-flex items-center gap-1 text-label text-info">
+      <CalendarClock className="w-3 h-3" strokeWidth={ICON_STROKE} />
+      Wawancara {formatDateTime(at)}
+    </p>
+  );
+}
+
+function CheckFilter({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2.5 text-body-sm text-foreground cursor-pointer">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="w-4 h-4 accent-[var(--primary)] cursor-pointer"
+      />
+      {label}
+    </label>
   );
 }

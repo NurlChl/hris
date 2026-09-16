@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { GripVertical, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import {
   Alert,
   Button,
@@ -14,9 +14,11 @@ import {
   Toggle,
   cn,
 } from "@/components/ui";
+import { ReorderList } from "@/components/ui/Reorder";
 import { useToast } from "@/components/ui/Toast";
 import { api, errorMessage } from "@/lib/client-api";
 
+import { DatePicker } from "@/components/ui/DatePicker";
 export interface VacancyDraft {
   id?: string;
   title: string;
@@ -179,7 +181,7 @@ export function VacancyForm({
             type="button"
             onClick={() => setStep(id)}
             className={cn(
-              "flex-1 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors cursor-pointer",
+              "flex-1 px-3 py-2 rounded-lg text-body-sm font-medium transition-colors cursor-pointer",
               step === id
                 ? "bg-surface text-heading font-semibold border border-line"
                 : "text-muted hover:text-foreground border border-transparent"
@@ -302,11 +304,10 @@ export function VacancyForm({
               htmlFor="vc-closes"
               hint="Setelah tanggal ini lowongan berhenti tayang otomatis."
             >
-              <Input
+              <DatePicker
                 id="vc-closes"
-                type="date"
                 value={draft.closesAt}
-                onChange={(e) => set("closesAt", e.target.value)}
+                onChange={(value) => set("closesAt", value)}
               />
             </Field>
           </div>
@@ -437,8 +438,10 @@ export function VacancyForm({
 /**
  * Repeatable text-row editor.
  *
- * Reordering is done with explicit up/down buttons rather than drag-and-drop:
- * drag needs a pointer, and this form is regularly filled in on a tablet.
+ * Rows reorder by dragging the grip — with a mouse, a finger, or a pen — or by
+ * focusing the grip and pressing the arrow keys. The grip used to be drawn here
+ * as a plain icon with no behaviour at all, next to separate up/down buttons,
+ * which invited people to drag something that could not be dragged.
  */
 function ListEditor({
   label,
@@ -463,30 +466,27 @@ function ListEditor({
     onChange(next);
   };
 
-  const move = (i: number, dir: -1 | 1) => {
-    const target = i + dir;
-    if (target < 0 || target >= rows.length) return;
-    const next = [...rows];
-    [next[i], next[target]] = [next[target], next[i]];
-    onChange(next);
-  };
-
   return (
     <div className="space-y-2">
       <div>
-        <p className="text-[13px] font-medium text-foreground">{label}</p>
-        {hint && <p className="text-xs text-subtle mt-1 leading-relaxed">{hint}</p>}
+        <p className="text-body-sm font-medium text-foreground">{label}</p>
+        {hint && <p className="text-label text-subtle mt-1 leading-relaxed">{hint}</p>}
       </div>
 
-      <ul className="space-y-2">
-        {rows.map((row, i) => (
-          <li key={i} className="flex items-center gap-2">
-            {ordered ? (
-              <span className="w-6 text-center text-xs font-semibold text-subtle tabular-nums shrink-0">
+      <ReorderList
+        items={rows}
+        // Rows are plain strings and can repeat (two empty lines), so position
+        // is the only stable identity available.
+        getKey={(_, i) => String(i)}
+        onReorder={onChange}
+        handleAlign="center"
+        describeItem={(row, i) => (row.trim() ? `Baris "${row.trim()}"` : `Baris ${i + 1}`)}
+        renderItem={(row, i) => (
+          <div className="flex items-center gap-2">
+            {ordered && (
+              <span className="w-5 text-center text-label font-semibold text-subtle tabular-nums shrink-0">
                 {i + 1}
               </span>
-            ) : (
-              <GripVertical className="w-4 h-4 text-subtle shrink-0" strokeWidth={ICON_STROKE} />
             )}
             <Input
               value={row}
@@ -494,37 +494,17 @@ function ListEditor({
               placeholder={placeholder}
               aria-label={`${label} baris ${i + 1}`}
             />
-            <div className="flex shrink-0">
-              <button
-                type="button"
-                onClick={() => move(i, -1)}
-                disabled={i === 0}
-                aria-label="Pindah ke atas"
-                className="p-1.5 rounded-lg text-subtle hover:text-foreground hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                onClick={() => move(i, 1)}
-                disabled={i === rows.length - 1}
-                aria-label="Pindah ke bawah"
-                className="p-1.5 rounded-lg text-subtle hover:text-foreground hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              >
-                ↓
-              </button>
-              <button
-                type="button"
-                onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
-                aria-label="Hapus baris"
-                className="p-1.5 rounded-lg text-subtle hover:text-danger hover:bg-danger-soft cursor-pointer"
-              >
-                <X className="w-4 h-4" strokeWidth={ICON_STROKE} />
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+            <button
+              type="button"
+              onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
+              aria-label={`Hapus baris ${i + 1}`}
+              className="shrink-0 p-1.5 rounded-lg text-subtle hover:text-danger hover:bg-danger-soft cursor-pointer"
+            >
+              <X className="w-4 h-4" strokeWidth={ICON_STROKE} />
+            </button>
+          </div>
+        )}
+      />
 
       <Button
         type="button"

@@ -47,12 +47,12 @@ export default function ApiDocsPage() {
       <header className="h-16 border-b border-line bg-surface sticky top-0 z-40">
         <div className="max-w-6xl mx-auto h-full px-4 md:px-6 flex items-center justify-between gap-3">
           <Link href="/" className="flex items-center gap-2.5 min-w-0">
-            <span className="w-8 h-8 rounded-lg bg-primary text-primary-foreground grid place-items-center font-semibold text-xs shrink-0">
+            <span className="w-8 h-8 rounded-lg bg-primary text-primary-foreground grid place-items-center font-semibold text-label shrink-0">
               HR
             </span>
             <span className="min-w-0">
-              <span className="block text-sm font-semibold truncate">Referensi API HRIS</span>
-              <span className="hidden sm:block text-[11px] text-subtle">
+              <span className="block text-body font-semibold truncate">Referensi API HRIS</span>
+              <span className="hidden sm:block text-caption text-subtle">
                 {total} endpoint · base URL {API_BASE}
               </span>
             </span>
@@ -63,7 +63,7 @@ export default function ApiDocsPage() {
               href="/api/v1/openapi"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-xs font-semibold text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-label font-semibold text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
             >
               <Download className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">OpenAPI JSON</span>
@@ -77,7 +77,7 @@ export default function ApiDocsPage() {
             </button>
             <Link
               href="/docs"
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-xs font-semibold text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-label font-semibold text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               Panduan
@@ -88,9 +88,9 @@ export default function ApiDocsPage() {
 
       <main className="max-w-6xl mx-auto px-4 md:px-6 py-8 space-y-8">
         <div>
-          <h1 className="text-[28px] md:text-[32px] text-heading">Referensi API</h1>
-          <p className="mt-2 text-sm text-muted leading-relaxed max-w-3xl">
-            Seluruh endpoint berada di bawah <code className="font-mono text-xs">{API_BASE}</code> dan
+          <h1 className="text-display-sm md:text-display text-heading">Referensi API</h1>
+          <p className="mt-2 text-body text-muted leading-relaxed max-w-3xl">
+            Seluruh endpoint berada di bawah <code className="font-mono text-label">{API_BASE}</code> dan
             memakai amplop respons yang sama. Autentikasi menggunakan cookie sesi httpOnly kecuali
             disebutkan lain pada tiap endpoint.
           </p>
@@ -101,7 +101,7 @@ export default function ApiDocsPage() {
             <p className="eyebrow mb-2">
               Respons berhasil
             </p>
-            <pre className="text-xs leading-relaxed overflow-x-auto">
+            <pre className="text-label leading-relaxed overflow-x-auto">
               <code className="font-mono">{`{
   "success": true,
   "data": { ... },
@@ -114,7 +114,7 @@ export default function ApiDocsPage() {
             <p className="eyebrow mb-2">
               Respons gagal
             </p>
-            <pre className="text-xs leading-relaxed overflow-x-auto">
+            <pre className="text-label leading-relaxed overflow-x-auto">
               <code className="font-mono">{`{
   "success": false,
   "error": {
@@ -151,8 +151,8 @@ export default function ApiDocsPage() {
           groups.map((group) => (
             <section key={group.name} className="space-y-3">
               <div className="pb-2 border-b border-line">
-                <h2 className="text-sm font-semibold">{group.name}</h2>
-                <p className="text-xs text-muted mt-0.5 leading-relaxed max-w-3xl">
+                <h2 className="text-body font-semibold">{group.name}</h2>
+                <p className="text-label text-muted mt-0.5 leading-relaxed max-w-3xl">
                   {group.description}
                 </p>
               </div>
@@ -183,18 +183,18 @@ function EndpointRow({ endpoint: ep }: { endpoint: ApiEndpoint }) {
         <Badge tone={METHOD_TONE[ep.method]} className="font-mono shrink-0 w-16 justify-center">
           {ep.method}
         </Badge>
-        <code className="font-mono text-xs font-semibold shrink-0">{ep.path}</code>
-        <span className="text-xs text-muted truncate flex-1 min-w-32">{ep.summary}</span>
+        <code className="font-mono text-label font-semibold shrink-0">{ep.path}</code>
+        <span className="text-label text-muted truncate flex-1" style={{ minWidth: "8rem" }}>{ep.summary}</span>
       </button>
 
       {open && (
         <div className="px-4 pb-4 pt-1 space-y-4 border-t border-line">
-          <p className="text-sm text-foreground/85 leading-relaxed max-w-3xl">{ep.description}</p>
+          <p className="text-body text-foreground/85 leading-relaxed max-w-3xl">{ep.description}</p>
 
-          <p className="flex items-center gap-1.5 text-xs">
+          <p className="flex items-center gap-1.5 text-label">
             <Lock className="w-3.5 h-3.5 text-subtle shrink-0" />
             <span className="text-subtle">Otorisasi:</span>
-            <code className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-surface-2">{ep.auth}</code>
+            <code className="font-mono text-caption px-1.5 py-0.5 rounded bg-surface-2">{ep.auth}</code>
           </p>
 
           {ep.params && ep.params.length > 0 && (
@@ -249,13 +249,13 @@ function Table({
     <div>
       <p className="eyebrow mb-1.5">{title}</p>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm border-collapse min-w-[520px]">
+        <table className="w-full text-body border-collapse min-w-[520px]">
           <thead>
             <tr>
               {head.map((h) => (
                 <th
                   key={h}
-                  className="text-left text-[11px] font-semibold uppercase tracking-wide text-subtle px-3 py-2 border-b border-line"
+                  className="text-left text-caption font-semibold uppercase tracking-wide text-subtle px-3 py-2 border-b border-line"
                 >
                   {h}
                 </th>
@@ -269,7 +269,7 @@ function Table({
                   <td
                     key={j}
                     className={cn(
-                      "px-3 py-2 border-b border-line text-xs align-top leading-relaxed",
+                      "px-3 py-2 border-b border-line text-label align-top leading-relaxed",
                       j === 0 ? "font-mono font-semibold text-foreground whitespace-nowrap" : "text-muted"
                     )}
                   >

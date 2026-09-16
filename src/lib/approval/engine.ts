@@ -12,7 +12,7 @@ import { notifyUsers, resolveRecipientsByRole, resolveRecipientForEmployee } fro
  * modules cannot drift apart in behaviour.
  */
 
-export type RefType = "leave" | "correction" | "holiday_swap";
+export type RefType = "leave" | "correction" | "holiday_swap" | "face_change";
 
 export interface StepDef {
   stepNumber: number;
@@ -34,18 +34,23 @@ const FALLBACK_STEPS: Record<RefType, StepDef[]> = {
     { stepNumber: 1, approverRole: "SPV", isMandatory: true },
     { stepNumber: 2, approverRole: "HRD", isMandatory: true },
   ],
+  // The supervisor is the person who actually knows the employee's face, so
+  // they are the one who can tell whether the new photos are the same person.
+  face_change: [{ stepNumber: 1, approverRole: "SPV", isMandatory: true }],
 };
 
 export const REF_TYPE_LABEL: Record<RefType, string> = {
   leave: "Pengajuan Izin/Cuti",
   correction: "Koreksi Absen",
   holiday_swap: "Tukar Libur",
+  face_change: "Penggantian Wajah Presensi",
 };
 
 export const REF_TYPE_LINK: Record<RefType, string> = {
   leave: "/portal/leave",
   correction: "/portal/attendance",
   holiday_swap: "/portal/holiday-swap",
+  face_change: "/portal/profile?tab=face",
 };
 
 export async function getFlowSteps(refType: RefType): Promise<StepDef[]> {
@@ -247,6 +252,21 @@ export async function decide({
   // Notify: the next approver if the flow continues, the requester if it ended.
   if (!completed) {
     await notifyStep(instance.currentStep, instance, employeeId, summary);
+    // The requester hears about progress too, not only the final outcome, so a
+    // leave approved by the supervisor on Monday is not a mystery until Friday.
+    const nextRole = instance.stepsStatus.find(
+      (s: { stepNumber: number }) => s.stepNumber === instance.currentStep
+    )?.approverRole;
+    const requester = await resolveRecipientForEmployee(employeeId);
+    await notifyUsers(requester, {
+      kind: "approval_result",
+      title: `${REF_TYPE_LABEL[instance.refType as RefType]} disetujui ${step.approverRole}`,
+      body: `${summary}. Sekarang menunggu persetujuan ${nextRole ?? "berikutnya"}.${comment ? ` Catatan: "${comment}"` : ""}`,
+      href: REF_TYPE_LINK[instance.refType as RefType],
+      refType: instance.refType,
+      refId: instance._id as mongoose.Types.ObjectId,
+      emailOptOut: true,
+    });
   } else {
     const recipients = await resolveRecipientForEmployee(employeeId);
     const label = REF_TYPE_LABEL[instance.refType as RefType];

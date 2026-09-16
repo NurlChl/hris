@@ -22,6 +22,11 @@ export interface PayslipTemplateShape {
   companyName: string;
   companyAddress: string;
   documentTitle: string;
+  /** Inlined as a data URL so printing never waits on a network fetch. */
+  logoUrl?: string;
+  showLogo?: boolean;
+  /** Printed height in millimetres; width follows the image's own ratio. */
+  logoHeight?: number;
   footerNote: string;
   employeeFields: string[];
   signatories: Array<{ label: string; name: string }>;
@@ -107,13 +112,32 @@ function Block({
             marginBottom: 20,
           }}
         >
-          <div>
-            <h1 style={{ margin: 0, fontSize: "1.5em", fontWeight: 600, letterSpacing: "-0.01em" }}>
-              {block.title || template.documentTitle || "SLIP GAJI KARYAWAN"}
-            </h1>
-            <p style={{ margin: "6px 0 0", color: MUTED, fontSize: "0.95em" }}>
-              Periode {formatPeriod(data.period)}
-            </p>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 14, minWidth: 0 }}>
+            {template.showLogo && template.logoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={template.logoUrl}
+                alt=""
+                style={{
+                  height: `${template.logoHeight ?? 14}mm`,
+                  width: "auto",
+                  maxWidth: "45mm",
+                  objectFit: "contain",
+                  // Chrome drops background images from a print job unless the
+                  // user ticks "Background graphics"; a real <img> is always
+                  // printed, which is why the logo is not a CSS background.
+                  flexShrink: 0,
+                }}
+              />
+            )}
+            <div style={{ minWidth: 0 }}>
+              <h1 style={{ margin: 0, fontSize: "1.5em", fontWeight: 600, letterSpacing: "-0.01em" }}>
+                {block.title || template.documentTitle || "SLIP GAJI KARYAWAN"}
+              </h1>
+              <p style={{ margin: "6px 0 0", color: MUTED, fontSize: "0.95em" }}>
+                Periode {formatPeriod(data.period)}
+              </p>
+            </div>
           </div>
           <div style={{ textAlign: "right", maxWidth: "45%" }}>
             <p style={{ margin: 0, fontWeight: 600 }}>{template.companyName || "—"}</p>

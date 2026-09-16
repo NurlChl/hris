@@ -2,7 +2,7 @@ import { auth } from "@/auth";
 import { apiError } from "./api";
 import { checkPermission, type PermissionResult } from "./rbac";
 import { connectToDatabase } from "./db";
-import { rateLimit, clientIp, type RateLimitRule } from "./rate-limit";
+import { rateLimit, rateLimitKeyForIp, clientIp, type RateLimitRule } from "./rate-limit";
 import type { NextResponse } from "next/server";
 import { ZodError, type ZodType } from "zod";
 
@@ -95,9 +95,44 @@ export async function requireEmployee(req: Request): Promise<GuardContext & { em
   return { ...ctx, employeeId: ctx.user.employeeId };
 }
 
-/** Applies a rate limit keyed by scope + identity; throws 429 when exceeded. */
+/**
+ * Applies a rate limit keyed by scope + identity; throws 429 when exceeded.
+ *
+ * `identity` must be something that distinguishes one caller from another — a
+ * user id, an employee id, an email. Each identity gets its own budget, so a
+ * busy colleague can never spend yours. Never pass a constant here: that would
+ * put every user of the endpoint into a single shared bucket.
+ */
 export function enforceRateLimit(scope: string, identity: string, rule: RateLimitRule) {
   const result = rateLimit(`${scope}:${identity}`, rule);
+  if (!result.ok) {
+    throw new HttpError(
+      429,
+      "RATE_LIMITED",
+      `Terlalu banyak permintaan. Silakan coba lagi dalam ${result.retryAfter} detik.`
+    );
+  }
+}
+
+/**
+ * Rate limit for endpoints reached without a session, keyed by client address.
+ *
+ * Anonymous callers have no identity to key on, so the address stands in for
+ * one. When even that is unavailable the key falls back to a coarse bucket
+ * shared by many strangers, and the limit is widened to match: a budget sized
+ * for one person, applied to everyone at once, locks out real users. The
+ * strict per-address limit still applies wherever the address is known.
+ */
+export function enforceIpRateLimit(scope: string, req: Request, rule: RateLimitRule) {
+  const ip = clientIp(req);
+  const { key, sharedBucket } = rateLimitKeyForIp(ip, {
+    userAgent: req.headers.get("user-agent"),
+    language: req.headers.get("accept-language"),
+  });
+
+  const effective = sharedBucket ? { ...rule, max: rule.max * 20 } : rule;
+  const result = rateLimit(`${scope}:${key}`, effective);
+
   if (!result.ok) {
     throw new HttpError(
       429,

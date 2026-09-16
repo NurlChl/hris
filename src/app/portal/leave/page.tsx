@@ -26,9 +26,16 @@ import {
   type BadgeTone,
 } from "@/components/ui";
 import { useToast } from "@/components/ui/Toast";
+import {
+  FileOrLinkInput,
+  attachmentProblem,
+  toAttachmentInputs,
+  type AttachmentItem,
+} from "@/components/ui/FileOrLinkInput";
 import { api, errorMessage } from "@/lib/client-api";
 import { formatDate, formatDateTime, wibDateKey } from "@/lib/time";
 
+import { DatePicker } from "@/components/ui/DatePicker";
 interface LeaveType {
   _id: string;
   name: string;
@@ -131,8 +138,8 @@ export default function LeavePage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-[26px] md:text-[30px] text-heading">Izin &amp; Cuti</h1>
-          <p className="text-sm text-muted mt-2 leading-relaxed">
+          <h1 className="text-display-sm md:text-display text-heading">Izin &amp; Cuti</h1>
+          <p className="text-body text-muted mt-2 leading-relaxed">
             Saldo tahun {year}. Akhir pekan dan hari libur nasional tidak memotong kuota.
           </p>
         </div>
@@ -174,8 +181,8 @@ export default function LeavePage() {
                   <div key={b._id} className="card p-5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-sm font-semibold truncate">{type.name}</p>
-                        <p className="text-[11px] text-subtle mt-0.5 line-clamp-2 leading-relaxed">
+                        <p className="text-body font-semibold truncate">{type.name}</p>
+                        <p className="text-caption text-subtle mt-0.5 line-clamp-2 leading-relaxed">
                           {type.description || "—"}
                         </p>
                       </div>
@@ -185,8 +192,8 @@ export default function LeavePage() {
                     </div>
 
                     <div className="mt-4 flex items-baseline gap-1.5">
-                      <span className="text-3xl font-semibold tabular-nums">{b.remainingDays}</span>
-                      <span className="text-xs text-muted">dari {b.allocatedDays} hari</span>
+                      <span className="text-display font-semibold tabular-nums">{b.remainingDays}</span>
+                      <span className="text-label text-muted">dari {b.allocatedDays} hari</span>
                     </div>
 
                     <div
@@ -203,7 +210,7 @@ export default function LeavePage() {
                       />
                     </div>
 
-                    <dl className="mt-3.5 grid grid-cols-2 gap-2 text-[11px]">
+                    <dl className="mt-3.5 grid grid-cols-2 gap-2 text-caption">
                       <div>
                         <dt className="text-subtle">Terpakai</dt>
                         <dd className="font-semibold tabular-nums">{b.usedDays} hari</dd>
@@ -215,7 +222,7 @@ export default function LeavePage() {
                     </dl>
 
                     {type.minLeadDays > 0 && (
-                      <p className="mt-3 pt-3 border-t border-line text-[11px] text-subtle flex items-start gap-1.5">
+                      <p className="mt-3 pt-3 border-t border-line text-caption text-subtle flex items-start gap-1.5">
                         <Info className="w-3 h-3 shrink-0 mt-0.5" />
                         Wajib diajukan minimal H-{type.minLeadDays}.
                       </p>
@@ -261,25 +268,25 @@ export default function LeavePage() {
                       <Td className="whitespace-nowrap font-medium">
                         {h.leaveTypeId?.name ?? "—"}
                       </Td>
-                      <Td className="whitespace-nowrap text-xs">
+                      <Td className="whitespace-nowrap text-label">
                         {formatDate(h.startDate)} – {formatDate(h.endDate)}
                       </Td>
-                      <Td className="whitespace-nowrap text-xs">
+                      <Td className="whitespace-nowrap text-label">
                         <span className="font-semibold tabular-nums">{h.chargedDays} hari kerja</span>
                         {h.calendarDays !== h.chargedDays && (
-                          <span className="block text-[11px] text-subtle">
+                          <span className="block text-caption text-subtle">
                             {h.calendarDays} hari kalender
                           </span>
                         )}
                       </Td>
                       <Td className="max-w-72">
-                        <span className="text-xs text-muted line-clamp-2">{h.reason}</span>
+                        <span className="text-label text-muted line-clamp-2">{h.reason}</span>
                         {h.evidenceUrl && (
                           <a
                             href={h.evidenceUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 mt-1 text-[11px] text-primary hover:underline"
+                            className="inline-flex items-center gap-1 mt-1 text-caption text-primary hover:underline"
                           >
                             <Paperclip className="w-3 h-3" />
                             Lihat lampiran
@@ -288,7 +295,7 @@ export default function LeavePage() {
                       </Td>
                       <Td>
                         <StatusBadge status={h.status} />
-                        <span className="block text-[11px] text-subtle mt-1">
+                        <span className="block text-caption text-subtle mt-1">
                           {formatDateTime(h.createdAt)}
                         </span>
                       </Td>
@@ -359,8 +366,7 @@ function LeaveFormModal({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
-  const [evidence, setEvidence] = useState<string | null>(null);
-  const [evidenceName, setEvidenceName] = useState("");
+  const [evidence, setEvidence] = useState<AttachmentItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [fileError, setFileError] = useState("");
 
@@ -370,8 +376,7 @@ function LeaveFormModal({
     setStartDate("");
     setEndDate("");
     setReason("");
-    setEvidence(null);
-    setEvidenceName("");
+    setEvidence([]);
     setFileError("");
   }, [open, types]);
 
@@ -387,29 +392,11 @@ function LeaveFormModal({
     return wibDateKey(d);
   }, [selected]);
 
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    setFileError("");
-    if (!file) {
-      setEvidence(null);
-      setEvidenceName("");
-      return;
-    }
-    if (file.size > 8 * 1024 * 1024) {
-      setFileError("Ukuran berkas melebihi 8 MB.");
-      e.target.value = "";
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setEvidence(String(reader.result));
-      setEvidenceName(file.name);
-    };
-    reader.readAsDataURL(file);
-  };
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const problem = attachmentProblem(evidence);
+    setFileError(problem ?? "");
+    if (problem) return;
     setSaving(true);
     try {
       const res = await api.post("/api/v1/leave", {
@@ -417,7 +404,7 @@ function LeaveFormModal({
         startDate,
         endDate,
         reason: reason.trim(),
-        evidence: evidence ?? undefined,
+        attachment: toAttachmentInputs(evidence)[0],
       });
       toast.success("Pengajuan terkirim", res.message);
       onDone();
@@ -481,26 +468,24 @@ function LeaveFormModal({
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Tanggal mulai" required htmlFor="lv-start">
-            <Input
+            <DatePicker
               id="lv-start"
-              type="date"
               required
               min={minDate}
               value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                if (!endDate || endDate < e.target.value) setEndDate(e.target.value);
+              onChange={(value) => {
+                setStartDate(value);
+                if (!endDate || endDate < value) setEndDate(value);
               }}
             />
           </Field>
           <Field label="Tanggal selesai" required htmlFor="lv-end">
-            <Input
+            <DatePicker
               id="lv-end"
-              type="date"
               required
               min={startDate || minDate}
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(value) => setEndDate(value)}
             />
           </Field>
         </div>
@@ -525,21 +510,19 @@ function LeaveFormModal({
           label={`Lampiran bukti${selected?.requiresEvidence ? "" : " (opsional)"}`}
           htmlFor="lv-file"
           error={fileError}
-          hint="Format JPG, PNG, WEBP, atau PDF. Maksimal 8 MB."
+          hint="Unggah foto atau PDF surat dokter/undangan, atau tempel tautan Google Drive."
         >
-          <input
+          <FileOrLinkInput
             id="lv-file"
-            type="file"
-            accept="image/jpeg,image/png,image/webp,application/pdf"
-            onChange={onFile}
-            className="w-full text-xs text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-surface-2 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-foreground hover:file:bg-surface-hover file:cursor-pointer cursor-pointer"
+            value={evidence}
+            onChange={(next) => {
+              setEvidence(next);
+              setFileError("");
+            }}
+            context="leave"
+            invalid={Boolean(fileError)}
+            disabled={saving}
           />
-          {evidenceName && (
-            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-success">
-              <Paperclip className="w-3 h-3" />
-              {evidenceName}
-            </p>
-          )}
         </Field>
       </form>
     </Modal>

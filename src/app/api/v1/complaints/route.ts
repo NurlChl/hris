@@ -13,7 +13,8 @@ import {
 } from "@/lib/guard";
 import { RATE_RULES } from "@/lib/rate-limit";
 import { logActivity } from "@/lib/audit/logger";
-import { storageProvider, decodeDataUrl } from "@/lib/storage";
+import { attachmentInputSchema } from "@/lib/attachments";
+import { attachmentRefHref, resolveSingleAttachment } from "@/lib/uploads";
 import { notifyUsers, resolveRecipientsByRole, resolveRecipientForEmployee } from "@/lib/notification/notify";
 import { randomToken } from "@/lib/crypto";
 import Complaint from "@/models/Complaint";
@@ -95,9 +96,7 @@ export const GET = wrapRouteHandler(async (req) => {
         responses: ((row.responses ?? []) as Array<{ isInternal?: boolean }>).filter(
           (r) => asHandler || !r.isInternal
         ),
-        attachments: row.attachments
-          ? await storageProvider.getSignedUrl(row.attachments as string, 900)
-          : "",
+        attachments: await attachmentRefHref(row.attachments as string),
       };
     })
   );
@@ -119,7 +118,10 @@ const createSchema = z.object({
     .trim()
     .min(30, "Uraikan kejadian minimal 30 karakter agar dapat ditindaklanjuti")
     .max(5000),
+  /** Inline data URL; still accepted from older app versions. */
   attachment: z.string().optional(),
+  /** Uploaded file token or pasted link, from the shared upload flow. */
+  attachmentInput: attachmentInputSchema.optional(),
 });
 
 export const POST = wrapRouteHandler(async (req) => {
@@ -129,19 +131,13 @@ export const POST = wrapRouteHandler(async (req) => {
   const body = await parseBody(req, createSchema);
 
   let attachmentKey = "";
-  if (body.attachment) {
-    const { buffer, ext, mime } = decodeDataUrl(body.attachment, [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
-    ]);
-    attachmentKey = await storageProvider.upload(
-      buffer,
-      `complaints/${ctx.employeeId}/${Date.now()}${ext}`,
-      mime
-    );
-  }
+  attachmentKey = await resolveSingleAttachment({
+    input: body.attachmentInput,
+    legacyDataUrl: body.attachment,
+    context: "complaint",
+    ownerUserId: ctx.user.id,
+    destination: `complaints/${ctx.employeeId}`,
+  });
 
   const ticketCode = `PGD-${randomToken(4).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)}`;
 

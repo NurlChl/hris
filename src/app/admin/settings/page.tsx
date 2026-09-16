@@ -70,8 +70,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-[26px] md:text-[30px] text-heading">Pengaturan Sistem</h1>
-        <p className="text-sm text-muted mt-2 leading-relaxed">
+        <h1 className="text-display-sm md:text-display text-heading">Pengaturan Sistem</h1>
+        <p className="text-body text-muted mt-2 leading-relaxed">
           Semua aturan bisnis di bawah ini berlaku seketika tanpa perlu deploy ulang.
         </p>
       </header>
@@ -167,7 +167,7 @@ function BusinessRules() {
     <div className="space-y-4">
       {dirtyCount > 0 && (
         <div className="sticky top-20 z-30 card flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-primary/40">
-          <p className="text-xs text-muted">
+          <p className="text-label text-muted">
             <strong className="text-foreground">{dirtyCount} pengaturan</strong> diubah dan belum
             disimpan.
           </p>
@@ -200,7 +200,7 @@ function BusinessRules() {
                   <button
                     onClick={() => setActiveGroup(g.id)}
                     className={cn(
-                      "w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap",
+                      "w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-label font-semibold text-left transition-colors cursor-pointer whitespace-nowrap",
                       g.id === activeGroup
                         ? "bg-primary-soft text-primary"
                         : "text-muted hover:text-foreground hover:bg-surface-2"
@@ -268,11 +268,11 @@ function SettingRow({
       )}
     >
       <div className="min-w-0 flex-1">
-        <label htmlFor={`set-${field.key}`} className="block text-sm font-medium">
+        <label htmlFor={`set-${field.key}`} className="block text-body font-medium">
           {field.label}
         </label>
         {field.description && (
-          <p className="text-xs text-muted mt-0.5 leading-relaxed max-w-xl">{field.description}</p>
+          <p className="text-label text-muted mt-0.5 leading-relaxed max-w-xl">{field.description}</p>
         )}
       </div>
 
@@ -302,7 +302,7 @@ function SettingRow({
               className="tabular-nums"
             />
             {field.unit && (
-              <span className="text-[11px] text-subtle whitespace-nowrap shrink-0">{field.unit}</span>
+              <span className="text-caption text-subtle whitespace-nowrap shrink-0">{field.unit}</span>
             )}
           </div>
         ) : (
@@ -464,13 +464,13 @@ function RolesPanel() {
                 >
                   <span
                     className={cn(
-                      "block text-xs font-semibold",
+                      "block text-label font-semibold",
                       r._id === selectedId ? "text-primary" : "text-foreground"
                     )}
                   >
                     {r.name}
                   </span>
-                  <span className="block text-[11px] text-subtle mt-0.5">
+                  <span className="block text-caption text-subtle mt-0.5">
                     {r.userCount} akun
                     {r.isSystemDefault && " · bawaan sistem"}
                   </span>
@@ -525,21 +525,21 @@ function RolesPanel() {
             )}
 
             <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse min-w-[720px]">
+              <table className="w-full text-body border-collapse min-w-[720px]">
                 <thead>
                   <tr>
-                    <th className="text-left text-[11px] font-semibold uppercase tracking-wide text-subtle px-3 py-3 border-b border-line">
+                    <th className="text-left text-caption font-semibold uppercase tracking-wide text-subtle px-3 py-3 border-b border-line">
                       Modul
                     </th>
                     {meta.actions.map((a) => (
                       <th
                         key={a.id}
-                        className="text-center text-[11px] font-semibold uppercase tracking-wide text-subtle px-2 py-3 border-b border-line whitespace-nowrap"
+                        className="text-center text-caption font-semibold uppercase tracking-wide text-subtle px-2 py-3 border-b border-line whitespace-nowrap"
                       >
                         {a.label}
                       </th>
                     ))}
-                    <th className="text-left text-[11px] font-semibold uppercase tracking-wide text-subtle px-3 py-3 border-b border-line">
+                    <th className="text-left text-caption font-semibold uppercase tracking-wide text-subtle px-3 py-3 border-b border-line">
                       Lingkup
                     </th>
                   </tr>
@@ -552,8 +552,8 @@ function RolesPanel() {
                     return (
                       <tr key={m.id} className={cn("border-b border-line", !granted && "opacity-60")}>
                         <td className="px-3 py-3 align-top">
-                          <span className="block text-xs font-semibold">{m.label}</span>
-                          <span className="block text-[11px] text-subtle mt-0.5 max-w-56 leading-relaxed">
+                          <span className="block text-label font-semibold">{m.label}</span>
+                          <span className="block text-caption text-subtle mt-0.5 max-w-56 leading-relaxed">
                             {m.hint}
                           </span>
                         </td>
@@ -580,7 +580,7 @@ function RolesPanel() {
                                 [m.id]: { ...prev[m.id], scope: e.target.value },
                               }))
                             }
-                            className="h-8 text-xs w-40"
+                            className="h-8 text-label w-40"
                           >
                             {meta.scopes.map((s) => (
                               <option key={s.id} value={s.id}>

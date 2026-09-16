@@ -28,6 +28,7 @@ import { useToast } from "@/components/ui/Toast";
 import { api, errorMessage } from "@/lib/client-api";
 import { formatDate } from "@/lib/time";
 
+import { DatePicker } from "@/components/ui/DatePicker";
 interface Holiday {
   dateKey: string;
   name: string;
@@ -113,8 +114,8 @@ export default function HolidaySwapPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-[26px] md:text-[30px] text-heading">Tukar Libur</h1>
-          <p className="text-sm text-muted mt-2 leading-relaxed">
+          <h1 className="text-display-sm md:text-display text-heading">Tukar Libur</h1>
+          <p className="text-body text-muted mt-2 leading-relaxed">
             Bersedia masuk di tanggal merah? Tukar dengan hari libur pengganti.
           </p>
         </div>
@@ -178,7 +179,7 @@ export default function HolidaySwapPage() {
                     <tr key={r._id} className="hover:bg-surface-2 transition-colors">
                       <Td className="whitespace-nowrap font-medium">{formatDate(r.holidayDate)}</Td>
                       <Td className="whitespace-nowrap">{formatDate(r.replacementDate)}</Td>
-                      <Td className="text-xs text-muted whitespace-nowrap">
+                      <Td className="text-label text-muted whitespace-nowrap">
                         {r.isHalfDay
                           ? r.session === "morning"
                             ? "Setengah hari (pagi)"
@@ -189,7 +190,7 @@ export default function HolidaySwapPage() {
                         {r.status === "forfeited" ? (
                           <div>
                             <Badge tone="danger">Gugur</Badge>
-                            <span className="block text-[11px] text-subtle mt-1 max-w-44">
+                            <span className="block text-caption text-subtle mt-1 max-w-44">
                               {r.forfeitedReason || "Tidak masuk pada tanggal merah."}
                             </span>
                           </div>
@@ -231,8 +232,8 @@ export default function HolidaySwapPage() {
               <ul className="divide-y divide-[var(--border)]">
                 {holidays.map((h) => (
                   <li key={h.dateKey} className="px-5 py-3">
-                    <p className="text-xs font-semibold">{h.name}</p>
-                    <p className="text-[11px] text-subtle mt-0.5">{formatDate(h.dateKey)}</p>
+                    <p className="text-label font-semibold">{h.name}</p>
+                    <p className="text-caption text-subtle mt-0.5">{formatDate(h.dateKey)}</p>
                     {h.alreadyRequested && (
                       <Badge tone="info" className="mt-1.5">
                         Sudah diajukan
@@ -366,12 +367,11 @@ function SwapFormModal({
           htmlFor="sw-replacement"
           hint="Harus hari kerja (bukan akhir pekan atau tanggal merah lain)."
         >
-          <Input
+          <DatePicker
             id="sw-replacement"
-            type="date"
             required
             value={replacementDate}
-            onChange={(e) => setReplacementDate(e.target.value)}
+            onChange={(value) => setReplacementDate(value)}
           />
         </Field>
 

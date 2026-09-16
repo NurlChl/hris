@@ -24,6 +24,7 @@ import {
 import { api, errorMessage } from "@/lib/client-api";
 import { formatDateTime, wibDateKey } from "@/lib/time";
 
+import { DatePicker } from "@/components/ui/DatePicker";
 interface Actor {
   name: string;
   nip: string;
@@ -132,8 +133,8 @@ export default function AuditPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-[26px] md:text-[30px] text-heading">Aktivitas Audit</h1>
-          <p className="text-sm text-muted mt-2 leading-relaxed">
+          <h1 className="text-display-sm md:text-display text-heading">Aktivitas Audit</h1>
+          <p className="text-body text-muted mt-2 leading-relaxed">
             Jejak seluruh tindakan berkonsekuensi di dalam sistem.
           </p>
         </div>
@@ -171,10 +172,10 @@ export default function AuditPage() {
             </Select>
           </Field>
           <Field label="Dari tanggal" htmlFor="au-from">
-            <Input id="au-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <DatePicker id="au-from" value={from} onChange={(value) => setFrom(value)} />
           </Field>
           <Field label="Sampai tanggal" htmlFor="au-to">
-            <Input id="au-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <DatePicker id="au-to" value={to} onChange={(value) => setTo(value)} />
           </Field>
         </CardBody>
       </Card>
@@ -213,10 +214,10 @@ export default function AuditPage() {
               <tbody>
                 {logs.map((log) => (
                   <tr key={log._id} className="hover:bg-surface-2 transition-colors">
-                    <Td className="whitespace-nowrap text-xs">{formatDateTime(log.timestamp)}</Td>
+                    <Td className="whitespace-nowrap text-label">{formatDateTime(log.timestamp)}</Td>
                     <Td>
-                      <span className="block text-xs font-semibold">{log.actor.name}</span>
-                      <span className="block text-[11px] text-subtle">
+                      <span className="block text-label font-semibold">{log.actor.name}</span>
+                      <span className="block text-caption text-subtle">
                         {log.actor.nip !== "-" ? `${log.actor.nip} · ` : ""}
                         {log.actor.role}
                       </span>
@@ -224,8 +225,8 @@ export default function AuditPage() {
                     <Td>
                       <Badge tone={toneFor(log.action)}>{log.action}</Badge>
                     </Td>
-                    <Td className="text-xs text-muted">{log.module}</Td>
-                    <Td className="text-[11px] font-mono text-subtle">{log.ip || "-"}</Td>
+                    <Td className="text-label text-muted">{log.module}</Td>
+                    <Td className="text-caption font-mono text-subtle">{log.ip || "-"}</Td>
                     <Td>
                       <Button variant="ghost" size="sm" onClick={() => setDetail(log)}>
                         Detail
@@ -248,7 +249,7 @@ export default function AuditPage() {
               >
                 Sebelumnya
               </Button>
-              <span className="text-xs text-muted tabular-nums">
+              <span className="text-label text-muted tabular-nums">
                 Halaman {page} dari {totalPages}
               </span>
               <Button
@@ -290,7 +291,7 @@ export default function AuditPage() {
             )}
             {detail.after != null && <JsonBlock title="Nilai sesudah" value={detail.after} />}
 
-            <p className="flex items-start gap-1.5 text-[11px] text-subtle leading-relaxed">
+            <p className="flex items-start gap-1.5 text-caption text-subtle leading-relaxed">
               <ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               Catatan audit bersifat permanen dan tidak dapat diubah atau dihapus dari antarmuka ini.
             </p>
@@ -305,7 +306,7 @@ function Meta({ label, value, mono }: { label: string; value: string; mono?: boo
   return (
     <div className="min-w-0">
       <p className="eyebrow">{label}</p>
-      <p className={`text-xs mt-0.5 break-words ${mono ? "font-mono" : ""}`}>{value}</p>
+      <p className={`text-label mt-0.5 break-words ${mono ? "font-mono" : ""}`}>{value}</p>
     </div>
   );
 }
@@ -314,7 +315,7 @@ function JsonBlock({ title, value }: { title: string; value: unknown }) {
   return (
     <div>
       <p className="eyebrow mb-1.5">{title}</p>
-      <pre className="rounded-lg border border-line bg-surface-2 p-3 text-xs leading-relaxed overflow-x-auto max-h-64">
+      <pre className="rounded-lg border border-line bg-surface-2 p-3 text-label leading-relaxed overflow-x-auto max-h-64">
         <code className="font-mono">{JSON.stringify(value, null, 2)}</code>
       </pre>
     </div>

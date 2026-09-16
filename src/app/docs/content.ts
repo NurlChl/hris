@@ -108,6 +108,39 @@ export const CHAPTERS: DocChapter[] = [
           },
         ],
       },
+      {
+        id: "notifikasi",
+        title: "Notifikasi",
+        summary: "Pemberitahuan apa yang Anda terima, kapan, dan cara membacanya.",
+        audience: [],
+        blocks: [
+          {
+            type: "p",
+            text:
+              "Ikon lonceng di kanan atas menampilkan pemberitahuan yang perlu Anda ketahui atau kerjakan. Angka merah adalah jumlah yang belum dibaca. Setiap notifikasi membawa Anda langsung ke halaman terkait dan otomatis ditandai sudah dibaca saat dibuka. Gunakan tab Belum dibaca untuk melihat yang tersisa saja.",
+          },
+          {
+            type: "table",
+            head: ["Anda menerima", "Saat"],
+            rows: [
+              ["Hasil pengajuan (cuti, koreksi, tukar libur, ganti wajah)", "Setiap langkah disetujui, dan saat disetujui penuh atau ditolak beserta catatannya"],
+              ["Presensi pulang kemarin belum tercatat", "Pagi hari bila Anda absen masuk tanpa absen pulang; langsung membuka formulir koreksi"],
+              ["Slip gaji terbit / hasil penilaian kinerja", "Saat HRD menerbitkannya"],
+              ["Pengingat kontrak", "30, 14, dan 7 hari sebelum kontrak berakhir (karyawan, atasan, HRD)"],
+              ["Pengajuan menunggu persetujuan (atasan/HRD)", "Saat pengajuan masuk ke langkah Anda, dan ringkasan harian bila ada yang tertahan lebih dari 2 hari"],
+              ["Pelamar baru, jadwal wawancara (HRD/pewawancara)", "Saat lamaran masuk, saat Anda ditunjuk mewawancarai, dan sehari sebelum wawancara"],
+              ["Karyawan baru perlu dilengkapi (HRD)", "Saat pelamar direkrut, dan setiap Senin bila masih ada yang belum lengkap"],
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Email dan WhatsApp",
+            text:
+              "Superadmin dapat menyalakan pengiriman yang sama lewat email atau WhatsApp di Pengaturan → Notifikasi. Pemberitahuan yang sangat sering, seperti pelamar baru, hanya dikirim di aplikasi. Pengingat terjadwal dikirim sekali per hari.",
+          },
+        ],
+      },
     ],
   },
 
@@ -204,6 +237,7 @@ export const CHAPTERS: DocChapter[] = [
               "Pilih tanggal yang ingin dikoreksi (hanya dalam rentang hari terakhir yang diizinkan HRD).",
               "Isi jam masuk dan jam pulang yang seharusnya.",
               "Pilih kategori alasan, lalu jelaskan kronologinya minimal 15 karakter.",
+              "Bila ada, lampirkan bukti: unggah foto atau PDF (misalnya tangkapan layar galat aplikasi atau surat tugas), atau tempel tautan ke berkasnya.",
               "Kirim. Pengajuan diteruskan ke atasan, lalu HRD.",
             ],
           },
@@ -237,6 +271,150 @@ export const CHAPTERS: DocChapter[] = [
           },
         ],
       },
+      {
+        id: "wajah-karyawan",
+        title: "Mendaftarkan wajah untuk presensi",
+        summary: "Pendaftaran pertama, absen dengan verifikasi wajah, dan mengganti wajah.",
+        audience: ["STAFF", "SPV"],
+        blocks: [
+          {
+            type: "p",
+            text:
+              "Bila perusahaan mengaktifkan verifikasi wajah, setiap foto presensi dicocokkan dengan wajah yang Anda daftarkan. Absen ditolak bila wajah di foto tidak cocok, dan absen masuk serta pulang selalu meminta foto.",
+          },
+          {
+            type: "steps",
+            items: [
+              "Buka Profil & Keamanan, lalu pilih tab Wajah Presensi.",
+              "Tekan Daftarkan wajah dan nyalakan kamera.",
+              "Ambil tiga foto sesuai petunjuk: menghadap lurus, sedikit menoleh ke kiri, sedikit menoleh ke kanan. Tombol Ambil foto baru aktif setelah gambar kamera siap.",
+              "Baca poin persetujuan pengolahan data wajah, centang, lalu tekan Daftarkan wajah.",
+              "Sistem memeriksa ketiga foto. Bila salah satu bermasalah, pesan menyebut nomor fotonya — ambil ulang foto itu saja.",
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Pendaftaran pertama langsung berlaku",
+            text:
+              "Pendaftaran pertama tidak perlu persetujuan, tetapi atasan Anda menerima pemberitahuan. Setelah terdaftar, penggantian wajah harus disetujui atasan.",
+          },
+          {
+            type: "table",
+            head: ["Pesan saat absen", "Artinya dan yang perlu dilakukan"],
+            rows: [
+              ["Wajah Anda belum terdaftar", "Daftarkan wajah dulu di tab Wajah Presensi."],
+              ["Wajah tidak terdeteksi", "Wajah tidak terlihat jelas. Cari tempat lebih terang, lepas masker, dan hadapkan wajah ke kamera."],
+              ["Terdeteksi lebih dari satu wajah", "Ada orang lain di bingkai kamera. Pastikan hanya Anda yang terlihat."],
+              ["Wajah terlalu jauh", "Dekatkan ponsel hingga wajah mengisi sebagian besar bingkai."],
+              ["Wajah tidak cocok", "Foto tidak cocok dengan wajah terdaftar. Ulangi dengan cahaya yang lebih baik. Bila terus gagal padahal Anda sendiri, ajukan koreksi absen dan beri tahu atasan."],
+              ["Gambar kamera masih gelap", "Kamera belum siap. Tunggu hingga wajah terlihat di layar, lalu ambil foto lagi."],
+            ],
+          },
+          {
+            type: "steps",
+            items: [
+              "Untuk mengganti wajah, buka tab Wajah Presensi dan tekan Ajukan penggantian wajah.",
+              "Ambil tiga foto baru, tuliskan alasan penggantian, dan centang persetujuan.",
+              "Permintaan dikirim ke atasan. Selama menunggu, absen tetap memakai wajah yang lama.",
+              "Permintaan masih bisa dibatalkan selama atasan belum memprosesnya.",
+            ],
+          },
+        ],
+      },
+      {
+        id: "wajah-spv",
+        title: "Menyetujui penggantian wajah",
+        summary: "Cara memeriksa permintaan penggantian wajah dari anggota tim.",
+        audience: ["SPV"],
+        blocks: [
+          {
+            type: "p",
+            text:
+              "Permintaan penggantian wajah dari karyawan di divisi Anda muncul di menu Persetujuan. Anda yang paling mengenal wajah anggota tim, jadi keputusan ini ada di tangan Anda — bukan di tangan sistem.",
+          },
+          {
+            type: "steps",
+            items: [
+              "Buka Persetujuan dan pilih permintaan Penggantian Wajah Presensi.",
+              "Bandingkan foto Wajah terdaftar dan Wajah pengganti yang ditampilkan berdampingan.",
+              "Baca alasan yang ditulis karyawan.",
+              "Setujui bila Anda yakin kedua foto adalah orang yang sama. Tolak dengan alasan bila tidak.",
+            ],
+          },
+          {
+            type: "table",
+            head: ["Petunjuk sistem", "Cara membacanya"],
+            rows: [
+              ["Sistem menilai wajahnya mirip", "Foto baru cocok dengan wajah lama. Tetap periksa dengan mata Anda."],
+              ["Sistem ragu", "Kemiripan di batas. Bisa karena cahaya atau penampilan berubah, bisa juga orang lain. Periksa baik-baik."],
+              ["Sistem menilai ini wajah yang berbeda", "Setujui hanya bila Anda yakin, misalnya setelah perubahan penampilan besar."],
+            ],
+          },
+          {
+            type: "note",
+            tone: "danger",
+            title: "Waspadai titip absen",
+            text:
+              "Mengganti wajah terdaftar dengan wajah rekan adalah cara menyiapkan titip absen. Bila foto pengganti bukan orang yang sama, tolak dan laporkan ke HRD. Anda tidak dapat memutuskan permintaan milik Anda sendiri.",
+          },
+        ],
+      },
+      {
+        id: "wajah-admin",
+        title: "Mengelola verifikasi wajah",
+        summary: "Mengaktifkan fitur, tingkat kecocokan, reset data wajah, dan perlindungan data.",
+        audience: ["HRD", "SUPERADMIN"],
+        blocks: [
+          {
+            type: "steps",
+            items: [
+              "Umumkan ke karyawan agar mendaftarkan wajah di tab Wajah Presensi. Pendaftaran bisa dilakukan sebelum fitur diaktifkan.",
+              "Buka Pengaturan Sistem, bagian Presensi.",
+              "Pilih Tingkat kecocokan wajah. Normal disarankan.",
+              "Nyalakan Verifikasi wajah saat presensi. Perubahan langsung berlaku.",
+            ],
+          },
+          {
+            type: "note",
+            tone: "warning",
+            title: "Karyawan yang belum mendaftar tidak dapat absen",
+            text:
+              "Begitu fitur aktif, karyawan tanpa wajah terdaftar diarahkan untuk mendaftar dan tidak bisa absen sampai selesai. Aktifkan setelah sebagian besar karyawan terdaftar.",
+          },
+          {
+            type: "table",
+            head: ["Tingkat", "Ambang jarak", "Kapan dipakai"],
+            rows: [
+              ["Ketat", "0,45", "Risiko titip absen tinggi. Lebih sering menolak foto asli dalam cahaya buruk."],
+              ["Normal", "0,50", "Pilihan umum. Keseimbangan antara keamanan dan kenyamanan."],
+              ["Longgar", "0,55", "Lokasi dengan pencahayaan sulit. Tetap jauh di bawah jarak wajah orang lain yang terukur."],
+            ],
+          },
+          {
+            type: "p",
+            text:
+              "Status wajah tiap karyawan terlihat di form Data Karyawan, bagian Wajah Presensi. Gunakan Reset data wajah bila foto acuan bukan karyawan tersebut atau karyawan meminta datanya dihapus. Alasan reset wajib diisi, tercatat di jejak audit, dan dikirim ke karyawan.",
+          },
+          {
+            type: "list",
+            items: [
+              "Data wajah adalah data pribadi spesifik menurut UU 27/2022 tentang Pelindungan Data Pribadi. Persetujuan karyawan dicatat beserta versi teksnya.",
+              "Data wajah disimpan terenkripsi dan tidak pernah dikirim ke browser.",
+              "Foto acuan hanya dapat dibuka pemiliknya, HRD, dan Superadmin. SPV hanya melihatnya lewat tautan sementara saat memeriksa permintaan penggantian.",
+              "Foto dan data wajah dari permintaan yang ditolak atau dibatalkan dihapus. Reset menghapus seluruh data wajah karyawan.",
+              "Setiap kegagalan pencocokan wajah tercatat di jejak audit dengan aksi FACE_MISMATCH — pola kegagalan berulang pada satu karyawan patut diperiksa.",
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Batas kemampuan",
+            text:
+              "Verifikasi wajah memastikan foto berisi wajah karyawan yang terdaftar, tetapi tidak dapat memastikan wajah itu hadir langsung. Foto dari layar ponsel lain yang memperlihatkan wajah karyawan dapat lolos. Karena itu lokasi GPS tetap diperiksa dan jejak audit tetap perlu dipantau.",
+          },
+        ],
+      },
     ],
   },
 
@@ -257,7 +435,7 @@ export const CHAPTERS: DocChapter[] = [
               "Buka menu Izin & Cuti lalu tekan Ajukan izin / cuti.",
               "Pilih jenisnya. Kotak informasi akan menampilkan sisa saldo, batas H- pengajuan, dan apakah bukti diperlukan.",
               "Pilih tanggal mulai dan selesai. Kalender otomatis membatasi tanggal yang melanggar aturan H-.",
-              "Tulis alasan minimal 10 karakter, lampirkan bukti bila diminta, lalu kirim.",
+              "Tulis alasan minimal 10 karakter, lampirkan bukti bila diminta (unggah foto/PDF atau tempel tautan Google Drive), lalu kirim.",
             ],
           },
           {
@@ -549,36 +727,164 @@ export const CHAPTERS: DocChapter[] = [
         ],
       },
       {
-        id: "proses-pelamar",
-        title: "Memproses pelamar",
-        summary: "Papan seleksi, penolakan, dan perekrutan menjadi karyawan.",
+        id: "formulir-lamaran",
+        title: "Mengatur formulir lamaran",
+        summary: "Kolom yang diisi pelamar, jenis isian, pilihan jawaban, dan urutannya.",
         audience: ["HRD", "SUPERADMIN"],
         blocks: [
           {
             type: "p",
             text:
-              "Tekan sebuah lowongan untuk membuka papan pelamarnya. Kolom pada papan itu adalah tahap seleksi yang Anda tetapkan saat membuat lowongan, dan setiap pelamar berada tepat di satu kolom.",
+              "Setiap lowongan punya formulir lamarannya sendiri. Lowongan baru memakai formulir bawaan: nama, email, telepon, alamat asal, pendidikan terakhir, CV, portofolio, dokumen tambahan, tanggal bisa mulai bekerja, gaji yang diharapkan, dan surat lamaran singkat.",
           },
           {
             type: "steps",
             items: [
-              "Tekan kartu pelamar untuk membaca datanya, mengunduh CV, dan melihat riwayat perpindahannya.",
-              "Tekan Tahap berikutnya untuk meluluskan, atau Tolak dan tuliskan alasannya.",
-              "Untuk pelamar yang masuk lewat jalur lain, misalnya referensi karyawan, gunakan Tambah pelamar.",
-              "Pada tahap akhir, tekan Rekrut untuk mengubah pelamar menjadi karyawan.",
+              "Buka Lowongan Kerja, pilih lowongannya, lalu tekan Atur formulir lamaran.",
+              "Seret ikon titik enam di kiri kolom untuk mengubah urutan. Di ponsel, tahan lalu geser; dengan keyboard, fokus pada ikon lalu tekan panah atas/bawah.",
+              "Hilangkan centang Tampil untuk menyembunyikan kolom yang tidak diperlukan lowongan ini.",
+              "Tekan ikon pensil untuk mengubah label, jenis isian, bagian, teks contoh, petunjuk, dan apakah kolom itu wajib.",
+              "Tekan Tambah pertanyaan untuk pertanyaan khusus, misalnya kesediaan ditempatkan di luar kota atau software yang dikuasai.",
+              "Buka tab Pratinjau untuk melihat formulir seperti yang dilihat pelamar, lalu tekan Simpan formulir.",
+            ],
+          },
+          {
+            type: "table",
+            head: ["Jenis isian", "Dipakai untuk"],
+            rows: [
+              ["Teks singkat / Paragraf", "Jawaban bebas satu baris atau panjang"],
+              ["Email / Nomor telepon / Tautan", "Diperiksa formatnya sebelum terkirim"],
+              ["Angka / Nominal rupiah", "Pengalaman dalam tahun, gaji yang diharapkan"],
+              ["Tanggal", "Tanggal lahir, tanggal bisa mulai bekerja"],
+              ["Pilihan (dropdown)", "Satu jawaban dari daftar panjang, bisa dicari"],
+              ["Pilihan tunggal (tombol)", "Satu jawaban dari 2–5 pilihan yang terlihat semua"],
+              ["Pilihan ganda", "Boleh memilih lebih dari satu"],
+              ["Ya / tidak", "Pertanyaan tertutup"],
+              ["Berkas atau tautan", "CV, sertifikat, portofolio. Atur jumlah lampiran maksimal dan apakah tautan diperbolehkan"],
+              ["Alamat", "Jalan, kota, provinsi, dan kode pos dalam satu kolom"],
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Kolom sistem",
+            text:
+              "Kolom berlabel Kolom sistem dipakai saat pelamar dijadikan karyawan (alamat, tanggal lahir, jenis kelamin, CV, dan lainnya), jadi jenis isiannya tidak dapat diubah; labelnya tetap boleh diganti. Nama, email, dan telepon selalu ditanyakan dan selalu wajib.",
+          },
+          {
+            type: "note",
+            tone: "success",
+            title: "Lamaran lama tidak ikut berubah",
+            text:
+              "Label dan jawaban disalin ke data pelamar saat lamaran dikirim. Mengganti nama pertanyaan atau menghapusnya kemudian tidak mengubah apa yang terlihat pada pelamar yang sudah masuk.",
+          },
+        ],
+      },
+      {
+        id: "proses-pelamar",
+        title: "Memproses pelamar",
+        summary: "Daftar dan filter pelamar, detail, tahap seleksi, wawancara, penilaian, dan penolakan.",
+        audience: ["HRD", "SUPERADMIN", "DIREKSI"],
+        blocks: [
+          {
+            type: "p",
+            text:
+              "Ada dua cara melihat pelamar. Menu Pelamar menampilkan semua lamaran dari semua lowongan dalam satu daftar yang bisa disaring; papan pelamar pada tiap lowongan mengelompokkan pelamar lowongan itu menurut tahap seleksi. Keduanya membuka halaman detail yang sama.",
+          },
+          {
+            type: "table",
+            head: ["Filter di menu Pelamar", "Kegunaan"],
+            rows: [
+              ["Tab status", "Dalam proses, Lolos, Direkrut, Tidak lolos, masing-masing dengan jumlahnya"],
+              ["Cari", "Nama, email, nomor telepon, kota, atau nomor referensi yang diterima pelamar"],
+              ["Lowongan dan Tahap", "Mempersempit ke satu lowongan dan satu tahap seleksi"],
+              ["Pendidikan, Sumber, Penilaian minimal", "Menyaring profil; sumber membedakan halaman karier, input manual, dan API"],
+              ["Melamar sejak/sampai", "Rentang tanggal lamaran masuk"],
+              ["Bisa mulai paling lambat", "Pelamar yang siap bekerja sebelum tanggal tertentu"],
+              ["Hanya yang melampirkan CV / Ada jadwal wawancara", "Penyaring cepat"],
+              ["Urutkan", "Terbaru, penilaian tertinggi, paling cepat bisa mulai, wawancara terdekat, dan lainnya"],
             ],
           },
           {
             type: "p",
             text:
-              "Saat merekrut, isi cabang, divisi, jabatan, tanggal masuk, dan email kantor. Sistem membuat data karyawan sekaligus akun penggunanya, memberi NIP berurutan, lalu menutup lowongan bila jumlah kebutuhannya sudah terpenuhi.",
+              "Filter tersimpan pada alamat halaman, sehingga daftar yang sudah disaring bisa dibagikan ke rekan atau disimpan sebagai bookmark, dan tetap sama ketika Anda kembali dari halaman detail.",
+          },
+          {
+            type: "steps",
+            items: [
+              "Buka pelamar untuk membaca seluruh jawaban formulirnya. Berkas dibuka lewat tautan aman yang berlaku 15 menit; tautan yang ditempel pelamar dibuka apa adanya.",
+              "Tekan Lanjut ke [tahap] untuk memindahkan ke tahap berikutnya, atau tekan salah satu kotak tahap untuk melompat langsung.",
+              "Tekan Jadwalkan wawancara, isi tanggal, jam, tempat atau tautan rapat, dan pewawancara. Pewawancara menerima notifikasi berisi tautan ke pelamar, lalu pengingat sehari sebelumnya.",
+              "Beri bintang 1–5 dan label (misalnya kandidat-kuat atau cadangan) agar tim mudah membandingkan. Tekan bintang yang sama sekali lagi untuk menghapus penilaian.",
+              "Tulis catatan hasil wawancara pada kotak Catatan. Semua tindakan tercatat pada Riwayat beserta nama pelakunya.",
+              "Tekan Tidak lolos dan tulis alasannya bila pelamar tidak dilanjutkan. Pelamar tersebut bisa dibuka kembali kapan saja.",
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Pelamar yang pernah melamar",
+            text:
+              "Panel Lamaran lain orang ini menampilkan lamaran lain dengan email atau nomor telepon yang sama, termasuk hasilnya, sehingga Anda tahu bila seseorang pernah ditolak atau sedang diproses di lowongan lain.",
           },
           {
             type: "note",
             tone: "info",
             title: "Alasan penolakan tidak terkirim otomatis",
             text:
-              "Alasan yang Anda tulis tersimpan sebagai catatan internal pada riwayat pelamar. Kabar kepada pelamar tetap dikirim manual agar redaksinya dapat disesuaikan.",
+              "Alasan yang Anda tulis tersimpan sebagai catatan internal. Kabar kepada pelamar tetap dikirim manual agar redaksinya dapat disesuaikan; tombol WhatsApp di halaman detail membuka percakapan dengan nomornya.",
+          },
+          {
+            type: "p",
+            text:
+              "Untuk pelamar dari jalur lain (referensi karyawan, walk-in, job fair), tekan Tambah pelamar. Formulirnya sama dengan formulir lowongan di halaman karier, tetapi hanya nama, email, dan telepon yang wajib.",
+          },
+        ],
+      },
+      {
+        id: "rekrut-karyawan",
+        title: "Merekrut pelamar menjadi karyawan",
+        summary: "Apa yang dibuat otomatis, apa yang harus dilengkapi HRD, dan tanda Baru.",
+        audience: ["HRD", "SUPERADMIN"],
+        blocks: [
+          {
+            type: "steps",
+            items: [
+              "Pindahkan pelamar ke tahap terakhir, lalu tekan Terima jadi karyawan.",
+              "Isi email kantor, cabang, divisi, jabatan, dan status kepegawaian. Tanggal mulai kerja terisi dari jawaban Bisa mulai bekerja dan boleh diubah.",
+              "Pilih peran akun bila karyawan langsung perlu login; kata sandi awalnya ditampilkan setelah disimpan. Kosongkan bila akun dibuat belakangan.",
+              "Tekan Buat karyawan.",
+            ],
+          },
+          {
+            type: "table",
+            head: ["Disalin dari lamaran", "Harus dilengkapi HRD"],
+            rows: [
+              ["Nama, email pribadi, telepon", "NIK"],
+              ["Alamat asal (jadi alamat KTP)", "Tempat lahir, agama, status pernikahan"],
+              ["Tanggal lahir, jenis kelamin (bila ditanyakan)", "Alamat domisili"],
+              ["CV, portofolio, dan lampiran (masuk ke dokumen karyawan)", "Rekening bank, NPWP, BPJS, kontrak kerja"],
+            ],
+          },
+          {
+            type: "p",
+            text:
+              "Karyawan hasil rekrutmen ditandai Baru di Data Karyawan, lengkap dengan jumlah data yang belum diisi. Tab Baru, perlu dilengkapi menampilkan hanya mereka. Buka datanya untuk melihat daftar yang kosong; tanda Baru hilang dengan sendirinya begitu semua data wajib terisi dan disimpan. Bila memang ada data yang sengaja dikosongkan, tekan Tandai sudah lengkap.",
+          },
+          {
+            type: "note",
+            tone: "warning",
+            title: "Kuota lowongan",
+            text:
+              "Begitu jumlah pelamar yang direkrut mencapai jumlah kebutuhan lowongan, lowongan otomatis ditutup dari halaman karier. Naikkan jumlah kebutuhan lalu buka kembali bila masih ingin menerima lamaran.",
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Pengingat",
+            text:
+              "HRD menerima notifikasi saat karyawan dibuat, dan setiap Senin pengingat berisi jumlah karyawan baru yang datanya belum lengkap lebih dari tiga hari.",
           },
         ],
       },
@@ -596,11 +902,20 @@ export const CHAPTERS: DocChapter[] = [
           {
             type: "list",
             items: [
-              "Pelamar mengisi nama, email, telepon, dan mengunggah CV berformat PDF. Surat pengantar dan tautan portofolio bersifat opsional.",
-              "Satu email hanya boleh melamar satu kali per lowongan, sehingga orang yang sama tetap dapat melamar lowongan lain.",
-              "Lamaran yang masuk langsung muncul di kolom pertama papan pelamar.",
-              "Penghitung kunjungan pada kartu lowongan hanya bertambah saat halaman detail dibuka, bukan saat daftar ditampilkan.",
+              "Pelamar mengisi formulir lowongan tersebut. Semua kesalahan ditampilkan sekaligus di samping kolomnya sebelum lamaran terkirim.",
+              "Berkas diunggah saat dipilih, dengan indikator progres, lalu diperiksa isinya (bukan hanya nama berkasnya): PDF, JPG, PNG, WebP, atau DOCX, maksimal 8 MB. Pelamar juga boleh menempel tautan, misalnya Google Drive, bila kolomnya mengizinkan.",
+              "Setelah terkirim, pelamar menerima nomor referensi. HRD bisa mencari pelamar dengan nomor ini.",
+              "Satu email hanya tercatat sekali per lowongan. Lamaran ganda dijawab dengan pesan yang sama seperti lamaran baru, sehingga halaman ini tidak bisa dipakai untuk menebak siapa yang sudah melamar.",
+              "Lamaran langsung muncul di tahap pertama, dan HRD menerima notifikasi berisi tautan ke pelamar.",
+              "Berkas yang diunggah tetapi tidak jadi dikirim dihapus otomatis oleh tugas harian.",
             ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Siapa yang bisa membuka berkas pelamar",
+            text:
+              "CV dan dokumen pelamar hanya bisa dibuka akun yang memiliki izin membaca modul Rekrutmen. Peran lain yang biasanya punya akses luas, seperti GA atau Audit, tidak otomatis dapat membukanya. Setiap pembukaan detail pelamar tercatat di Jejak Audit.",
           },
         ],
       },
@@ -929,7 +1244,7 @@ export const CHAPTERS: DocChapter[] = [
               "Buka menu Pengaduan, lalu tekan Buat pengaduan.",
               "Pilih tujuan laporan: atasan langsung, HRD, atau Direksi untuk kasus sensitif.",
               "Pilih kategori, tulis judul singkat, lalu uraikan kejadian minimal 30 karakter.",
-              "Lampirkan bukti bila ada, aktifkan opsi anonim bila diperlukan, lalu kirim.",
+              "Lampirkan bukti bila ada (unggah foto, tangkapan layar, PDF, atau tempel tautan), aktifkan opsi anonim bila diperlukan, lalu kirim.",
               "Catat nomor tiket yang muncul. Anda dapat memantau perkembangannya di halaman yang sama.",
             ],
           },

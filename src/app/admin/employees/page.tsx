@@ -1,12 +1,40 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { 
+import React, { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import {
   Users, UserPlus, Trash2, Edit, X, Loader2, AlertCircle, Search, Mail, Phone,
-  Building2, Briefcase, MapPin, CreditCard, ShieldCheck
+  Building2, Briefcase, MapPin, CreditCard, ShieldCheck, Sparkles, CheckCheck
 } from "lucide-react";
+import SearchSelect from "@/components/SearchSelect";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  ConfirmDialog,
+  EmptyState,
+  ICON_STROKE,
+  Input,
+  PageHeader,
+  SkeletonList,
+  StatusBadge,
+  Tabs,
+  TableWrap,
+  Td,
+  Th,
+  Tr,
+} from "@/components/ui";
+import { Combobox } from "@/components/ui/Combobox";
+import { Pagination } from "@/components/ui/Pagination";
+import { useToast } from "@/components/ui/Toast";
+import { api, errorMessage as apiErrorMessage } from "@/lib/client-api";
+import { formatDate, wibDateKey } from "@/lib/time";
+import { EmployeeFaceStatus } from "./EmployeeFaceStatus";
 import { motion, AnimatePresence } from "framer-motion";
 
+import { Select } from "@/components/ui";
+import { DatePicker } from "@/components/ui/DatePicker";
 /**
  * A reference the API returns populated on list responses and as a bare id on
  * others. The form needs the id, the table needs the name, so both forms are
@@ -26,88 +54,6 @@ function refId(ref: Ref): string {
 /** Name of a reference, empty when the API returned only an id. */
 function refName(ref: Ref): string {
   return typeof ref === "object" && ref !== null ? ref.name : "";
-}
-
-interface SearchSelectProps {
-  label: string;
-  value: string;
-  onChange: (val: string) => void;
-  options: { label: string; value: string }[];
-  placeholder?: string;
-  disabled?: boolean;
-}
-
-function SearchSelect({ label, value, onChange, options, placeholder = "Pilih...", disabled = false }: SearchSelectProps) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const dropdownRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const clickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", clickOutside);
-    return () => document.removeEventListener("mousedown", clickOutside);
-  }, []);
-
-  const filtered = options.filter(opt =>
-    opt.label.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const selectedOpt = options.find(opt => opt.value === value);
-
-  return (
-    <div className="space-y-1 relative w-full" ref={dropdownRef}>
-      <label className="font-semibold text-foreground block mb-1 text-[11px]">{label}</label>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary text-left min-h-[34px] disabled:opacity-50 cursor-pointer"
-      >
-        <span className="truncate">{selectedOpt ? selectedOpt.label : placeholder}</span>
-        <span className="text-[11px] text-subtle">▼</span>
-      </button>
-
-      {open && (
-        <div className="absolute z-50 w-full mt-1 bg-surface border border-line rounded-lg shadow-[var(--shadow-pop)] p-1.5 space-y-1.5 max-h-56 overflow-hidden flex flex-col">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari..."
-            className="w-full px-2.5 py-1.5 rounded bg-surface-2 border border-line text-xs text-foreground dark:text-foreground focus:outline-none placeholder:text-subtle"
-          />
-          <div className="space-y-0.5 overflow-y-auto max-h-40">
-            {filtered.length === 0 ? (
-              <div className="p-2 text-subtle text-center text-[11px]">Tidak ditemukan</div>
-            ) : (
-              filtered.map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => {
-                    onChange(opt.value);
-                    setOpen(false);
-                    setSearch("");
-                  }}
-                  className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-all cursor-pointer ${
-                    opt.value === value 
-                      ? "bg-primary text-primary-foreground font-semibold" 
-                      : "hover:bg-surface-2 text-foreground"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 interface Branch { _id: string; name: string; }
@@ -144,6 +90,8 @@ interface Employee {
   joinDate: string | Date;
   employmentStatus: "probation" | "pkwt" | "pkwtt" | "outsource";
   status: "active" | "onboarding" | "suspended" | "resigned";
+  isNewHire?: boolean;
+  missingFields?: string[];
 }
 
 /**
@@ -167,13 +115,41 @@ async function loadRegions(
 }
 
 export default function EmployeesPage() {
+  return (
+    <Suspense fallback={<SkeletonList rows={6} />}>
+      <EmployeesView />
+    </Suspense>
+  );
+}
+
+const STATUS_FILTERS = [
+  { value: "", label: "Semua status" },
+  { value: "active", label: "Aktif" },
+  { value: "onboarding", label: "Onboarding" },
+  { value: "suspended", label: "Ditangguhkan" },
+  { value: "resigned", label: "Resign" },
+];
+
+function EmployeesView() {
+  const sp = useSearchParams();
+  const toast = useToast();
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [allEmployees, setAllEmployees] = useState<Array<{ _id: string; name: string; employeeId: string }>>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [view, setView] = useState<"all" | "new">(sp.get("baru") === "1" ? "new" : "all");
+  const [newHireCount, setNewHireCount] = useState(0);
+  const [debouncedQuery, setDebouncedQuery] = useState(sp.get("q") ?? "");
+  const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null);
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(sp.get("q") ?? "");
 
   // Form states
   const [formOpen, setFormOpen] = useState(false);
@@ -327,27 +303,60 @@ export default function EmployeesPage() {
     }
   }, []);
 
+  // Search runs on the server after a short pause, so it covers every
+  // employee rather than only the page that happens to be loaded.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setDebouncedQuery((prev) => {
+        if (prev !== searchQuery.trim()) setPage(1);
+        return searchQuery.trim();
+      });
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [searchQuery]);
+
   const fetchEmployees = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/v1/employees");
-      const data = await res.json();
-      if (data.success) {
-        setEmployees(data.data);
-      }
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (debouncedQuery) params.set("q", debouncedQuery);
+      if (statusFilter) params.set("status", statusFilter);
+      if (view === "new") params.set("newHire", "1");
+      const [list, fresh] = await Promise.all([
+        api.get<Employee[]>(`/api/v1/employees?${params.toString()}`),
+        api.get<Employee[]>("/api/v1/employees?newHire=1&limit=1"),
+      ]);
+      setEmployees(list.data ?? []);
+      setTotal(list.meta?.total ?? 0);
+      setNewHireCount(fresh.meta?.total ?? 0);
     } catch (err) {
-      console.error("Gagal memuat karyawan:", err);
+      toast.error("Gagal memuat karyawan", apiErrorMessage(err));
     } finally {
       setLoading(false);
+    }
+  }, [page, limit, debouncedQuery, statusFilter, view, toast]);
+
+  // Supervisor pickers need every employee, not just the visible page.
+  const fetchAllEmployees = useCallback(async () => {
+    try {
+      const res = await api.get<Array<{ _id: string; name: string; employeeId: string }>>("/api/v1/employees?limit=500");
+      setAllEmployees(res.data ?? []);
+    } catch {
+      // Pickers stay empty; the rest of the form still works.
     }
   }, []);
 
   useEffect(() => {
     void fetchMetadata();
+    void fetchAllEmployees();
+  }, [fetchMetadata, fetchAllEmployees]);
+
+  useEffect(() => {
     void fetchEmployees();
-  }, [fetchMetadata, fetchEmployees]);
+  }, [fetchEmployees]);
 
   const handleOpenForm = (emp?: Employee) => {
+    setSelectedEmployee(emp ?? null);
     if (emp) {
       setSelectedId(emp._id || null);
       setName(emp.name);
@@ -356,8 +365,8 @@ export default function EmployeesPage() {
       setOfficeEmail(emp.officeEmail);
       setPhone(emp.phone);
       setBirthPlace(emp.birthPlace);
-      setBirthDate(emp.birthDate ? new Date(emp.birthDate).toISOString().split("T")[0] : "");
-      setGender(emp.gender);
+      setBirthDate(emp.birthDate ? wibDateKey(new Date(emp.birthDate)) : "");
+      setGender(emp.gender ?? "male");
       setReligion(emp.religion);
       setMaritalStatus(emp.maritalStatus);
       setKtpStreet(emp.ktpAddress.street);
@@ -381,7 +390,7 @@ export default function EmployeesPage() {
       setSupervisorId(refId(emp.supervisorId));
       setStoreManagerId(refId(emp.storeManagerId));
       setAreaManagerId(refId(emp.areaManagerId));
-      setJoinDate(emp.joinDate ? new Date(emp.joinDate).toISOString().split("T")[0] : "");
+      setJoinDate(emp.joinDate ? wibDateKey(new Date(emp.joinDate)) : "");
       setEmploymentStatus(emp.employmentStatus);
       setStatus(emp.status);
       setRoleId(""); // roleId is only for creation or managed via users settings
@@ -423,7 +432,7 @@ export default function EmployeesPage() {
       setSupervisorId("");
       setStoreManagerId("");
       setAreaManagerId("");
-      setJoinDate(new Date().toISOString().split("T")[0]);
+      setJoinDate(wibDateKey());
       setEmploymentStatus("probation");
       setStatus("onboarding");
       setRoleId(roles.find(r => r.name === "STAFF")?._id || "");
@@ -477,8 +486,10 @@ export default function EmployeesPage() {
 
       const data = await response.json();
       if (data.success) {
-        fetchEmployees();
+        void fetchEmployees();
+        void fetchAllEmployees();
         setFormOpen(false);
+        toast.success("Tersimpan", data.message);
       } else {
         setErrorMessage(data.error?.message || "Gagal menyimpan data karyawan");
       }
@@ -490,143 +501,250 @@ export default function EmployeesPage() {
   };
 
   const handleDeleteEmployee = async (id: string) => {
-    if (!confirm("Apakah Anda yakin ingin menghapus data karyawan ini? Seluruh login terkait akan dihapus.")) return;
-
     try {
-      const response = await fetch(`/api/v1/employees/${id}`, { method: "DELETE" });
-      const data = await response.json();
-      if (data.success) {
-        fetchEmployees();
-      }
+      const res = await api.delete(`/api/v1/employees/${id}`);
+      toast.success("Karyawan dihapus", res.message);
+      setDeleteTarget(null);
+      void fetchEmployees();
+      void fetchAllEmployees();
     } catch (err) {
-      console.error("Gagal menghapus karyawan:", err);
+      toast.error("Gagal menghapus", apiErrorMessage(err));
     }
   };
 
-  const filteredEmployees = employees.filter(emp =>
-    emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    emp.employeeId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    emp.officeEmail.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const markComplete = async (emp: Employee) => {
+    try {
+      const res = await api.patch("/api/v1/employees", { id: emp._id });
+      toast.success("Tanda baru dihapus", res.message);
+      setSelectedEmployee(null);
+      setFormOpen(false);
+      void fetchEmployees();
+    } catch (err) {
+      toast.error("Gagal memperbarui", apiErrorMessage(err));
+    }
+  };
 
-  const supervisorOptions = employees
-    .filter(emp => emp._id !== selectedId)
-    .map(emp => ({ label: `${emp.name} (${emp.employeeId})`, value: emp._id || "" }));
+  const supervisorOptions = allEmployees
+    .filter((emp) => emp._id !== selectedId)
+    .map((emp) => ({ label: `${emp.name} (${emp.employeeId})`, value: emp._id }));
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
-    <div className="space-y-6 font-sans">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4 gap-4">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground dark:text-foreground">Manajemen Karyawan</h1>
-          <p className="text-xs text-muted mt-1">Registrasi karyawan, perbarui biodata, penempatan jabatan, dan info rekening bank</p>
-        </div>
-        <button
-          onClick={() => handleOpenForm()}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-sm font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all w-fit"
-        >
-          <UserPlus className="w-4 h-4" />
-          Tambah Karyawan
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        eyebrow="Karyawan"
+        title="Data karyawan"
+        description="Registrasi karyawan, biodata, penempatan jabatan, dan rekening bank. Karyawan hasil rekrutmen ditandai Baru sampai datanya lengkap."
+        actions={
+          <Button icon={UserPlus} onClick={() => handleOpenForm()}>
+            Tambah karyawan
+          </Button>
+        }
+      />
 
-      {/* Toolbar */}
-      <div className="flex items-center relative w-full sm:max-w-xs">
-        <Search className="absolute left-3 top-3 w-4 h-4 text-muted" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Cari nama, NIP, email..."
-          className="w-full pl-10 pr-4 py-2 rounded-lg bg-surface border border-line text-xs text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-muted"
+      {newHireCount > 0 && view === "all" && (
+        <Alert tone="info" title={`${newHireCount} karyawan baru perlu dilengkapi`} className="mb-5">
+          Mereka dibuat otomatis saat pelamar diterima; NIK, rekening, dan data lain belum terisi.{" "}
+          <button
+            type="button"
+            onClick={() => {
+              setView("new");
+              setPage(1);
+            }}
+            className="font-semibold underline underline-offset-2 cursor-pointer"
+          >
+            Tampilkan
+          </button>
+        </Alert>
+      )}
+
+      <div className="flex flex-col xl:flex-row xl:items-center gap-3 mb-4">
+        <Tabs<"all" | "new">
+          value={view}
+          onChange={(v) => {
+            setView(v);
+            setPage(1);
+          }}
+          tabs={[
+            { id: "all", label: "Semua karyawan" },
+            { id: "new", label: "Baru, perlu dilengkapi", icon: Sparkles, count: newHireCount },
+          ]}
         />
+        <div className="flex flex-col sm:flex-row gap-2.5 xl:ml-auto">
+          <div className="relative sm:w-72">
+            <Search
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle pointer-events-none"
+              strokeWidth={ICON_STROKE}
+            />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari nama, NIP, email kantor"
+              className="pl-10"
+              aria-label="Cari karyawan"
+            />
+          </div>
+          <Combobox
+            value={statusFilter}
+            onChange={(v) => {
+              setStatusFilter(v);
+              setPage(1);
+            }}
+            options={STATUS_FILTERS}
+            placeholder="Semua status"
+            className="sm:w-48"
+            aria-label="Status karyawan"
+          />
+        </div>
       </div>
 
-      {loading ? (
-        <div className="h-64 flex items-center justify-center text-muted dark:text-muted">
-          <Loader2 className="w-8 h-8 animate-spin text-foreground" />
-        </div>
-      ) : filteredEmployees.length === 0 ? (
-        <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
-          <Users className="w-8 h-8 mb-2 opacity-50" />
-          <p className="text-sm font-medium">Karyawan tidak ditemukan</p>
-          <p className="text-xs mt-1">Silakan sesuaikan filter pencarian atau buat registrasi karyawan baru.</p>
-        </div>
+      {loading && employees.length === 0 ? (
+        <SkeletonList rows={6} />
+      ) : employees.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={Users}
+            title={view === "new" ? "Tidak ada karyawan baru yang perlu dilengkapi" : "Karyawan tidak ditemukan"}
+            description={
+              view === "new"
+                ? "Semua karyawan hasil rekrutmen sudah dilengkapi datanya."
+                : "Sesuaikan pencarian atau filter, atau tambahkan karyawan baru."
+            }
+          />
+        </Card>
       ) : (
-        <div className="bg-surface border border-line/60 dark:border-white/6 rounded-xl overflow-hidden overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse min-w-[900px]">
-            <thead>
-              <tr className="border-b border-line bg-surface text-muted dark:text-muted">
-                <th className="p-4 font-semibold">NIP / Karyawan</th>
-                <th className="p-4 font-semibold">Kontak</th>
-                <th className="p-4 font-semibold">Penempatan</th>
-                <th className="p-4 font-semibold">Status</th>
-                <th className="p-4 font-semibold">Join Date</th>
-                <th className="p-4 font-semibold text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredEmployees.map((emp) => (
-                <tr key={emp._id} className="border-b border-line hover:bg-white/1 transition-all">
-                  <td className="p-4">
-                    <div>
-                      <span className="font-mono text-xs text-muted block">{emp.employeeId}</span>
-                      <span className="font-semibold text-foreground dark:text-foreground text-sm">{emp.name}</span>
-                    </div>
-                  </td>
-                  <td className="p-4 space-y-1">
-                    <div className="flex items-center gap-1.5 text-muted dark:text-muted">
-                      <Mail className="w-3.5 h-3.5 text-muted" />
-                      <span>{emp.officeEmail}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-muted dark:text-muted">
-                      <Phone className="w-3.5 h-3.5 text-muted" />
-                      <span>{emp.phone}</span>
-                    </div>
-                  </td>
-                  <td className="p-4 space-y-1">
-                    <div className="flex items-center gap-1.5 text-foreground">
-                      <Building2 className="w-3.5 h-3.5 text-muted" />
-                      <span>{refName(emp.branchId) || "Tanpa cabang"}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-muted dark:text-muted">
-                      <Briefcase className="w-3.5 h-3.5 text-muted" />
-                      <span>{refName(emp.divisionId) || "Tanpa divisi"} &middot; {refName(emp.positionId) || "Tanpa jabatan"}</span>
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                      emp.status === "active"
-                        ? "bg-success-soft text-success dark:text-success border-success/20"
-                        : emp.status === "onboarding"
-                        ? "bg-surface-2 text-foreground dark:text-muted border-line"
-                        : "bg-danger-soft text-danger dark:text-danger border-danger/20"
-                    }`}>
-                      {emp.status}
+        <div className={loading ? "opacity-60 transition-opacity" : "transition-opacity"}>
+          {/* Phones: cards instead of a wide table. */}
+          <div className="md:hidden space-y-2.5">
+            {employees.map((emp) => (
+              <div key={emp._id} className="card p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <button type="button" onClick={() => handleOpenForm(emp)} className="min-w-0 text-left cursor-pointer">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-body font-semibold text-heading">{emp.name}</span>
+                      {emp.isNewHire && (
+                        <Badge tone="accent" icon={Sparkles}>
+                          Baru
+                        </Badge>
+                      )}
                     </span>
-                  </td>
-                  <td className="p-4 text-muted dark:text-muted">
-                    {new Date(emp.joinDate).toLocaleDateString("id-ID", { year: "numeric", month: "short", day: "numeric" })}
-                  </td>
-                  <td className="p-4 text-right flex items-center justify-end gap-1 mt-1.5">
-                    <button
-                      onClick={() => handleOpenForm(emp)}
-                      className="p-1.5 rounded hover:bg-white/4 text-muted dark:text-muted hover:text-foreground transition-all cursor-pointer"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteEmployee(emp._id!)}
-                      className="p-1.5 rounded hover:bg-danger-soft text-muted dark:text-muted hover:text-danger transition-all cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
+                    <span className="block text-label text-muted font-mono">{emp.employeeId}</span>
+                  </button>
+                  <StatusBadge status={emp.status} />
+                </div>
+                <p className="mt-2 text-label text-muted truncate">
+                  {[refName(emp.branchId), refName(emp.positionId)].filter(Boolean).join(" · ") || "Penempatan belum diatur"}
+                </p>
+                {emp.isNewHire && !!emp.missingFields?.length && (
+                  <p className="mt-2 text-label text-warning">Belum diisi: {emp.missingFields.join(", ")}</p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <Card className="hidden md:block overflow-hidden">
+            <TableWrap>
+              <thead>
+                <tr>
+                  <Th>Karyawan</Th>
+                  <Th>Kontak</Th>
+                  <Th>Penempatan</Th>
+                  <Th>Status</Th>
+                  <Th>Mulai kerja</Th>
+                  <Th className="text-right">Aksi</Th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {employees.map((emp) => (
+                  <Tr key={emp._id}>
+                    <Td>
+                      <span className="block text-label text-muted font-mono">{emp.employeeId}</span>
+                      <span className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenForm(emp)}
+                          className="text-body-sm font-semibold text-heading hover:text-primary transition-colors cursor-pointer text-left"
+                        >
+                          {emp.name}
+                        </button>
+                        {emp.isNewHire && (
+                          <span title={emp.missingFields?.length ? `Belum diisi: ${emp.missingFields.join(", ")}` : "Data utama sudah lengkap"}>
+                            <Badge tone="accent" icon={Sparkles}>
+                              Baru
+                            </Badge>
+                          </span>
+                        )}
+                      </span>
+                      {emp.isNewHire && !!emp.missingFields?.length && (
+                        <span className="block text-caption text-warning mt-0.5">{emp.missingFields.length} data belum diisi</span>
+                      )}
+                    </Td>
+                    <Td>
+                      <span className="flex items-center gap-1.5 text-body-sm text-foreground">
+                        <Mail className="w-3.5 h-3.5 text-subtle" strokeWidth={ICON_STROKE} />
+                        {emp.officeEmail}
+                      </span>
+                      {emp.phone && (
+                        <span className="flex items-center gap-1.5 text-label text-muted mt-0.5">
+                          <Phone className="w-3.5 h-3.5 text-subtle" strokeWidth={ICON_STROKE} />
+                          {emp.phone}
+                        </span>
+                      )}
+                    </Td>
+                    <Td>
+                      <span className="flex items-center gap-1.5 text-body-sm text-foreground">
+                        <Building2 className="w-3.5 h-3.5 text-subtle" strokeWidth={ICON_STROKE} />
+                        {refName(emp.branchId) || "Tanpa cabang"}
+                      </span>
+                      <span className="flex items-center gap-1.5 text-label text-muted mt-0.5">
+                        <Briefcase className="w-3.5 h-3.5 text-subtle" strokeWidth={ICON_STROKE} />
+                        {refName(emp.divisionId) || "Tanpa divisi"} · {refName(emp.positionId) || "Tanpa jabatan"}
+                      </span>
+                    </Td>
+                    <Td>
+                      <StatusBadge status={emp.status} />
+                    </Td>
+                    <Td className="text-body-sm text-muted whitespace-nowrap">{formatDate(emp.joinDate as string)}</Td>
+                    <Td className="text-right whitespace-nowrap">
+                      <Button variant="ghost" size="icon" aria-label={`Ubah ${emp.name}`} onClick={() => handleOpenForm(emp)}>
+                        <Edit className="w-4 h-4" strokeWidth={ICON_STROKE} />
+                      </Button>
+                      <Button variant="ghost" size="icon" aria-label={`Hapus ${emp.name}`} onClick={() => setDeleteTarget(emp)}>
+                        <Trash2 className="w-4 h-4 text-danger" strokeWidth={ICON_STROKE} />
+                      </Button>
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </TableWrap>
+          </Card>
+
+          <Pagination
+            className="mt-4"
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            limit={limit}
+            onPage={setPage}
+            onLimit={(l) => {
+              setLimit(l);
+              setPage(1);
+            }}
+          />
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget?._id) void handleDeleteEmployee(deleteTarget._id);
+        }}
+        title={`Hapus ${deleteTarget?.name ?? "karyawan"}?`}
+        message="Data karyawan dan akun login terkait akan dihapus. Tindakan ini tidak dapat dibatalkan."
+        confirmLabel="Hapus"
+      />
 
       {/* Slide-over Form Panel */}
       <AnimatePresence>
@@ -648,7 +766,7 @@ export default function EmployeesPage() {
             >
               <div className="space-y-6">
                 <div className="flex items-center justify-between border-b border-line pb-4">
-                  <h2 className="text-base font-semibold text-foreground dark:text-foreground">
+                  <h2 className="text-body-lg font-semibold text-foreground dark:text-foreground">
                     {selectedId ? "Edit Profil Karyawan" : "Registrasi Karyawan Baru"}
                   </h2>
                   <button
@@ -660,83 +778,96 @@ export default function EmployeesPage() {
                 </div>
 
                 {errorMessage && (
-                  <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
+                  <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-label flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
                     <span>{errorMessage}</span>
                   </div>
                 )}
 
-                <form id="employee-form" onSubmit={handleSubmit} className="space-y-6 text-xs text-foreground">
+                {selectedEmployee?.isNewHire && (
+                  <Alert tone="info" title="Karyawan baru dari rekrutmen">
+                    {selectedEmployee.missingFields?.length
+                      ? `Belum diisi: ${selectedEmployee.missingFields.join(", ")}. Tanda "Baru" hilang otomatis setelah semuanya terisi dan disimpan.`
+                      : "Data utama sudah terisi. Simpan sekali lagi atau hapus tanda baru."}
+                    <div className="mt-2.5">
+                      <Button type="button" size="sm" variant="secondary" icon={CheckCheck} onClick={() => markComplete(selectedEmployee)}>
+                        Tandai sudah lengkap
+                      </Button>
+                    </div>
+                  </Alert>
+                )}
+
+                <form id="employee-form" onSubmit={handleSubmit} className="space-y-6 text-label text-foreground">
                   {/* Bagian 1: Data Diri */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
+                    <h3 className="text-label font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <Users className="w-4 h-4" /> Data Diri Karyawan
                     </h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Nama Lengkap (Sesuai KTP)</label>
-                        <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. John Doe" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. John Doe" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Nomor NIK KTP (Enkripsi)</label>
-                        <input type="text" required value={nik} onChange={e => setNik(e.target.value)} placeholder="16 digit NIK" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={nik} onChange={e => setNik(e.target.value)} placeholder="16 digit NIK" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Tempat Lahir</label>
-                        <input type="text" required value={birthPlace} onChange={e => setBirthPlace(e.target.value)} placeholder="e.g. Jakarta" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={birthPlace} onChange={e => setBirthPlace(e.target.value)} placeholder="e.g. Jakarta" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Tanggal Lahir</label>
-                        <input type="date" required value={birthDate} onChange={e => setBirthDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <DatePicker required value={birthDate} onChange={(value) => setBirthDate(value)} />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Gender</label>
-                        <select value={gender} onChange={e => setGender(e.target.value as "male" | "female")} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
+                        <Select value={gender} onChange={e => setGender(e.target.value as "male" | "female")} className="w-full">
                           <option value="male">Laki-Laki</option>
                           <option value="female">Perempuan</option>
-                        </select>
+                        </Select>
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Agama</label>
-                        <input type="text" required value={religion} onChange={e => setReligion(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={religion} onChange={e => setReligion(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Pernikahan</label>
-                        <input type="text" required value={maritalStatus} onChange={e => setMaritalStatus(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={maritalStatus} onChange={e => setMaritalStatus(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                     </div>
                   </div>
 
                   {/* Bagian 2: Kontak */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
+                    <h3 className="text-label font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <Phone className="w-4 h-4" /> Kontak & Akun
                     </h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">No. HP / WhatsApp</label>
-                        <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} placeholder="08xxxxxx" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={phone} onChange={e => setPhone(e.target.value)} placeholder="08xxxxxx" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Email Pribadi</label>
-                        <input type="email" required value={personalEmail} onChange={e => setPersonalEmail(e.target.value)} placeholder="john@gmail.com" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="email" required value={personalEmail} onChange={e => setPersonalEmail(e.target.value)} placeholder="john@gmail.com" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4 mt-3">
                       <div className="space-y-1">
                         <label className="font-semibold">Email Kantor (Email Login)</label>
-                        <input type="email" required value={officeEmail} onChange={e => setOfficeEmail(e.target.value)} placeholder="john@perusahaan.com" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="email" required value={officeEmail} onChange={e => setOfficeEmail(e.target.value)} placeholder="john@perusahaan.com" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold flex items-center justify-between">
                           <span>{selectedId ? "Kata Sandi Baru" : "Kata Sandi Akun"}</span>
-                          <span className="text-xs text-muted dark:text-subtle font-normal">
+                          <span className="text-label text-muted dark:text-subtle font-normal">
                             {selectedId ? "(Kosongkan jika tidak diubah)" : "(Kosongkan untuk default)"}
                           </span>
                         </label>
@@ -745,7 +876,7 @@ export default function EmployeesPage() {
                           value={password}
                           onChange={e => setPassword(e.target.value)}
                           placeholder={selectedId ? "Ubah kata sandi..." : "Tentukan kata sandi login..."}
-                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs"
+                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label"
                         />
                       </div>
                     </div>
@@ -753,15 +884,15 @@ export default function EmployeesPage() {
 
                   {/* Bagian 3: Alamat */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
+                    <h3 className="text-label font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <MapPin className="w-4 h-4" /> Alamat Lengkap
                     </h3>
                     <div className="space-y-4">
                       <div className="p-3 bg-surface-2 rounded-[var(--radius)] border border-line space-y-3">
-                        <span className="font-semibold text-foreground text-xs uppercase tracking-wider block border-b border-line pb-1">Alamat Sesuai KTP</span>
+                        <span className="font-semibold text-foreground text-label uppercase tracking-wider block border-b border-line pb-1">Alamat Sesuai KTP</span>
                         <div className="space-y-1">
-                          <label className="font-semibold block text-[11px] mb-1 text-foreground dark:text-muted">Jalan / RT / RW</label>
-                          <input type="text" required value={ktpStreet} onChange={e => setKtpStreet(e.target.value)} placeholder="Nama Jalan, No. Rumah, RT/RW" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs" />
+                          <label className="font-semibold block text-caption mb-1 text-foreground dark:text-muted">Jalan / RT / RW</label>
+                          <input type="text" required value={ktpStreet} onChange={e => setKtpStreet(e.target.value)} placeholder="Nama Jalan, No. Rumah, RT/RW" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-label" />
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <SearchSelect
@@ -807,10 +938,10 @@ export default function EmployeesPage() {
                       </div>
 
                       <div className="p-3 bg-surface-2 rounded-[var(--radius)] border border-line space-y-3">
-                        <span className="font-semibold text-foreground text-xs uppercase tracking-wider block border-b border-line pb-1">Alamat Domisili Aktif</span>
+                        <span className="font-semibold text-foreground text-label uppercase tracking-wider block border-b border-line pb-1">Alamat Domisili Aktif</span>
                         <div className="space-y-1">
-                          <label className="font-semibold block text-[11px] mb-1 text-foreground dark:text-muted">Jalan / RT / RW</label>
-                          <input type="text" required value={domicileStreet} onChange={e => setDomicileStreet(e.target.value)} placeholder="Nama Jalan, No. Rumah, RT/RW" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs" />
+                          <label className="font-semibold block text-caption mb-1 text-foreground dark:text-muted">Jalan / RT / RW</label>
+                          <input type="text" required value={domicileStreet} onChange={e => setDomicileStreet(e.target.value)} placeholder="Nama Jalan, No. Rumah, RT/RW" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-label" />
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <SearchSelect
@@ -859,39 +990,39 @@ export default function EmployeesPage() {
 
                   {/* Bagian 4: Finansial */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
+                    <h3 className="text-label font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <CreditCard className="w-4 h-4" /> Akun Keuangan & Rekening Bank
                     </h3>
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">NPWP (Enkripsi)</label>
-                        <input type="text" required value={npwp} onChange={e => setNpwp(e.target.value)} placeholder="No. NPWP" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={npwp} onChange={e => setNpwp(e.target.value)} placeholder="No. NPWP" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Pajak</label>
-                        <input type="text" required value={taxStatus} onChange={e => setTaxStatus(e.target.value)} placeholder="TK/0, K/0, K/1" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={taxStatus} onChange={e => setTaxStatus(e.target.value)} placeholder="TK/0, K/0, K/1" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Nama Bank</label>
-                        <input type="text" required value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. Bank Mandiri" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. Bank Mandiri" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">No Rekening (Enkripsi)</label>
-                        <input type="text" required value={bankAccountNumber} onChange={e => setBankAccountNumber(e.target.value)} placeholder="No Rekening" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={bankAccountNumber} onChange={e => setBankAccountNumber(e.target.value)} placeholder="No Rekening" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Atas Nama</label>
-                        <input type="text" required value={bankAccountHolder} onChange={e => setBankAccountHolder(e.target.value)} placeholder="Sesuai buku tabungan" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <input type="text" required value={bankAccountHolder} onChange={e => setBankAccountHolder(e.target.value)} placeholder="Sesuai buku tabungan" className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label" />
                       </div>
                     </div>
                   </div>
 
                   {/* Bagian 5: Penempatan */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
+                    <h3 className="text-label font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5 pb-1 border-b border-line">
                       <Briefcase className="w-4 h-4" /> Penempatan Kerja & Jabatan
                     </h3>
                     <div className="grid grid-cols-3 gap-4 items-end">
@@ -945,31 +1076,37 @@ export default function EmployeesPage() {
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="font-semibold">Tanggal Mulai Kerja (Join Date)</label>
-                        <input type="date" required value={joinDate} onChange={e => setJoinDate(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs" />
+                        <DatePicker required value={joinDate} onChange={(value) => setJoinDate(value)} />
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Kepegawaian</label>
-                        <select value={employmentStatus} onChange={e => setEmploymentStatus(e.target.value as "probation" | "pkwt" | "pkwtt" | "outsource")} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
+                        <Select value={employmentStatus} onChange={e => setEmploymentStatus(e.target.value as "probation" | "pkwt" | "pkwtt" | "outsource")} className="w-full">
                           <option value="probation">Probation</option>
                           <option value="pkwt">PKWT</option>
                           <option value="pkwtt">PKWTT</option>
                           <option value="outsource">Outsource</option>
-                        </select>
+                        </Select>
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Aktivitas Karyawan</label>
-                        <select value={status} onChange={e => setStatus(e.target.value as "active" | "onboarding" | "suspended" | "resigned")} className="w-full px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs">
+                        <Select value={status} onChange={e => setStatus(e.target.value as "active" | "onboarding" | "suspended" | "resigned")} className="w-full">
                           <option value="onboarding">Onboarding</option>
                           <option value="active">Active</option>
                           <option value="suspended">Suspended</option>
                           <option value="resigned">Resigned</option>
-                        </select>
+                        </Select>
                       </div>
                     </div>
 
+                    {selectedId && (
+                      <div className="mt-5">
+                        <EmployeeFaceStatus employeeId={selectedId} />
+                      </div>
+                    )}
+
                     {!selectedId && (
                       <div className="space-y-1">
-                        <h4 className="text-[11px] font-semibold text-muted dark:text-muted uppercase tracking-wider mt-4 flex items-center gap-1.5 pb-1 border-b border-line">
+                        <h4 className="text-caption font-semibold text-muted dark:text-muted uppercase tracking-wider mt-4 flex items-center gap-1.5 pb-1 border-b border-line">
                           <ShieldCheck className="w-4 h-4" /> Kredensial Login
                         </h4>
                         <div className="space-y-1 mt-2">
@@ -983,8 +1120,8 @@ export default function EmployeesPage() {
                             ]}
                             placeholder="Pilih Role..."
                           />
-                          <p className="text-xs text-muted italic mt-1">
-                            * Karyawan yang diberi role akan dibuatkan akun login otomatis dengan email kantor dan default password: <span className="font-mono text-muted dark:text-muted">password123</span>.
+                          <p className="text-label text-muted italic mt-1">
+                            * Karyawan yang diberi role akan dibuatkan akun login dengan email kantor. Kata sandi awalnya diambil dari Pengaturan → Keamanan dan ditampilkan setelah data disimpan.
                           </p>
                         </div>
                       </div>
@@ -997,7 +1134,7 @@ export default function EmployeesPage() {
                 <button
                   type="button"
                   onClick={handleCloseForm}
-                  className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all"
+                  className="px-4 py-2 rounded-lg border border-line text-label font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all"
                 >
                   Batal
                 </button>
@@ -1005,7 +1142,7 @@ export default function EmployeesPage() {
                   type="submit"
                   form="employee-form"
                   disabled={submitting}
-                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-label font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
                 >
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Simpan Karyawan

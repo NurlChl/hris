@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { wrapRouteHandler, apiSuccess } from "@/lib/api";
-import { parseBody, enforceRateLimit, BadRequest } from "@/lib/guard";
+import { parseBody, enforceRateLimit, BadRequest, enforceIpRateLimit } from "@/lib/guard";
 import { RATE_RULES, clientIp } from "@/lib/rate-limit";
 import { connectToDatabase } from "@/lib/db";
 import { consumeOtp, hashNewPassword } from "@/lib/auth/otp";
@@ -16,7 +16,7 @@ const schema = z.object({
 
 export const POST = wrapRouteHandler(async (req) => {
   const ip = clientIp(req);
-  enforceRateLimit("reset-ip", ip, RATE_RULES.auth);
+  enforceIpRateLimit("reset-ip", req, RATE_RULES.auth);
 
   const body = await parseBody(req, schema);
   enforceRateLimit("reset-email", body.email, RATE_RULES.auth);

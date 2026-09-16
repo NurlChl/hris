@@ -38,6 +38,13 @@ interface Evaluation {
   submittedAt?: string | null;
   acknowledgedAt?: string | null;
   finalizedAt?: string | null;
+  branding?: {
+    companyName: string;
+    companyAddress: string;
+    showLogo: boolean;
+    logoUrl: string;
+    logoHeight: number;
+  };
   employeeId: {
     name: string;
     employeeId: string;
@@ -120,18 +127,51 @@ function KpiPrint() {
         <div style={{ color: INK }}>
           {/* ---------- header ---------- */}
           <header
+            className="avoid-break"
             style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 24,
               borderBottom: `2px solid ${ACCENT}`,
               paddingBottom: 14,
               marginBottom: 20,
             }}
           >
-            <h1 style={{ margin: 0, fontSize: "1.5em", fontWeight: 600, letterSpacing: "-0.01em" }}>
-              FORMULIR PENILAIAN KINERJA
-            </h1>
-            <p style={{ margin: "6px 0 0", color: MUTED, fontSize: "0.95em" }}>
-              {evaluation.templateId?.name ?? "Template dihapus"} · Periode {evaluation.period}
-            </p>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, minWidth: 0 }}>
+              {evaluation.branding?.showLogo && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={evaluation.branding.logoUrl}
+                  alt=""
+                  style={{
+                    height: `${evaluation.branding.logoHeight}mm`,
+                    width: "auto",
+                    maxWidth: "45mm",
+                    objectFit: "contain",
+                    flexShrink: 0,
+                  }}
+                />
+              )}
+              <div style={{ minWidth: 0 }}>
+                <h1 style={{ margin: 0, fontSize: "1.5em", fontWeight: 600, letterSpacing: "-0.01em" }}>
+                  FORMULIR PENILAIAN KINERJA
+                </h1>
+                <p style={{ margin: "6px 0 0", color: MUTED, fontSize: "0.95em" }}>
+                  {evaluation.templateId?.name ?? "Template dihapus"} · Periode {evaluation.period}
+                </p>
+              </div>
+            </div>
+            {evaluation.branding?.companyName && (
+              <div style={{ textAlign: "right", maxWidth: "45%" }}>
+                <p style={{ margin: 0, fontWeight: 600 }}>{evaluation.branding.companyName}</p>
+                {evaluation.branding.companyAddress && evaluation.branding.companyAddress !== "-" && (
+                  <p style={{ margin: "4px 0 0", color: MUTED, fontSize: "0.9em", lineHeight: 1.5 }}>
+                    {evaluation.branding.companyAddress}
+                  </p>
+                )}
+              </div>
+            )}
           </header>
 
           {/* ---------- identity ---------- */}

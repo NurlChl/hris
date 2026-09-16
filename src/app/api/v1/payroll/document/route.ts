@@ -81,6 +81,9 @@ export const GET = wrapRouteHandler(async (req) => {
     companyName: String(settings.company_name ?? ""),
     companyAddress: String(settings.company_address ?? ""),
     documentTitle: "SLIP GAJI KARYAWAN",
+    showLogo: false,
+    logoUrl: "",
+    logoHeight: 14,
     footerNote:
       "Dokumen ini dihasilkan otomatis oleh sistem dan sah tanpa tanda tangan basah. " +
       "Keberatan atas perhitungan dapat diajukan ke HRD paling lambat 7 hari sejak slip diterbitkan.",

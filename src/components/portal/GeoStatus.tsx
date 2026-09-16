@@ -123,15 +123,15 @@ export function GeoStatus({
           <div className="min-w-0 flex-1">
             {value ? (
               <>
-                <p className="text-xs font-semibold tabular-nums">
+                <p className="text-label font-semibold tabular-nums">
                   {value.lat.toFixed(6)}, {value.lng.toFixed(6)}
                 </p>
-                <p className="text-xs text-muted mt-0.5 leading-relaxed line-clamp-2">
+                <p className="text-label text-muted mt-0.5 leading-relaxed line-clamp-2">
                   {address || "Mengambil nama lokasi…"}
                 </p>
               </>
             ) : (
-              <p className="text-xs text-muted">
+              <p className="text-label text-muted">
                 {loading ? "Mendeteksi lokasi Anda…" : "Lokasi belum terdeteksi."}
               </p>
             )}
@@ -149,7 +149,7 @@ export function GeoStatus({
         </div>
 
         {value && (
-          <div className="mt-3 pt-3 border-t border-line flex items-center gap-2 text-[11px]">
+          <div className="mt-3 pt-3 border-t border-line flex items-center gap-2 text-caption">
             <Crosshair className="w-3.5 h-3.5 text-subtle shrink-0" />
             <span className="text-muted">Akurasi perangkat</span>
             <span

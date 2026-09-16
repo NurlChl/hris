@@ -19,6 +19,7 @@ import { getSettings } from "@/lib/settings";
 import Employee from "@/models/Employee";
 import User from "@/models/User";
 import Counter from "@/models/Counter";
+import { missingProfileFields } from "@/lib/hr/employee-completeness";
 
 /**
  * Employee master data.
@@ -89,6 +90,11 @@ const employeeSchema = z.object({
   password: z.string().optional(),
 });
 
+/** A `YYYY-MM-DD` from a date picker is a WIB calendar day, not UTC midnight. */
+function toWibDate(value: string): Date {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00+07:00`) : new Date(value);
+}
+
 /* ------------------------------------------------------------------ */
 /* GET                                                                  */
 /* ------------------------------------------------------------------ */
@@ -112,6 +118,8 @@ export const GET = wrapRouteHandler(async (req) => {
     }),
   };
   if (status && status !== "all") filter.status = status;
+  // Hired from recruitment and not yet completed by HR.
+  if (sp.get("newHire") === "1") filter.isNewHire = true;
   if (search) {
     const safe = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     filter.$or = [
@@ -137,7 +145,10 @@ export const GET = wrapRouteHandler(async (req) => {
   ]);
 
   const canSeeFullPii = fallback.scope === "all";
-  const data = employees.map((e) => revealSensitive(e, canSeeFullPii));
+  const data = employees.map((e) => ({
+    ...revealSensitive(e, canSeeFullPii),
+    ...(e.isNewHire ? { missingFields: missingProfileFields(e as Parameters<typeof missingProfileFields>[0]) } : {}),
+  }));
 
   return apiSuccess(data, "Berhasil memuat data karyawan", { page, limit, total });
 });
@@ -177,7 +188,7 @@ export const POST = wrapRouteHandler(async (req) => {
   const payload: Record<string, unknown> = {
     name: body.name,
     birthPlace: body.birthPlace ?? "",
-    birthDate: body.birthDate ? new Date(body.birthDate) : undefined,
+    birthDate: body.birthDate ? toWibDate(body.birthDate) : undefined,
     gender: body.gender,
     religion: body.religion ?? "",
     maritalStatus: body.maritalStatus ?? "",
@@ -196,7 +207,7 @@ export const POST = wrapRouteHandler(async (req) => {
     supervisorId: body.supervisorId || null,
     storeManagerId: body.storeManagerId || null,
     areaManagerId: body.areaManagerId || null,
-    joinDate: body.joinDate ? new Date(body.joinDate) : undefined,
+    joinDate: body.joinDate ? toWibDate(body.joinDate) : undefined,
     employmentStatus: body.employmentStatus,
   };
 
@@ -235,7 +246,19 @@ export const POST = wrapRouteHandler(async (req) => {
       }
     }
 
-    const updated = await Employee.findByIdAndUpdate(body.id, payload, { new: true });
+    let updated = await Employee.findByIdAndUpdate(body.id, payload, { new: true });
+
+    // A new hire stops being flagged the moment HR has filled in everything the
+    // record needs; nobody has to remember to untick anything.
+    let completedNow = false;
+    if (updated?.isNewHire && missingProfileFields(updated.toObject()).length === 0) {
+      updated = await Employee.findByIdAndUpdate(
+        body.id,
+        { isNewHire: false, profileCompletedAt: new Date() },
+        { new: true }
+      );
+      completedNow = true;
+    }
 
     if (body.officeEmail && body.officeEmail !== existing.officeEmail) {
       const clash = await User.findOne({
@@ -276,7 +299,8 @@ export const POST = wrapRouteHandler(async (req) => {
 
     return apiSuccess(
       revealSensitive(updated!.toObject(), ctx.permission.scope === "all"),
-      `Data ${body.name} berhasil diperbarui.`
+      `Data ${body.name} berhasil diperbarui.` +
+        (completedNow ? " Data karyawan baru ini sudah lengkap, tanda \"Baru\" dihapus." : "")
     );
   }
 
@@ -361,6 +385,45 @@ function redactForAudit(doc: Record<string, unknown>): Record<string, unknown> {
   delete copy.documents;
   return copy;
 }
+
+/* ------------------------------------------------------------------ */
+/* PATCH — clear the new-hire flag by hand                              */
+/* ------------------------------------------------------------------ */
+
+const completeSchema = z.object({ id: objectId });
+
+/**
+ * For records HR considers complete even though a checklist item is empty —
+ * a contract worker with no bank account on payroll, for instance.
+ */
+export const PATCH = wrapRouteHandler(async (req) => {
+  const ctx = await requirePermission(req, "employees", "write");
+  const body = await parseBody(req, completeSchema);
+  const employee = await Employee.findById(body.id);
+  if (!employee) throw NotFound("Data karyawan tidak ditemukan.");
+  if (!employee.isNewHire) return apiSuccess({ id: body.id }, "Karyawan ini sudah tidak bertanda baru.");
+
+  const missing = missingProfileFields(employee.toObject());
+  employee.isNewHire = false;
+  employee.profileCompletedAt = new Date();
+  await employee.save();
+
+  void logActivity({
+    userId: ctx.user.id,
+    action: "COMPLETE_NEW_HIRE",
+    module: "employees",
+    after: { employeeId: employee.employeeId, stillMissing: missing },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
+
+  return apiSuccess(
+    { id: body.id },
+    missing.length
+      ? `Tanda "Baru" dihapus. Catatan: ${missing.join(", ")} masih kosong.`
+      : `Tanda "Baru" dihapus.`
+  );
+});
 
 /* ------------------------------------------------------------------ */
 /* DELETE                                                               */

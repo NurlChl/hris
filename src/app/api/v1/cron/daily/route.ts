@@ -18,6 +18,13 @@ import {
   wibParts,
   wibStartOfDay,
 } from "@/lib/time";
+import { purgeExpiredUploads } from "@/lib/uploads";
+import {
+  remindIncompleteNewHires,
+  remindMissingClockOut,
+  remindStaleApprovals,
+  remindTomorrowInterviews,
+} from "@/lib/notification/reminders";
 import HolidaySwapRequest from "@/models/HolidaySwapRequest";
 import Attendance from "@/models/Attendance";
 import Contract from "@/models/Contract";
@@ -51,6 +58,11 @@ export const GET = wrapRouteHandler(async (req) => {
     overtimeFromHolidays: await recordHolidayOvertime(todayKey),
     contractReminders: await sendContractReminders(),
     birthdayGreetings: await sendBirthdayGreetings(),
+    expiredUploads: await purgeExpiredUploads(),
+    missingClockOut: await remindMissingClockOut(),
+    staleApprovals: await remindStaleApprovals(),
+    tomorrowInterviews: await remindTomorrowInterviews(),
+    incompleteNewHires: await remindIncompleteNewHires(),
   };
 
   void logActivity({

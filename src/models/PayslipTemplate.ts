@@ -41,7 +41,10 @@ export interface IPayslipTemplate extends Document {
   /** Page margin in millimetres. */
   margin: number;
   showLogo: boolean;
+  /** Data URL, inlined so printing never waits on a network fetch. */
   logoUrl: string;
+  /** Printed height in millimetres. */
+  logoHeight: number;
 
   /* --- content --- */
   companyName: string;
@@ -82,6 +85,7 @@ const PayslipTemplateSchema = new Schema<IPayslipTemplate>(
     margin: { type: Number, default: 18, min: 5, max: 40 },
     showLogo: { type: Boolean, default: false },
     logoUrl: { type: String, default: "" },
+    logoHeight: { type: Number, default: 14, min: 6, max: 40 },
 
     companyName: { type: String, default: "" },
     companyAddress: { type: String, default: "" },

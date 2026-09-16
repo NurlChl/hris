@@ -32,6 +32,8 @@ import Attendance from "@/models/Attendance";
 import Employee from "@/models/Employee";
 import Branch from "@/models/Branch";
 import LeaveRequest from "@/models/LeaveRequest";
+import FaceProfile from "@/models/FaceProfile";
+import { getFaceSettings, verifyAttendanceFace, FaceMismatchError } from "@/lib/face/service";
 
 const ACTIONS = ["clock_in", "break_out", "break_in", "clock_out"] as const;
 type Action = (typeof ACTIONS)[number];
@@ -76,7 +78,7 @@ export const GET = wrapRouteHandler(async (req) => {
     Object.assign(filter, scopeFilter({ ...ctx, permission: perm }));
   } else {
     if (!ctx.user.employeeId) {
-      return apiSuccess({ logs: [], settings: await attendanceSettings(), total: 0 });
+      return apiSuccess({ logs: [], settings: await attendanceSettings(null), total: 0 });
     }
     filter.employeeId = ctx.user.employeeId;
   }
@@ -103,15 +105,22 @@ export const GET = wrapRouteHandler(async (req) => {
   );
 
   return apiSuccess(
-    { logs: withSignedPhotos, settings: await attendanceSettings(), period },
+    { logs: withSignedPhotos, settings: await attendanceSettings(ctx.user.employeeId), period },
     "Berhasil memuat riwayat presensi",
     { page, limit, total }
   );
 });
 
-async function attendanceSettings() {
+async function attendanceSettings(employeeId: string | null) {
   const s = await getSettings();
+  const face = await getFaceSettings();
+  const faceEnrolled =
+    face.enabled && employeeId ? Boolean(await FaceProfile.exists({ employeeId })) : false;
+
   return {
+    face_recognition_enabled: face.enabled,
+    /** Lets the portal send an unenrolled employee to enrol before they try. */
+    face_enrolled: faceEnrolled,
     require_selfie_clock_in: Boolean(s.require_selfie_clock_in),
     require_selfie_break_out: Boolean(s.require_selfie_break_out),
     require_selfie_break_in: Boolean(s.require_selfie_break_in),
@@ -132,7 +141,9 @@ const attendanceSchema = z.object({
   lng: z.number().min(-180).max(180),
   accuracy: z.number().nonnegative().optional(),
   photo: z.string().optional(),
-  isManualFallback: z.boolean().optional(),
+  // `isManualFallback` used to be accepted from the client. It meant "the face
+  // check failed, accept a plain selfie", and a request could simply claim it.
+  // Only the server decides that now, so the field is no longer read.
   isLocationOverride: z.boolean().optional(),
   note: z.string().max(500).optional(),
 });
@@ -150,7 +161,12 @@ export const POST = wrapRouteHandler(async (req) => {
   const dayStart = wibStartOfDay(dayKey);
 
   /* --- 1. Selfie requirement -------------------------------------- */
-  const selfieRequired = Boolean(settings[`require_selfie_${action}`]);
+  // Face verification is meaningless if the photo can be skipped, so while it
+  // is on, the two taps that decide pay — in and out — always need one.
+  const face = await getFaceSettings();
+  const selfieRequired =
+    Boolean(settings[`require_selfie_${action}`]) ||
+    (face.enabled && (action === "clock_in" || action === "clock_out"));
   if (selfieRequired && !body.photo) {
     throw BadRequest(
       `Foto selfie wajib disertakan untuk ${ACTION_LABEL[action]}. Izinkan akses kamera lalu ambil foto terlebih dahulu.`
@@ -269,9 +285,40 @@ export const POST = wrapRouteHandler(async (req) => {
   }
 
   /* --- 6. Photo ----------------------------------------------------- */
+  // Verified here, after the cheap checks above have passed, so a request that
+  // was going to be refused for sequence or location never spends CPU on face
+  // inference — and before anything is stored, so a mismatch leaves no record.
   let photoKey = "";
+  let faceDistanceScore: number | null = null;
   if (body.photo) {
     const { buffer, ext } = decodeDataUrl(body.photo, ["image/jpeg", "image/png", "image/webp"]);
+
+    if (face.enabled) {
+      try {
+        const verdict = await verifyAttendanceFace(ctx.employeeId, buffer, face.threshold);
+        faceDistanceScore = Math.round(verdict.distance * 1000) / 1000;
+      } catch (err) {
+        if (err instanceof FaceMismatchError) {
+          // Repeated mismatches are the signal HR looks for when someone is
+          // trying to clock in for a colleague.
+          void logActivity({
+            userId: ctx.user.id,
+            action: "FACE_MISMATCH",
+            module: "attendance",
+            after: {
+              date: dayKey,
+              action,
+              distance: Math.round(err.distance * 1000) / 1000,
+              threshold: face.threshold,
+            },
+            ip: ctx.ip,
+            userAgent: ctx.userAgent,
+          });
+        }
+        throw err;
+      }
+    }
+
     // Timestamped so a retap never silently overwrites the earlier evidence.
     photoKey = await storageProvider.upload(
       buffer,
@@ -341,7 +388,10 @@ export const POST = wrapRouteHandler(async (req) => {
   record.gpsAccuracy = body.accuracy ?? record.gpsAccuracy;
   record.branchId = (activeBranch as { _id: unknown })._id;
   record.distanceMeter = Math.round(distance);
-  record.isManualFallback = Boolean(body.isManualFallback) || record.isManualFallback;
+  if (faceDistanceScore !== null) {
+    record.faceVerified = true;
+    record.faceDistance = faceDistanceScore;
+  }
   record.isCrossBranch = isCrossBranch || record.isCrossBranch;
   record.isLocationOverride = usingOverride || record.isLocationOverride;
   record.isRemoteApproved = remoteApproved || record.isRemoteApproved;

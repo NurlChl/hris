@@ -86,7 +86,7 @@ export default function CareerPage() {
         <div className="max-w-5xl mx-auto w-full h-full px-5 flex items-center justify-between gap-4">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-[13px] font-medium text-muted hover:text-foreground transition-colors"
+            className="inline-flex items-center gap-2 text-body-sm font-medium text-muted hover:text-foreground transition-colors"
           >
             <ArrowLeft className="w-4 h-4" strokeWidth={ICON_STROKE} />
             Beranda
@@ -103,7 +103,7 @@ export default function CareerPage() {
                 <Moon className="w-[18px] h-[18px]" strokeWidth={ICON_STROKE} />
               )}
             </button>
-            <span className="w-8 h-8 rounded-[10px] bg-primary text-primary-foreground grid place-items-center font-semibold text-xs">
+            <span className="w-8 h-8 rounded-[10px] bg-primary text-primary-foreground grid place-items-center font-semibold text-label">
               HR
             </span>
           </div>
@@ -113,10 +113,10 @@ export default function CareerPage() {
       <main className="flex-1 max-w-5xl mx-auto w-full px-5 py-12 md:py-16">
         <div className="max-w-2xl">
           <p className="eyebrow">Karier</p>
-          <h1 className="mt-3 text-[32px] md:text-[40px] text-heading leading-[1.1]">
+          <h1 className="mt-3 text-display md:text-hero-sm text-heading leading-[1.1]">
             Lowongan yang sedang dibuka.
           </h1>
-          <p className="mt-4 text-[15px] text-muted leading-relaxed">
+          <p className="mt-4 text-body-lg text-muted leading-relaxed">
             Kirim lamaran langsung dari halaman ini. Setiap lamaran masuk ke proses seleksi yang
             sama, dan kami menghubungi pelamar yang profilnya sesuai lewat email atau telepon.
           </p>
@@ -124,7 +124,7 @@ export default function CareerPage() {
 
         {items.length > 0 && (
           <div className="mt-10 flex flex-wrap items-center gap-3">
-            <div className="relative flex-1 min-w-56">
+            <div className="relative flex-1" style={{ minWidth: "14rem" }}>
               <Search
                 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle pointer-events-none"
                 strokeWidth={ICON_STROKE}
@@ -187,7 +187,7 @@ export default function CareerPage() {
             </div>
           ) : (
             <>
-              <p className="text-[13px] text-subtle mb-4">
+              <p className="text-body-sm text-subtle mb-4">
                 {filtered.length} lowongan
                 {filtered.length !== items.length && ` dari ${items.length} total`}
               </p>
@@ -200,11 +200,11 @@ export default function CareerPage() {
                     >
                       <div className="flex flex-wrap items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
-                          <h2 className="text-[18px] font-semibold text-heading group-hover:text-primary transition-colors">
+                          <h2 className="text-title-sm font-semibold text-heading group-hover:text-primary transition-colors">
                             {v.title}
                           </h2>
 
-                          <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px] text-muted">
+                          <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-body-sm text-muted">
                             {v.division && (
                               <span className="inline-flex items-center gap-1.5">
                                 <Building2 className="w-4 h-4 text-subtle" strokeWidth={ICON_STROKE} />
@@ -224,7 +224,7 @@ export default function CareerPage() {
                           </div>
 
                           {v.summary && (
-                            <p className="mt-3 text-[13px] text-muted leading-relaxed line-clamp-2 max-w-2xl">
+                            <p className="mt-3 text-body-sm text-muted leading-relaxed line-clamp-2 max-w-2xl">
                               {v.summary}
                             </p>
                           )}
@@ -257,7 +257,7 @@ export default function CareerPage() {
       </main>
 
       <footer className="border-t border-line">
-        <div className="max-w-5xl mx-auto w-full px-5 py-7 flex flex-wrap items-center justify-between gap-3 text-[13px]">
+        <div className="max-w-5xl mx-auto w-full px-5 py-7 flex flex-wrap items-center justify-between gap-3 text-body-sm">
           <p className="text-subtle">
             &copy; {new Date().getFullYear()} HRIS. Seluruh waktu dalam WIB.
           </p>

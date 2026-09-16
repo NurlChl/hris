@@ -10,6 +10,7 @@ import {
   Inbox,
   Paperclip,
   Repeat,
+  ScanFace,
   X,
 } from "lucide-react";
 import {
@@ -43,7 +44,7 @@ interface Step {
 
 interface ApprovalItem {
   _id: string;
-  refType: "leave" | "correction" | "holiday_swap";
+  refType: "leave" | "correction" | "holiday_swap" | "face_change";
   refTypeLabel: string;
   status: string;
   currentStep: number;
@@ -60,6 +61,9 @@ interface ApprovalItem {
     duration: string;
     reason: string;
     evidenceUrl: string;
+    /** Face change requests only. */
+    facePhotos?: { current: string; proposed: string };
+    faceSimilarity?: "similar" | "uncertain" | "different" | "unknown";
   };
 }
 
@@ -67,6 +71,7 @@ const TYPE_ICON = {
   leave: CalendarDays,
   correction: FileClock,
   holiday_swap: Repeat,
+  face_change: ScanFace,
 } as const;
 
 export default function ApprovalsPage() {
@@ -123,8 +128,8 @@ export default function ApprovalsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-[26px] md:text-[30px] text-heading">Persetujuan</h1>
-        <p className="text-sm text-muted mt-2 leading-relaxed">
+        <h1 className="text-display-sm md:text-display text-heading">Persetujuan</h1>
+        <p className="text-body text-muted mt-2 leading-relaxed">
           Antrean pengajuan cuti, koreksi absen, dan tukar libur yang menunggu keputusan Anda.
         </p>
       </header>
@@ -165,7 +170,7 @@ export default function ApprovalsPage() {
                   title={
                     <span className="flex flex-wrap items-center gap-2">
                       {item.requesterName}
-                      <span className="text-[11px] font-normal text-subtle font-mono">
+                      <span className="text-caption font-normal text-subtle font-mono">
                         {item.requesterNip}
                       </span>
                     </span>
@@ -213,13 +218,19 @@ export default function ApprovalsPage() {
                     <p className="eyebrow mb-1">
                       Alasan pemohon
                     </p>
-                    <p className="text-sm text-foreground/90 leading-relaxed">{item.details.reason}</p>
+                    <p className="text-body text-foreground/90 leading-relaxed">{item.details.reason}</p>
+                    {item.details.facePhotos && (
+                      <FaceComparison
+                        photos={item.details.facePhotos}
+                        similarity={item.details.faceSimilarity ?? "unknown"}
+                      />
+                    )}
                     {item.details.evidenceUrl && (
                       <a
                         href={item.details.evidenceUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 mt-2 text-xs font-semibold text-primary hover:underline"
+                        className="inline-flex items-center gap-1.5 mt-2 text-label font-semibold text-primary hover:underline"
                       >
                         <Paperclip className="w-3.5 h-3.5" />
                         Buka lampiran bukti
@@ -298,7 +309,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="eyebrow">{label}</dt>
-      <dd className="text-sm font-medium mt-0.5 break-words">{value}</dd>
+      <dd className="text-body font-medium mt-0.5 break-words">{value}</dd>
     </div>
   );
 }
@@ -317,7 +328,7 @@ function StepTrail({ steps, currentStep }: { steps: Step[]; currentStep: number 
               {i > 0 && <span className="w-4 h-px bg-line" aria-hidden />}
               <span
                 className={cn(
-                  "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold border",
+                  "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-caption font-semibold border",
                   s.status === "approved" && "bg-success-soft text-success border-success/20",
                   s.status === "rejected" && "bg-danger-soft text-danger border-danger/20",
                   s.status === "pending" && isCurrent && "bg-primary-soft text-primary border-primary/30",
@@ -339,6 +350,79 @@ function StepTrail({ steps, currentStep }: { steps: Step[]; currentStep: number 
       <Badge tone="neutral" className="ml-auto">
         Langkah {currentStep} dari {steps.length}
       </Badge>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+const SIMILARITY_COPY = {
+  similar: {
+    tone: "success" as const,
+    title: "Sistem menilai wajahnya mirip",
+    body: "Foto baru cocok dengan wajah yang terdaftar. Tetap periksa dengan mata Anda sendiri.",
+  },
+  uncertain: {
+    tone: "warning" as const,
+    title: "Sistem ragu",
+    body: "Kemiripannya di batas. Bisa karena cahaya atau penampilan berubah — atau orang yang berbeda. Periksa baik-baik.",
+  },
+  different: {
+    tone: "danger" as const,
+    title: "Sistem menilai ini wajah yang berbeda",
+    body: "Foto baru tidak cocok dengan wajah terdaftar. Setujui hanya bila Anda yakin ini orang yang sama, misalnya setelah perubahan penampilan besar.",
+  },
+  unknown: {
+    tone: "info" as const,
+    title: "Belum ada pembanding",
+    body: "Karyawan ini belum punya wajah terdaftar untuk dibandingkan.",
+  },
+};
+
+/**
+ * Side-by-side view of the enrolled and proposed face.
+ *
+ * The approver is the check here — the system's similarity is shown as a hint
+ * beneath the photos, never as the answer, because the case that matters most
+ * (a colleague who looks alike) is exactly the one a score gets wrong.
+ */
+function FaceComparison({
+  photos,
+  similarity,
+}: {
+  photos: { current: string; proposed: string };
+  similarity: keyof typeof SIMILARITY_COPY;
+}) {
+  const copy = SIMILARITY_COPY[similarity];
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="grid grid-cols-2 gap-3 max-w-md">
+        {(
+          [
+            ["Wajah terdaftar", photos.current],
+            ["Wajah pengganti", photos.proposed],
+          ] as const
+        ).map(([label, url]) => (
+          <figure key={label} className="space-y-1.5">
+            {url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={url}
+                alt={label}
+                className="w-full aspect-square object-cover rounded-[var(--radius-control)] border border-line"
+              />
+            ) : (
+              <div className="w-full aspect-square grid place-items-center rounded-[var(--radius-control)] border border-dashed border-line text-label text-subtle">
+                Tidak ada
+              </div>
+            )}
+            <figcaption className="text-label text-muted">{label}</figcaption>
+          </figure>
+        ))}
+      </div>
+      <Alert tone={copy.tone} title={copy.title}>
+        {copy.body}
+      </Alert>
     </div>
   );
 }

@@ -33,7 +33,7 @@ export function AuthShell({
       <header className="h-16 shrink-0 flex items-center justify-between px-5 max-w-5xl mx-auto w-full">
         <Link
           href="/"
-          className="inline-flex items-center gap-2 px-2.5 py-1.5 -ml-2.5 rounded-[var(--radius-control)] text-[13px] font-medium text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
+          className="inline-flex items-center gap-2 px-2.5 py-1.5 -ml-2.5 rounded-[var(--radius-control)] text-body-sm font-medium text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" strokeWidth={ICON_STROKE} />
           Beranda
@@ -54,22 +54,22 @@ export function AuthShell({
       <main className="flex-1 flex items-center justify-center px-5 py-10">
         <div className="w-full max-w-[400px]">
           <div className="text-center mb-8">
-            <span className="inline-grid place-items-center w-12 h-12 rounded-[14px] bg-primary text-primary-foreground font-semibold text-sm mb-5">
+            <span className="inline-grid place-items-center w-12 h-12 rounded-[14px] bg-primary text-primary-foreground font-semibold text-body mb-5">
               HR
             </span>
             {badge && <p className="eyebrow mb-2.5">{badge}</p>}
-            <h1 className="text-[26px] text-heading">{title}</h1>
-            <p className="mt-2.5 text-sm text-muted leading-relaxed">{subtitle}</p>
+            <h1 className="text-display-sm text-heading">{title}</h1>
+            <p className="mt-2.5 text-body text-muted leading-relaxed">{subtitle}</p>
           </div>
 
           <div className="card p-6 sm:p-7">{children}</div>
 
-          {footer && <div className="mt-6 text-center text-[13px] text-muted">{footer}</div>}
+          {footer && <div className="mt-6 text-center text-body-sm text-muted">{footer}</div>}
         </div>
       </main>
 
       <footer className="shrink-0 py-6 px-5">
-        <p className="flex items-center justify-center gap-2 text-xs text-subtle">
+        <p className="flex items-center justify-center gap-2 text-label text-subtle">
           <ShieldCheck className="w-4 h-4" strokeWidth={ICON_STROKE} />
           Aktivitas login dicatat untuk keperluan audit keamanan.
         </p>
@@ -105,7 +105,7 @@ export function PasswordInput({
         placeholder={placeholder}
         autoComplete={autoComplete}
         required={required}
-        className="w-full h-11 rounded-[var(--radius-control)] bg-surface border border-line pl-3.5 pr-12 text-sm text-foreground placeholder:text-subtle transition-colors hover:border-line-strong focus:border-primary"
+        className="w-full h-11 rounded-[var(--radius-control)] bg-surface border border-line pl-3.5 pr-12 text-body text-foreground placeholder:text-subtle transition-colors hover:border-line-strong focus:border-primary"
       />
       <button
         type="button"

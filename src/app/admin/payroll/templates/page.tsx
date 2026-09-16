@@ -4,8 +4,6 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
-  ChevronDown,
-  ChevronUp,
   Eye,
   FileText,
   Plus,
@@ -32,6 +30,8 @@ import {
   Toggle,
   cn,
 } from "@/components/ui";
+import { ReorderList } from "@/components/ui/Reorder";
+import { LogoField } from "@/components/print/LogoField";
 import { useToast } from "@/components/ui/Toast";
 import { api, errorMessage } from "@/lib/client-api";
 import { Paper } from "@/components/print/PrintShell";
@@ -47,6 +47,10 @@ interface Template extends PayslipTemplateShape {
   name: string;
   description: string;
   isDefault: boolean;
+  /** Optional on the shared shape; the builder always keeps a value. */
+  showLogo: boolean;
+  logoUrl: string;
+  logoHeight: number;
 }
 
 /**
@@ -164,6 +168,9 @@ export default function PayslipTemplatesPage() {
       accentColor: "#4f46e5",
       baseFontSize: 12,
       margin: 18,
+      showLogo: false,
+      logoUrl: "",
+      logoHeight: 14,
       companyName: defaults.companyName,
       companyAddress: defaults.companyAddress,
       documentTitle: "SLIP GAJI KARYAWAN",
@@ -218,14 +225,7 @@ export default function PayslipTemplatesPage() {
     }
   };
 
-  const moveBlock = (index: number, dir: -1 | 1) => {
-    if (!draft) return;
-    const target = index + dir;
-    if (target < 0 || target >= draft.blocks.length) return;
-    const blocks = [...draft.blocks];
-    [blocks[index], blocks[target]] = [blocks[target], blocks[index]];
-    set("blocks", blocks);
-  };
+
 
   const patchBlock = (index: number, patch: Partial<Template["blocks"][number]>) => {
     if (!draft) return;
@@ -251,7 +251,7 @@ export default function PayslipTemplatesPage() {
     <div>
       <Link
         href="/admin/payroll"
-        className="inline-flex items-center gap-2 text-[13px] font-medium text-muted hover:text-foreground transition-colors mb-5"
+        className="inline-flex items-center gap-2 text-body-sm font-medium text-muted hover:text-foreground transition-colors mb-5"
       >
         <ArrowLeft className="w-4 h-4" strokeWidth={ICON_STROKE} />
         Kembali ke slip gaji
@@ -282,7 +282,7 @@ export default function PayslipTemplatesPage() {
             <CardHeader title="Template tersimpan" icon={FileText} />
             <CardBody className="p-2">
               {templates.length === 0 ? (
-                <p className="text-[13px] text-muted px-3 py-4 leading-relaxed">
+                <p className="text-body-sm text-muted px-3 py-4 leading-relaxed">
                   Belum ada template. Slip gaji sementara memakai tata letak bawaan sistem.
                 </p>
               ) : (
@@ -299,14 +299,14 @@ export default function PayslipTemplatesPage() {
                         <span className="min-w-0">
                           <span
                             className={cn(
-                              "block text-[13px] font-medium truncate",
+                              "block text-body-sm font-medium truncate",
                               t._id === activeId ? "text-primary" : "text-foreground"
                             )}
                           >
                             {t.name}
                           </span>
                           {t.description && (
-                            <span className="block text-xs text-subtle truncate mt-0.5">
+                            <span className="block text-label text-subtle truncate mt-0.5">
                               {t.description}
                             </span>
                           )}
@@ -367,6 +367,15 @@ export default function PayslipTemplatesPage() {
                       onChange={(e) => set("companyAddress", e.target.value)}
                     />
                   </Field>
+                  <LogoField
+                    logoUrl={draft.logoUrl}
+                    showLogo={draft.showLogo}
+                    logoHeight={draft.logoHeight}
+                    onChange={(patch) =>
+                      setDraft((d) => (d ? { ...d, ...patch } : d))
+                    }
+                  />
+
                   <div className="rounded-[var(--radius-control)] border border-line px-3">
                     <Toggle
                       checked={draft.isDefault}
@@ -443,29 +452,32 @@ export default function PayslipTemplatesPage() {
               <Card>
                 <CardHeader
                   title="Blok dokumen"
-                  description="Nyalakan, urutkan, dan beri judul sendiri. Blok yang mati tidak ikut tercetak."
+                  description="Nyalakan dan beri judul sendiri. Seret gagang di kiri untuk mengubah urutan, atau fokuskan gagang itu lalu tekan panah atas/bawah. Blok yang mati tidak ikut tercetak."
                 />
                 <CardBody className="p-2 space-y-1.5">
-                  {draft.blocks.map((block, i) => (
-                    <BlockRow
-                      key={`${block.type}-${i}`}
-                      block={block}
-                      index={i}
-                      total={draft.blocks.length}
-                      onMove={moveBlock}
-                      onPatch={patchBlock}
-                      onRemove={() =>
-                        set(
-                          "blocks",
-                          draft.blocks.filter((_, idx) => idx !== i)
-                        )
-                      }
-                    />
-                  ))}
+                  <ReorderList
+                    items={draft.blocks}
+                    getKey={(block, i) => `${block.type}-${i}`}
+                    onReorder={(next) => set("blocks", next)}
+                    describeItem={(block) => BLOCK_LABELS[block.type]}
+                    renderItem={(block, i) => (
+                      <BlockRow
+                        block={block}
+                        index={i}
+                        onPatch={patchBlock}
+                        onRemove={() =>
+                          set(
+                            "blocks",
+                            draft.blocks.filter((_, idx) => idx !== i)
+                          )
+                        }
+                      />
+                    )}
+                  />
 
                   {missingBlocks.length > 0 && (
                     <div className="px-2 pt-2 border-t border-line mt-2">
-                      <p className="text-xs text-subtle mb-2">Tambahkan blok</p>
+                      <p className="text-label text-subtle mb-2">Tambahkan blok</p>
                       <div className="flex flex-wrap gap-1.5">
                         {missingBlocks.map((type) => (
                           <Button
@@ -510,7 +522,7 @@ export default function PayslipTemplatesPage() {
                         }
                         className="w-4 h-4 rounded accent-[var(--primary)] cursor-pointer"
                       />
-                      <span className="text-[13px] text-foreground">{f.label}</span>
+                      <span className="text-body-sm text-foreground">{f.label}</span>
                     </label>
                   ))}
                 </CardBody>
@@ -624,7 +636,7 @@ export default function PayslipTemplatesPage() {
             </div>
           ) : (
             <Card>
-              <CardBody className="py-16 text-center text-[13px] text-muted">
+              <CardBody className="py-16 text-center text-body-sm text-muted">
                 Pratinjau muncul setelah Anda memilih atau membuat template.
               </CardBody>
             </Card>
@@ -645,20 +657,17 @@ export default function PayslipTemplatesPage() {
   );
 }
 
+
 /* ------------------------------------------------------------------ */
 
 function BlockRow({
   block,
   index,
-  total,
-  onMove,
   onPatch,
   onRemove,
 }: {
   block: { type: BlockType; enabled: boolean; title: string; options: Record<string, unknown> };
   index: number;
-  total: number;
-  onMove: (i: number, dir: -1 | 1) => void;
   onPatch: (i: number, patch: Partial<{ enabled: boolean; title: string; options: Record<string, unknown> }>) => void;
   onRemove: () => void;
 }) {
@@ -672,27 +681,6 @@ function BlockRow({
       )}
     >
       <div className="flex items-center gap-2 px-3 py-2.5">
-        <div className="flex flex-col shrink-0">
-          <button
-            type="button"
-            onClick={() => onMove(index, -1)}
-            disabled={index === 0}
-            aria-label="Naikkan blok"
-            className="text-subtle hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer leading-none"
-          >
-            <ChevronUp className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} />
-          </button>
-          <button
-            type="button"
-            onClick={() => onMove(index, 1)}
-            disabled={index === total - 1}
-            aria-label="Turunkan blok"
-            className="text-subtle hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer leading-none"
-          >
-            <ChevronDown className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} />
-          </button>
-        </div>
-
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -700,13 +688,13 @@ function BlockRow({
         >
           <span
             className={cn(
-              "block text-[13px] font-medium truncate",
+              "block text-body-sm font-medium truncate",
               block.enabled ? "text-foreground" : "text-subtle"
             )}
           >
             {block.title || BLOCK_LABELS[block.type]}
           </span>
-          <span className="block text-[11px] text-subtle truncate mt-0.5">
+          <span className="block text-caption text-subtle truncate mt-0.5">
             {BLOCK_HINTS[block.type]}
           </span>
         </button>
@@ -752,7 +740,7 @@ function BlockRow({
                 onChange={(e) => onPatch(index, { options: { ...block.options, showZero: e.target.checked } })}
                 className="w-4 h-4 rounded accent-[var(--primary)] cursor-pointer"
               />
-              <span className="text-[13px] text-foreground">Tampilkan baris bernilai nol</span>
+              <span className="text-body-sm text-foreground">Tampilkan baris bernilai nol</span>
             </label>
           )}
 
@@ -766,7 +754,7 @@ function BlockRow({
                 }
                 className="w-4 h-4 rounded accent-[var(--primary)] cursor-pointer"
               />
-              <span className="text-[13px] text-foreground">Tampilkan nominal dalam huruf</span>
+              <span className="text-body-sm text-foreground">Tampilkan nominal dalam huruf</span>
             </label>
           )}
 

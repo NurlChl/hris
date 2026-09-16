@@ -19,7 +19,7 @@ import { motion, AnimatePresence } from "framer-motion";
 const BranchMap = dynamic(() => import("@/components/BranchMap"), {
   ssr: false,
   loading: () => (
-    <div className="h-64 bg-surface-2 border border-line rounded-lg animate-pulse flex items-center justify-center text-xs text-muted">
+    <div className="h-64 bg-surface-2 border border-line rounded-lg animate-pulse flex items-center justify-center text-label text-muted">
       Memuat Peta Interaktif...
     </div>
   ),
@@ -161,12 +161,12 @@ export default function BranchesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b border-line pb-4">
         <div>
-          <h1 className="text-xl font-semibold text-foreground dark:text-foreground">Master Data Cabang Kantor</h1>
-          <p className="text-xs text-muted dark:text-muted mt-1">Konfigurasi lokasi penempatan cabang kantor dan area geofence absensi</p>
+          <h1 className="text-title font-semibold text-foreground dark:text-foreground">Master Data Cabang Kantor</h1>
+          <p className="text-label text-muted dark:text-muted mt-1">Konfigurasi lokasi penempatan cabang kantor dan area geofence absensi</p>
         </div>
         <button
           onClick={() => handleOpenForm()}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-sm font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-body font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all"
         >
           <Plus className="w-4 h-4" />
           Tambah Cabang
@@ -180,8 +180,8 @@ export default function BranchesPage() {
       ) : branches.length === 0 ? (
         <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
           <Building2 className="w-8 h-8 mb-2 opacity-50" />
-          <p className="text-sm font-medium">Belum ada cabang terdaftar</p>
-          <p className="text-xs mt-1">Tambahkan cabang kantor baru untuk memulai penempatan lokasi absensi karyawan.</p>
+          <p className="text-body font-medium">Belum ada cabang terdaftar</p>
+          <p className="text-label mt-1">Tambahkan cabang kantor baru untuk memulai penempatan lokasi absensi karyawan.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -196,10 +196,10 @@ export default function BranchesPage() {
               <div className="space-y-4">
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
-                    <span className="px-2 py-0.5 rounded bg-surface-2 dark:bg-white/10 text-muted dark:text-muted border border-line font-semibold text-[11px]">
+                    <span className="px-2 py-0.5 rounded bg-surface-2 dark:bg-white/10 text-muted dark:text-muted border border-line font-semibold text-caption">
                       Radius: {branch.radiusMeter}m
                     </span>
-                    <h3 className="text-base font-semibold text-foreground dark:text-foreground mt-1">{branch.name}</h3>
+                    <h3 className="text-body-lg font-semibold text-foreground dark:text-foreground mt-1">{branch.name}</h3>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button
@@ -217,7 +217,7 @@ export default function BranchesPage() {
                   </div>
                 </div>
 
-                <div className="space-y-2 text-xs text-muted">
+                <div className="space-y-2 text-label text-muted">
                   <div className="flex items-start gap-2">
                     <MapPin className="w-3.5 h-3.5 text-muted shrink-0 mt-0.5" />
                     <span className="text-foreground">{branch.address}</span>
@@ -229,7 +229,7 @@ export default function BranchesPage() {
                 </div>
               </div>
 
-              <div className="mt-4 pt-4 border-t border-line text-xs text-muted font-mono">
+              <div className="mt-4 pt-4 border-t border-line text-label text-muted font-mono">
                 Koordinat: {branch.lat.toFixed(6)}, {branch.lng.toFixed(6)}
               </div>
             </motion.div>
@@ -260,7 +260,7 @@ export default function BranchesPage() {
             >
               <div className="space-y-6">
                 <div className="flex items-center justify-between border-b border-line pb-4">
-                  <h2 className="text-base font-semibold text-foreground dark:text-foreground">
+                  <h2 className="text-body-lg font-semibold text-foreground dark:text-foreground">
                     {selectedBranchId ? "Edit Cabang Kantor" : "Tambah Cabang Kantor Baru"}
                   </h2>
                   <button
@@ -272,13 +272,13 @@ export default function BranchesPage() {
                 </div>
 
                 {errorMessage && (
-                  <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
+                  <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-label flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
                     <span>{errorMessage}</span>
                   </div>
                 )}
 
-                <form id="branch-form" onSubmit={handleSubmit} className="space-y-4 text-xs">
+                <form id="branch-form" onSubmit={handleSubmit} className="space-y-4 text-label">
                   <div className="space-y-1">
                     <label className="text-foreground font-semibold">Nama Cabang</label>
                     <input
@@ -287,7 +287,7 @@ export default function BranchesPage() {
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="e.g. Kantor Pusat Jakarta"
-                      className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-muted text-xs"
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-muted text-label"
                     />
                   </div>
 
@@ -299,7 +299,7 @@ export default function BranchesPage() {
                       onChange={(e) => setAddress(e.target.value)}
                       placeholder="e.g. Jl. Sudirman No. 12, Jakarta Selatan"
                       rows={2}
-                      className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-muted text-xs"
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-muted text-label"
                     />
                   </div>
 
@@ -311,7 +311,7 @@ export default function BranchesPage() {
                         required
                         value={startTime}
                         onChange={(e) => setStartTime(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label"
                       />
                     </div>
                     <div className="space-y-1">
@@ -321,7 +321,7 @@ export default function BranchesPage() {
                         required
                         value={endTime}
                         onChange={(e) => setEndTime(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label"
                       />
                     </div>
                   </div>
@@ -335,7 +335,7 @@ export default function BranchesPage() {
                       max={1000}
                       value={radiusMeter}
                       onChange={(e) => setRadiusMeter(Number.isFinite(e.target.valueAsNumber) ? e.target.valueAsNumber : 0)}
-                      className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-xs"
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all text-label"
                     />
                   </div>
 
@@ -356,7 +356,7 @@ export default function BranchesPage() {
                 <button
                   type="button"
                   onClick={handleCloseForm}
-                  className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all"
+                  className="px-4 py-2 rounded-lg border border-line text-label font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all"
                 >
                   Batal
                 </button>
@@ -364,7 +364,7 @@ export default function BranchesPage() {
                   type="submit"
                   form="branch-form"
                   disabled={submitting}
-                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-label font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
                 >
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Simpan Cabang

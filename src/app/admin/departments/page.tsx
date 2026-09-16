@@ -5,6 +5,7 @@ import { ClipboardList, Briefcase, Plus, Trash2, Edit, X, Loader2, AlertCircle }
 import { motion, AnimatePresence } from "framer-motion";
 import SearchSelect from "@/components/SearchSelect";
 
+import { Select } from "@/components/ui";
 /**
  * A reference the API may return either populated or as a bare id, depending on
  * the endpoint. The form reads `_id` off it and the table reads `name`, so both
@@ -220,12 +221,12 @@ export default function DepartmentsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b border-line pb-4">
         <div>
-          <h1 className="text-xl font-semibold text-foreground dark:text-foreground">Divisi & Jabatan</h1>
-          <p className="text-xs text-muted dark:text-muted mt-1">Kelola departemen divisi kerja dan penamaan jenjang jabatan karyawan</p>
+          <h1 className="text-title font-semibold text-foreground dark:text-foreground">Divisi & Jabatan</h1>
+          <p className="text-label text-muted dark:text-muted mt-1">Kelola departemen divisi kerja dan penamaan jenjang jabatan karyawan</p>
         </div>
         <button
           onClick={() => handleOpenForm()}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-sm font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-body font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 active:scale-[0.98] transition-all"
         >
           <Plus className="w-4 h-4" />
           Tambah {activeTab === "division" ? "Divisi" : "Jabatan"}
@@ -236,14 +237,14 @@ export default function DepartmentsPage() {
       <div className="flex gap-2 p-1 bg-surface-2 border border-line rounded-lg w-fit">
         <button
           onClick={() => setActiveTab("division")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "division" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-label font-semibold cursor-pointer transition-all ${ activeTab === "division" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
         >
           <ClipboardList className="w-3.5 h-3.5" />
           Divisi / Departemen
         </button>
         <button
           onClick={() => setActiveTab("position")}
-          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-all ${ activeTab === "position" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-label font-semibold cursor-pointer transition-all ${ activeTab === "position" ? "bg-primary text-primary-foreground" : "text-muted hover:text-foreground" }`}
         >
           <Briefcase className="w-3.5 h-3.5" />
           Jabatan Kerja
@@ -257,12 +258,12 @@ export default function DepartmentsPage() {
       ) : items.length === 0 ? (
         <div className="h-48 border border-dashed border-line rounded-xl flex flex-col items-center justify-center text-center p-6 text-muted">
           {activeTab === "division" ? <ClipboardList className="w-8 h-8 mb-2 opacity-50" /> : <Briefcase className="w-8 h-8 mb-2 opacity-50" />}
-          <p className="text-sm font-medium">Belum ada {activeTab === "division" ? "divisi" : "jabatan"} terdaftar</p>
-          <p className="text-xs mt-1">Tambahkan data master baru untuk melengkapi data jabatan operasional karyawan.</p>
+          <p className="text-body font-medium">Belum ada {activeTab === "division" ? "divisi" : "jabatan"} terdaftar</p>
+          <p className="text-label mt-1">Tambahkan data master baru untuk melengkapi data jabatan operasional karyawan.</p>
         </div>
       ) : (
         <div className="bg-surface border border-line/60 dark:border-white/6 rounded-xl overflow-hidden">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full text-left text-label border-collapse">
             <thead>
               <tr className="border-b border-line bg-surface-2 text-muted dark:text-muted">
                 <th className="p-4 font-semibold">Nama {activeTab === "division" ? "Divisi / Departemen" : "Jabatan Kerja"}</th>
@@ -280,7 +281,7 @@ export default function DepartmentsPage() {
             <tbody>
               {items.map((item, idx) => (
                 <tr key={item._id} className="border-b border-line hover:bg-surface-2/50 dark:hover:bg-white/1 transition-all">
-                  <td className="p-4 font-semibold text-foreground dark:text-foreground text-sm">{item.name}</td>
+                  <td className="p-4 font-semibold text-foreground dark:text-foreground text-body">{item.name}</td>
                   {activeTab === "division" ? (
                     <>
                       <td className="p-4 text-muted dark:text-muted font-medium">
@@ -336,7 +337,7 @@ export default function DepartmentsPage() {
               className="bg-surface border border-line shadow-[var(--shadow-pop)] rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto relative z-10 p-6"
             >
               <div className="flex items-center justify-between border-b border-line pb-4 mb-4">
-                <h3 className="text-base font-semibold text-foreground dark:text-foreground">
+                <h3 className="text-body-lg font-semibold text-foreground dark:text-foreground">
                   {selectedId ? `Edit ${activeTab === "division" ? "Divisi" : "Jabatan"}` : `Tambah ${activeTab === "division" ? "Divisi" : "Jabatan"} Baru`}
                 </h3>
                 <button
@@ -348,13 +349,13 @@ export default function DepartmentsPage() {
               </div>
 
               {errorMessage && (
-                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2 mb-4">
+                <div className="p-3 rounded-lg bg-danger-soft border border-danger/20 text-danger text-label flex items-center gap-2 mb-4">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMessage}</span>
                 </div>
               )}
 
-              <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+              <form onSubmit={handleSubmit} className="space-y-4 text-label">
                 <div className="space-y-1">
                   <label className="text-foreground font-semibold">Nama {activeTab === "division" ? "Divisi" : "Jabatan"}</label>
                   <input
@@ -363,7 +364,7 @@ export default function DepartmentsPage() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder={activeTab === "division" ? "e.g. Finance & Accounting" : "e.g. Senior Software Engineer"}
-                    className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs"
+                    className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-label"
                   />
                 </div>
 
@@ -407,29 +408,29 @@ export default function DepartmentsPage() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-foreground font-semibold">Tipe Pekerjaan</label>
-                        <select
+                        <Select
                           value={type}
                           onChange={(e) => setType(e.target.value)}
-                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs"
+                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-label"
                         >
                           <option value="Full-Time">Full-Time</option>
                           <option value="Part-Time">Part-Time</option>
                           <option value="Contract">Contract</option>
                           <option value="Internship">Internship</option>
                           <option value="Freelance">Freelance</option>
-                        </select>
+                        </Select>
                       </div>
 
                       <div className="space-y-1">
                         <label className="text-foreground font-semibold">Status Lowongan Loker</label>
-                        <select
+                        <Select
                           value={status}
                           onChange={(e) => setStatus(e.target.value as "active" | "inactive")}
-                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-xs"
+                          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary text-label"
                         >
                           <option value="active">Aktif (Buka Lowongan)</option>
                           <option value="inactive">Nonaktif (Tutup Lowongan)</option>
-                        </select>
+                        </Select>
                       </div>
                     </div>
 
@@ -441,7 +442,7 @@ export default function DepartmentsPage() {
                         value={location}
                         onChange={(e) => setLocation(e.target.value)}
                         placeholder="e.g. Jakarta, Remote, Hybrid"
-                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-label"
                       />
                     </div>
 
@@ -452,7 +453,7 @@ export default function DepartmentsPage() {
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder="Deskripsikan penawaran/informasi umum mengenai lowongan ini..."
                         rows={3}
-                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs resize-none"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-label resize-none"
                       />
                     </div>
 
@@ -463,7 +464,7 @@ export default function DepartmentsPage() {
                         onChange={(e) => setJobdesk(e.target.value)}
                         placeholder="Sebutkan tanggung jawab pekerjaan (satu per baris)..."
                         rows={3}
-                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs resize-none"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-label resize-none"
                       />
                     </div>
 
@@ -474,7 +475,7 @@ export default function DepartmentsPage() {
                         onChange={(e) => setRequirements(e.target.value)}
                         placeholder="Sebutkan persyaratan pelamar (satu per baris)..."
                         rows={3}
-                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-xs resize-none"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all placeholder:text-subtle text-label resize-none"
                       />
                     </div>
                   </>
@@ -484,14 +485,14 @@ export default function DepartmentsPage() {
                   <button
                     type="button"
                     onClick={handleCloseForm}
-                    className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all"
+                    className="px-4 py-2 rounded-lg border border-line text-label font-semibold text-muted dark:text-muted hover:text-foreground hover:bg-surface cursor-pointer transition-all"
                   >
                     Batal
                   </button>
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-xs font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-line text-label font-semibold cursor-pointer hover:bg-surface-2 dark:hover:bg-surface-2 disabled:opacity-50 active:scale-[0.98] transition-all flex items-center gap-1.5"
                   >
                     {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Simpan

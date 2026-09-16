@@ -11,24 +11,11 @@ import {
   X,
 } from "lucide-react";
 
-/* ------------------------------------------------------------------ */
-/* helpers                                                             */
-/* ------------------------------------------------------------------ */
+import { cn, ICON_STROKE, type IconType } from "./core";
+import { Combobox, type ComboboxOption } from "./Combobox";
 
-export function cn(...parts: Array<string | false | null | undefined>) {
-  return parts.filter(Boolean).join(" ");
-}
-
-/**
- * Default icon geometry for the whole product.
- *
- * Lucide ships at stroke-width 2, which is heavy next to Inter at UI sizes and
- * makes small icons look like clip art. 1.75 keeps them legible at 14px while
- * sitting at the same optical weight as the text beside them.
- */
-export const ICON_STROKE = 1.75;
-
-export type IconType = React.ComponentType<{ className?: string; strokeWidth?: number }>;
+export { cn, ICON_STROKE };
+export type { IconType };
 
 /* ------------------------------------------------------------------ */
 /* Button                                                              */
@@ -56,9 +43,9 @@ const buttonVariants: Record<ButtonVariant, string> = {
 };
 
 const buttonSizes: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-[13px] gap-1.5",
-  md: "h-10 px-4 text-sm gap-2",
-  lg: "h-12 px-6 text-[15px] gap-2",
+  sm: "h-8 px-3 text-body-sm gap-1.5",
+  md: "h-10 px-4 text-body gap-2",
+  lg: "h-12 px-6 text-body-lg gap-2",
   icon: "h-9 w-9 justify-center",
 };
 
@@ -181,9 +168,9 @@ export function CardHeader({
       <div className="flex items-start gap-3 min-w-0">
         {icon && <IconTile icon={icon} tone={tone} size="sm" className="mt-0.5" />}
         <div className="min-w-0">
-          <h2 className="text-[15px] font-semibold text-heading truncate">{title}</h2>
+          <h2 className="text-body-lg font-semibold text-heading truncate">{title}</h2>
           {description && (
-            <p className="text-[13px] text-muted mt-1 leading-relaxed">{description}</p>
+            <p className="text-body-sm text-muted mt-1 leading-relaxed">{description}</p>
           )}
         </div>
       </div>
@@ -219,9 +206,9 @@ export function PageHeader({
     <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4 mb-7">
       <div className="min-w-0">
         {eyebrow && <p className="eyebrow mb-2">{eyebrow}</p>}
-        <h1 className="text-[26px] md:text-[30px] text-heading">{title}</h1>
+        <h1 className="text-display-sm md:text-display text-heading">{title}</h1>
         {description && (
-          <p className="text-sm text-muted mt-2 max-w-2xl leading-relaxed">{description}</p>
+          <p className="text-body text-muted mt-2 max-w-2xl leading-relaxed">{description}</p>
         )}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
@@ -234,7 +221,7 @@ export function PageHeader({
 /* ------------------------------------------------------------------ */
 
 const fieldBase =
-  "w-full rounded-[var(--radius-control)] bg-surface border border-line px-3.5 text-sm text-foreground " +
+  "w-full rounded-[var(--radius-control)] bg-surface border border-line px-3.5 text-body text-foreground " +
   "placeholder:text-subtle transition-colors hover:border-line-strong focus:border-primary " +
   "disabled:opacity-55 disabled:cursor-not-allowed";
 
@@ -258,19 +245,19 @@ export function Field({
   return (
     <div className={cn("space-y-2", className)}>
       {label && (
-        <label htmlFor={htmlFor} className="block text-[13px] font-medium text-foreground">
+        <label htmlFor={htmlFor} className="block text-body-sm font-medium text-foreground">
           {label}
           {required && <span className="text-danger ml-1">*</span>}
         </label>
       )}
       {children}
       {error ? (
-        <p className="text-xs text-danger flex items-start gap-1.5 leading-relaxed">
+        <p className="text-label text-danger flex items-start gap-1.5 leading-relaxed">
           <CircleAlert className="w-3.5 h-3.5 shrink-0 mt-px" strokeWidth={ICON_STROKE} />
           {error}
         </p>
       ) : hint ? (
-        <p className="text-xs text-subtle leading-relaxed">{hint}</p>
+        <p className="text-label text-subtle leading-relaxed">{hint}</p>
       ) : null}
     </div>
   );
@@ -292,16 +279,96 @@ export const Textarea = React.forwardRef<
   );
 });
 
-export const Select = React.forwardRef<
-  HTMLSelectElement,
-  React.SelectHTMLAttributes<HTMLSelectElement>
->(function Select({ className, children, ...rest }, ref) {
+/** Reads `<option>` children into the option list the dropdown works from. */
+function optionsFromChildren(children: React.ReactNode): ComboboxOption[] {
+  const out: ComboboxOption[] = [];
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return;
+    if (child.type === React.Fragment) {
+      out.push(...optionsFromChildren((child.props as { children?: React.ReactNode }).children));
+      return;
+    }
+    if (child.type !== "option") return;
+    const props = child.props as { value?: string | number; children?: React.ReactNode; disabled?: boolean };
+    const label = React.Children.toArray(props.children).join("");
+    out.push({
+      value: String(props.value ?? label),
+      label,
+      disabled: props.disabled,
+    });
+  });
+  return out;
+}
+
+/**
+ * Every dropdown in the product.
+ *
+ * Keeps the native `<select>` API — `<option>` children, `value`, and an
+ * `onChange` whose event carries `target.value` — so existing forms did not have
+ * to change, while rendering the searchable `Combobox` underneath. The event is
+ * a minimal stand-in: only `target.value` and `currentTarget.value` exist on it,
+ * which is all any form here reads.
+ */
+export function Select({
+  value,
+  defaultValue,
+  onChange,
+  children,
+  className,
+  disabled,
+  required,
+  name,
+  id,
+  placeholder,
+  size,
+  icon,
+  "aria-label": ariaLabel,
+}: {
+  value?: string | number | readonly string[];
+  defaultValue?: string | number;
+  onChange?: (event: React.ChangeEvent<HTMLSelectElement>) => void;
+  children?: React.ReactNode;
+  className?: string;
+  disabled?: boolean;
+  required?: boolean;
+  name?: string;
+  id?: string;
+  placeholder?: string;
+  size?: "sm" | "md";
+  icon?: IconType;
+  "aria-label"?: string;
+}) {
+  const all = optionsFromChildren(children);
+  // An empty-value option ("Pilih cabang…", "Semua status") is not a choice but
+  // the absence of one: it becomes the placeholder, and picking it again is the
+  // clear action, instead of sitting in the list as a checkable row.
+  const empty = all.find((o) => o.value === "");
+  const options = all.filter((o) => o.value !== "");
+  const [inner, setInner] = React.useState(String(defaultValue ?? all[0]?.value ?? ""));
+  const current = value !== undefined ? String(value) : inner;
+
   return (
-    <select ref={ref} {...rest} className={cn(fieldBase, "h-11 pr-9 cursor-pointer", className)}>
-      {children}
-    </select>
+    <Combobox
+      id={id}
+      name={name}
+      required={required}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      placeholder={placeholder ?? empty?.label}
+      clearable={Boolean(empty) && !required}
+      size={size}
+      icon={icon}
+      value={current}
+      options={options}
+      className={className}
+      onChange={(next) => {
+        if (value === undefined) setInner(next);
+        const target = { value: next, name } as HTMLSelectElement;
+        onChange?.({ target, currentTarget: target } as React.ChangeEvent<HTMLSelectElement>);
+      }}
+    />
   );
-});
+}
 
 export function Toggle({
   checked,
@@ -324,9 +391,9 @@ export function Toggle({
       )}
     >
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{label}</span>
+        <span className="block text-body font-medium text-foreground">{label}</span>
         {description && (
-          <span className="block text-[13px] text-muted mt-1 leading-relaxed">{description}</span>
+          <span className="block text-body-sm text-muted mt-1 leading-relaxed">{description}</span>
         )}
       </span>
       <button
@@ -387,7 +454,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium whitespace-nowrap",
+        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-label font-medium whitespace-nowrap",
         badgeTones[tone],
         className
       )}
@@ -483,9 +550,9 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center text-center py-16 px-6">
       <IconTile icon={icon} tone="neutral" size="lg" className="mb-4" />
-      <p className="text-[15px] font-semibold text-heading">{title}</p>
+      <p className="text-body-lg font-semibold text-heading">{title}</p>
       {description && (
-        <p className="text-[13px] text-muted mt-2 max-w-sm leading-relaxed">{description}</p>
+        <p className="text-body-sm text-muted mt-2 max-w-sm leading-relaxed">{description}</p>
       )}
       {action && <div className="mt-6">{action}</div>}
     </div>
@@ -496,8 +563,8 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
   return (
     <div className="card p-8 text-center border-danger/25">
       <IconTile icon={TriangleAlert} tone="danger" size="lg" className="mx-auto mb-4" />
-      <p className="text-[15px] font-semibold text-heading">Data gagal dimuat</p>
-      <p className="text-[13px] text-muted mt-2 max-w-md mx-auto leading-relaxed">{message}</p>
+      <p className="text-body-lg font-semibold text-heading">Data gagal dimuat</p>
+      <p className="text-body-sm text-muted mt-2 max-w-md mx-auto leading-relaxed">{message}</p>
       {onRetry && (
         <Button variant="secondary" size="sm" className="mt-5" onClick={onRetry}>
           Muat ulang
@@ -535,7 +602,7 @@ export function Alert({
       className={cn("flex gap-3 rounded-[var(--radius-control)] border p-4", tones.cls, className)}
     >
       <tones.Icon className="w-[18px] h-[18px] shrink-0 mt-px" strokeWidth={ICON_STROKE} />
-      <div className="min-w-0 text-[13px] leading-relaxed">
+      <div className="min-w-0 text-body-sm leading-relaxed">
         {title && <p className="font-semibold mb-1">{title}</p>}
         <div className="text-foreground/75">{children}</div>
       </div>
@@ -599,9 +666,9 @@ export function Modal({
       >
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-line">
           <div className="min-w-0">
-            <h2 className="text-[15px] font-semibold text-heading">{title}</h2>
+            <h2 className="text-body-lg font-semibold text-heading">{title}</h2>
             {description && (
-              <p className="text-[13px] text-muted mt-1 leading-relaxed">{description}</p>
+              <p className="text-body-sm text-muted mt-1 leading-relaxed">{description}</p>
             )}
           </div>
           <button
@@ -659,7 +726,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p className="text-sm text-muted leading-relaxed">{message}</p>
+      <p className="text-body text-muted leading-relaxed">{message}</p>
     </Modal>
   );
 }
@@ -671,7 +738,7 @@ export function ConfirmDialog({
 export function TableWrap({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm border-collapse min-w-[680px]">{children}</table>
+      <table className="w-full text-body border-collapse min-w-[680px]">{children}</table>
     </div>
   );
 }
@@ -680,7 +747,7 @@ export function Th({ children, className }: { children?: React.ReactNode; classN
   return (
     <th
       className={cn(
-        "text-left text-xs font-semibold text-subtle px-5 py-3 bg-surface-2/60 border-b border-line whitespace-nowrap first:rounded-tl-[var(--radius)] last:rounded-tr-[var(--radius)]",
+        "text-left text-label font-semibold text-subtle px-5 py-3 bg-surface-2/60 border-b border-line whitespace-nowrap first:rounded-tl-[var(--radius)] last:rounded-tr-[var(--radius)]",
         className
       )}
     >
@@ -720,13 +787,13 @@ export function StatCard({
   return (
     <div className="card p-5">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[13px] font-medium text-muted">{label}</p>
+        <p className="text-body-sm font-medium text-muted">{label}</p>
         {icon && <IconTile icon={icon} tone={tone} size="sm" />}
       </div>
-      <p className="text-[28px] font-semibold text-heading mt-3 tabular-nums leading-none tracking-[-0.02em]">
+      <p className="text-display-sm font-semibold text-heading mt-3 tabular-nums leading-none tracking-[-0.02em]">
         {value}
       </p>
-      {hint && <p className="text-xs text-subtle mt-2.5 leading-relaxed">{hint}</p>}
+      {hint && <p className="text-label text-subtle mt-2.5 leading-relaxed">{hint}</p>}
     </div>
   );
 }
@@ -758,7 +825,7 @@ export function Tabs<T extends string>({
             aria-selected={active}
             onClick={() => onChange(t.id)}
             className={cn(
-              "flex items-center gap-2 px-3.5 py-2 rounded-lg text-[13px] font-medium transition-colors cursor-pointer whitespace-nowrap",
+              "flex items-center gap-2 px-3.5 py-2 rounded-lg text-body-sm font-medium transition-colors cursor-pointer whitespace-nowrap",
               active
                 ? "bg-surface text-heading font-semibold border border-line"
                 : "text-muted hover:text-foreground border border-transparent"
@@ -769,7 +836,7 @@ export function Tabs<T extends string>({
             {t.count !== undefined && t.count > 0 && (
               <span
                 className={cn(
-                  "px-1.5 py-px rounded-full text-[11px] tabular-nums font-semibold",
+                  "px-1.5 py-px rounded-full text-caption tabular-nums font-semibold",
                   active ? "bg-primary-soft text-primary" : "bg-line text-muted"
                 )}
               >

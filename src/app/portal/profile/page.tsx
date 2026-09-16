@@ -11,6 +11,7 @@ import {
   Landmark,
   Mail,
   Save,
+  ScanFace,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
   Tabs,
 } from "@/components/ui";
 import { PasswordInput } from "@/components/auth/AuthShell";
+import { FaceEnrollment } from "@/components/portal/FaceEnrollment";
 import { useToast } from "@/components/ui/Toast";
 import { api, errorMessage } from "@/lib/client-api";
 import { formatDate } from "@/lib/time";
@@ -77,8 +79,10 @@ function ProfilePage() {
   const { data: session, update: updateSession } = useSession();
   const params = useSearchParams();
   const forced = params.get("force_password") === "1";
+  // `?tab=face` is where the attendance page and face notifications send people.
+  const initialTab = forced ? "security" : params.get("tab") === "face" ? "face" : "profile";
 
-  const [tab, setTab] = useState<"profile" | "security">(forced ? "security" : "profile");
+  const [tab, setTab] = useState<"profile" | "security" | "face">(initialTab);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -117,8 +121,8 @@ function ProfilePage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-[26px] md:text-[30px] text-heading">Profil &amp; Keamanan</h1>
-        <p className="text-sm text-muted mt-2 leading-relaxed">
+        <h1 className="text-display-sm md:text-display text-heading">Profil &amp; Keamanan</h1>
+        <p className="text-body text-muted mt-2 leading-relaxed">
           Perbarui data kontak Anda dan kelola kata sandi akun.
         </p>
       </header>
@@ -138,10 +142,15 @@ function ProfilePage() {
         tabs={[
           { id: "profile", label: "Data Diri", icon: UserRound },
           { id: "security", label: "Keamanan Akun", icon: ShieldCheck },
+          // Face enrolment belongs to an employee record; admin-only accounts
+          // have no attendance to verify.
+          ...(employeeId ? [{ id: "face" as const, label: "Wajah Presensi", icon: ScanFace }] : []),
         ]}
       />
 
-      {tab === "profile" ? (
+      {tab === "face" && employeeId ? (
+        <FaceEnrollment />
+      ) : tab === "profile" ? (
         !employeeId ? (
           <Card>
             <CardBody>
@@ -213,7 +222,7 @@ function ProfileTab({ profile, onSaved }: { profile: Profile; onSaved: () => voi
       <div className="space-y-6">
         <Card>
           <CardBody className="text-center">
-            <span className="inline-grid place-items-center w-20 h-20 rounded-2xl bg-primary-soft text-primary text-xl font-semibold mb-3">
+            <span className="inline-grid place-items-center w-20 h-20 rounded-2xl bg-primary-soft text-primary text-title font-semibold mb-3">
               {profile.name
                 .split(" ")
                 .slice(0, 2)
@@ -221,9 +230,9 @@ function ProfileTab({ profile, onSaved }: { profile: Profile; onSaved: () => voi
                 .join("")
                 .toUpperCase()}
             </span>
-            <h2 className="text-base font-semibold">{profile.name}</h2>
-            <p className="text-xs text-muted mt-0.5">{profile.positionId?.name ?? "Jabatan belum diatur"}</p>
-            <p className="text-[11px] font-mono text-subtle mt-1">{profile.employeeId}</p>
+            <h2 className="text-body-lg font-semibold">{profile.name}</h2>
+            <p className="text-label text-muted mt-0.5">{profile.positionId?.name ?? "Jabatan belum diatur"}</p>
+            <p className="text-caption font-mono text-subtle mt-1">{profile.employeeId}</p>
             <div className="flex flex-wrap items-center justify-center gap-1.5 mt-3">
               <Badge tone={profile.status === "active" ? "success" : "info"}>
                 {EMPLOYEE_STATUS_LABELS[profile.status] ?? profile.status}
@@ -401,8 +410,8 @@ function ReadRow({
     <div className="flex items-start gap-2.5">
       <Icon className="w-3.5 h-3.5 text-subtle shrink-0 mt-0.5" />
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] uppercase tracking-wide text-subtle">{label}</p>
-        <p className={`text-xs mt-0.5 break-words ${mono ? "font-mono" : ""} ${value ? "" : "text-subtle italic"}`}>
+        <p className="text-caption uppercase tracking-wide text-subtle">{label}</p>
+        <p className={`text-label mt-0.5 break-words ${mono ? "font-mono" : ""} ${value ? "" : "text-subtle italic"}`}>
           {value || "Belum diisi"}
         </p>
       </div>
@@ -500,7 +509,7 @@ function SecurityTab({ onChanged }: { onChanged: () => void }) {
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
                   placeholder="000000"
-                  className="text-center text-lg tracking-[0.5em] font-semibold"
+                  className="text-center text-title-sm tracking-[0.5em] font-semibold"
                 />
               </Field>
 
@@ -541,7 +550,7 @@ function SecurityTab({ onChanged }: { onChanged: () => void }) {
               <button
                 type="button"
                 onClick={() => setStep("request")}
-                className="w-full text-xs text-muted hover:text-foreground cursor-pointer"
+                className="w-full text-label text-muted hover:text-foreground cursor-pointer"
               >
                 Kode tidak diterima? Kirim ulang
               </button>
@@ -553,7 +562,7 @@ function SecurityTab({ onChanged }: { onChanged: () => void }) {
       <Card>
         <CardHeader icon={ShieldCheck} title="Tips menjaga keamanan akun" />
         <CardBody>
-          <ul className="space-y-3 text-xs text-muted leading-relaxed">
+          <ul className="space-y-3 text-label text-muted leading-relaxed">
             <Tip>
               Jangan pernah membagikan kata sandi atau kode verifikasi kepada siapa pun, termasuk
               yang mengaku sebagai staf HRD atau IT.

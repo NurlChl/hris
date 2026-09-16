@@ -42,6 +42,15 @@ const templateSchema = z.object({
     .default("#4f46e5"),
   baseFontSize: z.number().min(9).max(16).default(12),
   margin: z.number().min(5).max(40).default(18),
+  showLogo: z.boolean().default(false),
+  // A data URL, not a link: see the branding/logo route for why printing
+  // cannot depend on fetching the image. Capped so a template row stays small.
+  logoUrl: z
+    .string()
+    .max(400_000, "Logo terlalu besar. Perkecil gambarnya lebih dulu.")
+    .refine((v) => v === "" || /^data:image\//.test(v), "Logo harus berupa data URL gambar")
+    .default(""),
+  logoHeight: z.number().min(6).max(40).default(14),
   companyName: z.string().trim().max(160).default(""),
   companyAddress: z.string().trim().max(400).default(""),
   documentTitle: z.string().trim().max(120).default("SLIP GAJI KARYAWAN"),

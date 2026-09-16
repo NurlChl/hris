@@ -41,6 +41,12 @@ export interface IKpiTemplate extends Document {
   grades: Array<{ min: number; label: string; tone: string }>;
   /** Lets the employee fill their own column before the supervisor scores. */
   allowSelfAssessment: boolean;
+  /** Letterhead on the printed appraisal. Inlined for the same reason as the
+   *  payslip logo: a print job must not wait on a network fetch. */
+  showLogo: boolean;
+  logoUrl: string;
+  /** Printed height in millimetres. */
+  logoHeight: number;
   isActive: boolean;
   createdBy?: mongoose.Types.ObjectId;
   createdAt: Date;
@@ -92,6 +98,9 @@ const KpiTemplateSchema = new Schema<IKpiTemplate>(
       default: DEFAULT_GRADES,
     },
     allowSelfAssessment: { type: Boolean, default: false },
+    showLogo: { type: Boolean, default: false },
+    logoUrl: { type: String, default: "" },
+    logoHeight: { type: Number, default: 14, min: 6, max: 40 },
     isActive: { type: Boolean, default: true, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: "User" },
   },

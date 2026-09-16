@@ -1,7 +1,7 @@
 import mongoose, { Schema, Document } from "mongoose";
 
 export interface IApprovalInstance extends Document {
-  refType: "leave" | "correction" | "holiday_swap";
+  refType: "leave" | "correction" | "holiday_swap" | "face_change";
   refId: mongoose.Types.ObjectId;
   currentStep: number; // 1-indexed active step
   status: "pending" | "approved" | "rejected";
@@ -23,7 +23,7 @@ export interface IApprovalInstance extends Document {
 
 const ApprovalInstanceSchema = new Schema<IApprovalInstance>(
   {
-    refType: { type: String, enum: ["leave", "correction", "holiday_swap"], required: true, index: true },
+    refType: { type: String, enum: ["leave", "correction", "holiday_swap", "face_change"], required: true, index: true },
     refId: { type: Schema.Types.ObjectId, required: true, index: true },
     currentStep: { type: Number, default: 1, required: true },
     status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending", index: true },

@@ -41,6 +41,13 @@ const templateSchema = z.object({
     .max(8)
     .default([]),
   allowSelfAssessment: z.boolean().default(false),
+  showLogo: z.boolean().default(false),
+  logoUrl: z
+    .string()
+    .max(400_000, "Logo terlalu besar. Perkecil gambarnya lebih dulu.")
+    .refine((v) => v === "" || v.startsWith("data:image/"), "Logo harus berupa data URL gambar")
+    .default(""),
+  logoHeight: z.number().min(6).max(40).default(14),
   isActive: z.boolean().default(true),
 });
 
@@ -104,6 +111,9 @@ export const POST = wrapRouteHandler(async (req) => {
     positionIds: body.positionIds,
     grades: body.grades.length ? body.grades : DEFAULT_GRADES,
     allowSelfAssessment: body.allowSelfAssessment,
+    showLogo: body.showLogo,
+    logoUrl: body.logoUrl,
+    logoHeight: body.logoHeight,
     isActive: body.isActive,
   };
 

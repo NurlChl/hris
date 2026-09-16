@@ -69,7 +69,7 @@ export default function ForgotPasswordPage() {
       <AuthShell title="Kata sandi diperbarui" subtitle="Anda sudah bisa masuk dengan kata sandi baru.">
         <div className="text-center py-2">
           <CheckCircle2 className="w-10 h-10 text-success mx-auto" />
-          <p className="mt-4 text-xs text-muted leading-relaxed">
+          <p className="mt-4 text-label text-muted leading-relaxed">
             Demi keamanan, kami mengirim pemberitahuan ke email Anda. Jika perubahan ini bukan Anda
             yang melakukan, segera hubungi HRD.
           </p>
@@ -128,7 +128,7 @@ export default function ForgotPasswordPage() {
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
               placeholder="000000"
-              className="text-center text-lg tracking-[0.5em] font-semibold"
+              className="text-center text-title-sm tracking-[0.5em] font-semibold"
             />
           </Field>
 
@@ -168,7 +168,7 @@ export default function ForgotPasswordPage() {
               setCode("");
               setError("");
             }}
-            className="w-full text-xs text-muted hover:text-foreground cursor-pointer"
+            className="w-full text-label text-muted hover:text-foreground cursor-pointer"
           >
             Salah email atau kode tidak kunjung tiba? Kirim ulang
           </button>

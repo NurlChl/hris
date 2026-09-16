@@ -26,6 +26,10 @@ export interface IAttendance extends Document {
   earlyLeaveMinutes: number;
   /** Face match failed and a plain selfie was accepted instead. */
   isManualFallback: boolean;
+  /** At least one tap today passed face verification. */
+  faceVerified: boolean;
+  /** Distance of the most recent verified tap; lower is a closer match. */
+  faceDistance: number | null;
   /** Clocked in at a branch other than the assigned posting. */
   isCrossBranch: boolean;
   /** Used the "Kendala Lokasi" escape hatch — outside radius, reason required. */
@@ -64,6 +68,8 @@ const AttendanceSchema = new Schema<IAttendance>(
     isEarlyLeave: { type: Boolean, default: false },
     earlyLeaveMinutes: { type: Number, default: 0 },
     isManualFallback: { type: Boolean, default: false },
+    faceVerified: { type: Boolean, default: false },
+    faceDistance: { type: Number, default: null },
     isCrossBranch: { type: Boolean, default: false },
     isLocationOverride: { type: Boolean, default: false },
     isRemoteApproved: { type: Boolean, default: false },
