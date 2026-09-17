@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { Pagination } from "@/components/ui/Pagination";
 import { CalendarCheck2, Info, PartyPopper, Repeat, Trash2 } from "lucide-react";
 import {
   Alert,
@@ -63,14 +64,18 @@ export default function HolidaySwapPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<SwapRequest | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const limit = 20;
 
   const load = useCallback(async () => {
     setError("");
     try {
       const res = await api.get<{ requests: SwapRequest[]; holidays: Holiday[]; rules: Rules }>(
-        "/api/v1/holiday-swap"
+        `/api/v1/holiday-swap?page=${page}&limit=${limit}`
       );
       setRequests(res.data?.requests ?? []);
+      setTotal(res.meta?.total ?? 0);
       setHolidays(res.data?.holidays ?? []);
       setRules(res.data?.rules ?? null);
     } catch (err) {
@@ -78,7 +83,7 @@ export default function HolidaySwapPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     void load();
@@ -153,7 +158,7 @@ export default function HolidaySwapPage() {
         <Card>
           <CardHeader
             title="Pengajuan saya"
-            description={`${requests.length} pengajuan tercatat.`}
+            description={`${total} pengajuan tercatat.`}
             icon={CalendarCheck2}
           />
           <CardBody className="p-0">
@@ -218,6 +223,11 @@ export default function HolidaySwapPage() {
             )}
           </CardBody>
         </Card>
+        {total > limit && (
+          <div className="lg:col-span-2 lg:order-last">
+            <Pagination page={page} totalPages={Math.ceil(total / limit)} total={total} limit={limit} onPage={setPage} />
+          </div>
+        )}
 
         <Card>
           <CardHeader title="Tanggal merah mendatang" icon={PartyPopper} />

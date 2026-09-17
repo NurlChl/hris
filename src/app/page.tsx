@@ -112,8 +112,6 @@ export default function LandingPage() {
           </Link>
 
           <nav className="hidden md:flex items-center gap-1">
-            <HeaderLink href="/docs">Panduan</HeaderLink>
-            <HeaderLink href="/api-docs">API</HeaderLink>
             <HeaderLink href="/career">Karier</HeaderLink>
           </nav>
 
@@ -176,15 +174,15 @@ export default function LandingPage() {
                     Masuk ke portal
                   </Button>
                 </Link>
-                <Link href="/docs">
+                <Link href="/career">
                   <Button size="lg" variant="secondary" icon={BookOpen}>
-                    Baca panduan
+                    Lihat lowongan
                   </Button>
                 </Link>
               </div>
 
               <p className="mt-6 text-body-sm text-subtle">
-                Sudah termasuk portal karyawan, panel admin, dan dokumentasi lengkap.
+                Panduan penggunaan tersedia di dalam aplikasi, sesuai peran akun Anda.
               </p>
             </motion.div>
 
@@ -255,13 +253,6 @@ export default function LandingPage() {
                 Menyembunyikan menu saja tidak dianggap cukup. Server memeriksa ulang izin yang
                 sama di setiap permintaan.
               </p>
-              <Link
-                href="/docs#peran"
-                className="mt-6 inline-flex items-center gap-1.5 text-body font-semibold text-primary hover:underline"
-              >
-                Lihat cara mengaturnya
-                <ArrowRight className="w-4 h-4" strokeWidth={ICON_STROKE} />
-              </Link>
             </div>
 
             <ul className="grid sm:grid-cols-2 gap-x-8 gap-y-5">
@@ -316,12 +307,6 @@ export default function LandingPage() {
             &copy; {new Date().getFullYear()} HRIS. Seluruh waktu dalam WIB.
           </p>
           <nav className="flex items-center gap-5 text-body-sm">
-            <Link href="/docs" className="text-muted hover:text-foreground transition-colors">
-              Panduan
-            </Link>
-            <Link href="/api-docs" className="text-muted hover:text-foreground transition-colors">
-              Referensi API
-            </Link>
             <Link href="/career" className="text-muted hover:text-foreground transition-colors">
               Karier
             </Link>

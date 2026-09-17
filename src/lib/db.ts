@@ -40,7 +40,8 @@ if (!MONGODB_URI) {
  *
  * Override with `DNS_SERVERS` (comma separated) where these are unreachable.
  */
-const FALLBACK_DNS = (process.env.DNS_SERVERS ?? "8.8.8.8,1.1.1.1")
+// `||` rather than `??`: an empty `DNS_SERVERS=` line in .env must mean "use the defaults".
+const FALLBACK_DNS = (process.env.DNS_SERVERS || "8.8.8.8,1.1.1.1")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);

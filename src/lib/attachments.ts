@@ -23,7 +23,7 @@ export type StoredAttachment =
   | { kind: "link"; url: string };
 
 /** Where an upload is going to be used; each has its own limits. */
-export type UploadContext = "application" | "leave" | "correction" | "complaint";
+export type UploadContext = "application" | "leave" | "correction" | "complaint" | "contract" | "document";
 
 export interface UploadPolicy {
   kinds: SniffedKind[];
@@ -40,6 +40,10 @@ export const UPLOAD_POLICY: Record<UploadContext, UploadPolicy> = {
   leave: { kinds: EVIDENCE, maxBytes: 8 * 1024 * 1024, hourlyLimit: 30 },
   correction: { kinds: EVIDENCE, maxBytes: 8 * 1024 * 1024, hourlyLimit: 30 },
   complaint: { kinds: EVIDENCE, maxBytes: 8 * 1024 * 1024, hourlyLimit: 30 },
+  /** Signed contract scans. */
+  contract: { kinds: EVIDENCE, maxBytes: 15 * 1024 * 1024, hourlyLimit: 200 },
+  /** Per-employee payslips and appraisals HR produced outside the system. */
+  document: { kinds: ["pdf"], maxBytes: 15 * 1024 * 1024, hourlyLimit: 500 },
 };
 
 /** Browser `accept` attribute for a context — a hint only; the server decides. */
@@ -48,6 +52,8 @@ export const ACCEPT_ATTR: Record<UploadContext, string> = {
   leave: ".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*",
   correction: ".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*",
   complaint: ".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*",
+  contract: ".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*",
+  document: ".pdf,application/pdf",
 };
 
 export const ACCEPT_LABEL: Record<UploadContext, string> = {
@@ -55,6 +61,8 @@ export const ACCEPT_LABEL: Record<UploadContext, string> = {
   leave: "PDF, JPG, PNG, atau WebP",
   correction: "PDF, JPG, PNG, atau WebP",
   complaint: "PDF, JPG, PNG, atau WebP",
+  contract: "PDF atau foto hasil pindai",
+  document: "PDF",
 };
 
 /**

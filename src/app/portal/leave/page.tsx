@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Pagination } from "@/components/ui/Pagination";
 import { CalendarDays, CalendarPlus, History, Info, Paperclip, Trash2 } from "lucide-react";
 import {
   Alert,
@@ -46,6 +47,12 @@ interface LeaveType {
   maxConsecutiveDays: number;
   deductsBalance: boolean;
   colorTone: BadgeTone;
+  quotaMode: "annual" | "per_event" | "none";
+  maxEventsPerYear?: number;
+  isOther?: boolean;
+  /** Worded by the server from the same rules it enforces. */
+  rule: string;
+  eventsThisYear: number;
 }
 
 interface Balance {
@@ -61,6 +68,7 @@ interface Balance {
 interface LeaveRequest {
   _id: string;
   leaveTypeId: { name: string; colorTone?: BadgeTone } | null;
+  customPurpose?: string;
   startDate: string;
   endDate: string;
   chargedDays: number;
@@ -79,6 +87,10 @@ export default function LeavePage() {
   const [history, setHistory] = useState<LeaveRequest[]>([]);
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [year, setYear] = useState(new Date().getFullYear());
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [pendingTotal, setPendingTotal] = useState(0);
+  const historyLimit = 20;
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -90,11 +102,15 @@ export default function LeavePage() {
     setLoadError("");
     try {
       const [data, typeRes] = await Promise.all([
-        api.get<{ balances: Balance[]; history: LeaveRequest[]; year: number }>("/api/v1/leave"),
+        api.get<{ balances: Balance[]; history: LeaveRequest[]; year: number; pendingCount: number }>(
+          `/api/v1/leave?page=${historyPage}&limit=${historyLimit}`
+        ),
         api.get<LeaveType[]>("/api/v1/leave?type=types"),
       ]);
       setBalances(data.data?.balances ?? []);
       setHistory(data.data?.history ?? []);
+      setHistoryTotal(data.meta?.total ?? 0);
+      setPendingTotal(data.data?.pendingCount ?? 0);
       setYear(data.data?.year ?? new Date().getFullYear());
       setTypes(typeRes.data ?? []);
     } catch (err) {
@@ -102,13 +118,13 @@ export default function LeavePage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [historyPage]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const pendingCount = useMemo(() => history.filter((h) => h.status === "pending").length, [history]);
+  const pendingCount = pendingTotal;
 
   const cancel = async () => {
     if (!cancelTarget) return;
@@ -140,7 +156,7 @@ export default function LeavePage() {
         <div>
           <h1 className="text-display-sm md:text-display text-heading">Izin &amp; Cuti</h1>
           <p className="text-body text-muted mt-2 leading-relaxed">
-            Saldo tahun {year}. Akhir pekan dan hari libur nasional tidak memotong kuota.
+            Saldo tahun {year}. Akhir pekan dan hari libur nasional tidak dihitung.
           </p>
         </div>
         <Button icon={CalendarPlus} onClick={() => setFormOpen(true)}>
@@ -154,13 +170,14 @@ export default function LeavePage() {
         value={tab}
         onChange={setTab}
         tabs={[
-          { id: "balance", label: "Saldo Saya", icon: CalendarDays },
+          { id: "balance", label: "Saldo & Aturan", icon: CalendarDays },
           { id: "history", label: "Riwayat Pengajuan", count: pendingCount, icon: History },
         ]}
       />
 
       {tab === "balance" && (
         <>
+          <h2 className="eyebrow">Saldo tahunan</h2>
           {balances.length === 0 ? (
             <Card>
               <EmptyState
@@ -232,12 +249,50 @@ export default function LeavePage() {
               })}
             </div>
           )}
+
+          {types.some((t) => t.quotaMode !== "annual") && (
+            <>
+              <h2 className="eyebrow pt-2">Izin khusus &amp; keperluan lain</h2>
+              <p className="text-body-sm text-muted -mt-2 max-w-3xl leading-relaxed">
+                Jenis di bawah ini tidak memotong saldo cuti tahunan. Batas harinya berlaku untuk setiap kejadian,
+                jadi bila peristiwanya terjadi lagi, ajukan lagi sebagai pengajuan baru.
+              </p>
+              <Card>
+                <ul className="divide-y divide-[var(--border)]">
+                  {types
+                    .filter((t) => t.quotaMode !== "annual")
+                    .map((t) => (
+                      <li key={t._id} className="px-5 py-4 flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-6">
+                        <div className="sm:w-56 shrink-0">
+                          <p className="text-body font-semibold text-heading">{t.name}</p>
+                          <div className="mt-1 flex flex-wrap gap-1.5">
+                            {t.quotaMode === "per_event" && <Badge tone="info">{t.quotaDays} hari / kejadian</Badge>}
+                            {t.quotaMode === "none" && <Badge tone="neutral">Tanpa kuota</Badge>}
+                            {t.requiresEvidence && <Badge tone="warning">Perlu bukti</Badge>}
+                          </div>
+                        </div>
+                        <div className="min-w-0 text-body-sm text-muted leading-relaxed">
+                          {t.description && <p className="text-foreground/85">{t.description}</p>}
+                          <p className="mt-0.5">{t.rule}</p>
+                          {t.eventsThisYear > 0 && (
+                            <p className="mt-1 text-label text-subtle">
+                              Sudah diajukan {t.eventsThisYear} kali tahun ini
+                              {t.maxEventsPerYear ? ` dari batas ${t.maxEventsPerYear} kali` : ""}.
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                </ul>
+              </Card>
+            </>
+          )}
         </>
       )}
 
       {tab === "history" && (
         <Card>
-          <CardHeader title="Riwayat pengajuan" description={`${history.length} pengajuan tercatat.`} />
+          <CardHeader title="Riwayat pengajuan" description={`${historyTotal} pengajuan tercatat.`} />
           <CardBody className="p-0">
             {history.length === 0 ? (
               <EmptyState
@@ -267,6 +322,9 @@ export default function LeavePage() {
                     <tr key={h._id} className="hover:bg-surface-2 transition-colors">
                       <Td className="whitespace-nowrap font-medium">
                         {h.leaveTypeId?.name ?? "—"}
+                        {h.customPurpose && (
+                          <span className="block text-label font-normal text-muted">{h.customPurpose}</span>
+                        )}
                       </Td>
                       <Td className="whitespace-nowrap text-label">
                         {formatDate(h.startDate)} – {formatDate(h.endDate)}
@@ -321,6 +379,16 @@ export default function LeavePage() {
         </Card>
       )}
 
+      {tab === "history" && historyTotal > historyLimit && (
+        <Pagination
+          page={historyPage}
+          totalPages={Math.ceil(historyTotal / historyLimit)}
+          total={historyTotal}
+          limit={historyLimit}
+          onPage={setHistoryPage}
+        />
+      )}
+
       <LeaveFormModal
         open={formOpen}
         types={types}
@@ -340,7 +408,7 @@ export default function LeavePage() {
         loading={cancelling}
         title="Batalkan pengajuan?"
         confirmLabel="Ya, batalkan"
-        message={`Pengajuan ${cancelTarget?.leaveTypeId?.name ?? ""} ${cancelTarget ? `${formatDate(cancelTarget.startDate)} – ${formatDate(cancelTarget.endDate)}` : ""} akan dibatalkan dan saldo cuti dikembalikan. Tindakan ini tidak dapat diurungkan.`}
+        message={`Pengajuan ${cancelTarget?.leaveTypeId?.name ?? ""} ${cancelTarget ? `${formatDate(cancelTarget.startDate)} – ${formatDate(cancelTarget.endDate)}` : ""} akan dibatalkan. Bila jenisnya memakai saldo tahunan, harinya dikembalikan. Tindakan ini tidak dapat diurungkan.`}
       />
     </div>
   );
@@ -366,6 +434,7 @@ function LeaveFormModal({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
+  const [customPurpose, setCustomPurpose] = useState("");
   const [evidence, setEvidence] = useState<AttachmentItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [fileError, setFileError] = useState("");
@@ -376,6 +445,7 @@ function LeaveFormModal({
     setStartDate("");
     setEndDate("");
     setReason("");
+    setCustomPurpose("");
     setEvidence([]);
     setFileError("");
   }, [open, types]);
@@ -404,6 +474,7 @@ function LeaveFormModal({
         startDate,
         endDate,
         reason: reason.trim(),
+        customPurpose: selected?.isOther ? customPurpose.trim() : undefined,
         attachment: toAttachmentInputs(evidence)[0],
       });
       toast.success("Pengajuan terkirim", res.message);
@@ -455,15 +526,30 @@ function LeaveFormModal({
           <Alert tone="info">
             {selected.description && <span className="block mb-1">{selected.description}</span>}
             <span className="block">
-              {balance && selected.deductsBalance
-                ? `Sisa saldo Anda ${balance.remainingDays} dari ${balance.allocatedDays} hari.`
-                : "Jenis ini tidak memotong saldo cuti tahunan."}
+              {selected.rule}
+              {balance && selected.quotaMode === "annual" &&
+                ` Sisa saldo Anda ${balance.remainingDays} dari ${balance.allocatedDays} hari.`}
               {selected.minLeadDays > 0 && ` Minimal diajukan H-${selected.minLeadDays}.`}
-              {selected.maxConsecutiveDays > 0 &&
-                ` Maksimal ${selected.maxConsecutiveDays} hari per pengajuan.`}
               {selected.requiresEvidence && " Wajib melampirkan bukti."}
             </span>
           </Alert>
+        )}
+
+        {selected?.isOther && (
+          <Field
+            label="Keperluan"
+            required
+            htmlFor="lv-purpose"
+            hint="Singkat saja, misalnya Mengurus dokumen kependudukan atau Wisuda anak."
+          >
+            <Input
+              id="lv-purpose"
+              required
+              maxLength={120}
+              value={customPurpose}
+              onChange={(e) => setCustomPurpose(e.target.value)}
+            />
+          </Field>
         )}
 
         <div className="grid grid-cols-2 gap-3">

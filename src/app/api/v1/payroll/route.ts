@@ -14,25 +14,14 @@ import { checkPermission } from "@/lib/rbac";
 import { logActivity } from "@/lib/audit/logger";
 import { storageProvider } from "@/lib/storage";
 import { getSettings } from "@/lib/settings";
-import { holidayMap } from "@/lib/hr/calendar";
-import {
-  eachDayKey,
-  formatPeriod,
-  formatRupiah,
-  isWeekendKey,
-  wibDateKey,
-  wibEndOfMonth,
-  wibPeriodKey,
-  wibStartOfMonth,
-} from "@/lib/time";
+import { formatPeriod, formatRupiah, wibPeriodKey } from "@/lib/time";
 import { escapeHtml } from "@/lib/notification/notify";
+import { attachmentRefHref, resolveSingleAttachment } from "@/lib/uploads";
+import { attachmentInputSchema } from "@/lib/attachments";
 import { notifyUsers, resolveRecipientForEmployee } from "@/lib/notification/notify";
 import Payroll from "@/models/Payroll";
 import Employee from "@/models/Employee";
-import Contract from "@/models/Contract";
-import Attendance from "@/models/Attendance";
-import OvertimeRecord from "@/models/OvertimeRecord";
-import LeaveRequest from "@/models/LeaveRequest";
+import { calculatePayroll } from "@/lib/hr/payroll-calc";
 
 /* ------------------------------------------------------------------ */
 /* GET                                                                  */
@@ -48,6 +37,8 @@ export const GET = wrapRouteHandler(async (req) => {
 
   const filter: Record<string, unknown> = {};
   if (period) filter.period = period;
+  const status = sp.get("status");
+  if (status && ["draft", "published", "paid"].includes(status)) filter.status = status;
 
   // Anything other than an explicit company-wide read scope is pinned to the
   // caller's own record. The previous version only pinned the literal "STAFF"
@@ -78,6 +69,7 @@ export const GET = wrapRouteHandler(async (req) => {
     payrolls.map(async (p) => ({
       ...p,
       fileUrl: p.fileUrl ? await storageProvider.getSignedUrl(p.fileUrl as string, 900) : "",
+      uploadedFile: await attachmentRefHref(p.uploadedFile as string | undefined),
     }))
   );
 
@@ -107,150 +99,47 @@ export const POST = wrapRouteHandler(async (req) => {
   }
 
   const settings = await getSettings();
-  const rates = {
-    latePerMinute: Number(settings.payroll_late_penalty_per_minute),
-    latePenaltyCap: Number(settings.payroll_late_penalty_cap),
-    overtimePerHour: Number(settings.payroll_overtime_rate_per_hour),
-    absentPerDay: Number(settings.payroll_absent_penalty_per_day),
-    bpjsKesPct: Number(settings.payroll_bpjs_kesehatan_pct),
-    bpjsTkPct: Number(settings.payroll_bpjs_tk_pct),
-    pph21Pct: Number(settings.payroll_pph21_pct),
-    pph21Threshold: Number(settings.payroll_pph21_threshold),
-    defaultBasic: Number(settings.payroll_default_basic_salary),
-  };
   const companyName = String(settings.company_name);
   const companyAddress = String(settings.company_address);
-
-  const monthStart = wibStartOfMonth(body.period);
-  const monthEnd = wibEndOfMonth(body.period);
-  const dayKeys = eachDayKey(monthStart, monthEnd);
-  const holidays = await holidayMap(dayKeys[0], dayKeys[dayKeys.length - 1]);
-
-  // Working days in the period, used for the alpha (absent) calculation.
-  const workingDayKeys = dayKeys.filter((k) => !isWeekendKey(k) && !holidays.has(k));
-  // Only days that have already happened can count as absences.
-  const todayKey = wibDateKey();
-  const elapsedWorkingDays = workingDayKeys.filter((k) => k <= todayKey);
 
   const results: unknown[] = [];
   const errors: Array<{ id: string; name?: string; message: string }> = [];
 
   for (const empId of body.employeeIds) {
     try {
-      const employee = await Employee.findById(empId)
-        .select("name employeeId taxStatus")
-        .lean<{ _id: mongoose.Types.ObjectId; name: string; employeeId: string; taxStatus?: string } | null>();
-      if (!employee) {
-        errors.push({ id: empId, message: "Karyawan tidak ditemukan" });
+      // An uploaded slip is HR's final word for that period; recalculating
+      // would silently replace it.
+      const uploaded = await Payroll.exists({ employeeId: empId, period: body.period, source: "uploaded" });
+      if (uploaded) {
+        errors.push({ id: empId, message: "Periode ini memakai slip PDF yang diunggah. Hapus slip unggahan itu dulu bila ingin menghitung otomatis." });
         continue;
       }
 
-      /* --- salary base ---------------------------------------------- */
-      const contract = await Contract.findOne({ employeeId: empId, status: "active" })
-        .sort({ startDate: -1 })
-        .lean<{ salarySnapshot?: { basicSalary?: number; allowances?: number } } | null>();
-
-      const basicSalary = contract?.salarySnapshot?.basicSalary ?? rates.defaultBasic;
-      const allowancesAmount = contract?.salarySnapshot?.allowances ?? 0;
-
-      if (!contract && rates.defaultBasic === 0) {
-        errors.push({
-          id: empId,
-          name: employee.name,
-          message:
-            "Belum ada kontrak aktif dengan nominal gaji, dan gaji pokok default belum diatur di Pengaturan Payroll.",
-        });
+      const calc = await calculatePayroll(empId, body.period);
+      if (calc.problem) {
+        errors.push({ id: empId, name: calc.employee.name, message: calc.problem });
         continue;
       }
 
-      /* --- attendance ------------------------------------------------ */
-      const logs = await Attendance.find({
-        employeeId: empId,
-        date: { $gte: monthStart, $lte: monthEnd },
-      }).lean<Array<{ date: Date; isLate: boolean; lateMinutes: number }>>();
-
-      const presentKeys = new Set(logs.map((l) => wibDateKey(new Date(l.date))));
-      const lateMinutes = logs.reduce((sum, l) => sum + (l.isLate ? l.lateMinutes || 0 : 0), 0);
-
-      let latePenalty = lateMinutes * rates.latePerMinute;
-      if (rates.latePenaltyCap > 0) latePenalty = Math.min(latePenalty, rates.latePenaltyCap);
-
-      /* --- absences (alpha) ------------------------------------------ */
-      // A working day with no attendance is only "alpha" if it is not covered
-      // by an approved leave — otherwise approved leave would be fined.
-      const approvedLeaves = await LeaveRequest.find({
-        employeeId: empId,
-        status: "approved",
-        startDate: { $lte: monthEnd },
-        endDate: { $gte: monthStart },
-      }).lean<Array<{ startDate: Date; endDate: Date }>>();
-
-      const leaveKeys = new Set<string>();
-      for (const lv of approvedLeaves) {
-        for (const k of eachDayKey(lv.startDate, lv.endDate)) leaveKeys.add(k);
-      }
-
-      const absentKeys = elapsedWorkingDays.filter(
-        (k) => !presentKeys.has(k) && !leaveKeys.has(k)
-      );
-      const absentPenalty = absentKeys.length * rates.absentPerDay;
-
-      /* --- overtime --------------------------------------------------- */
-      const overtimes = await OvertimeRecord.find({
-        employeeId: empId,
-        date: { $gte: monthStart, $lte: monthEnd },
-        status: "approved",
-      }).lean<Array<{ hours: number }>>();
-      const overtimeHours = overtimes.reduce((s, o) => s + (o.hours || 0), 0);
-      const overtimePay = Math.round(overtimeHours * rates.overtimePerHour);
-
-      /* --- statutory deductions --------------------------------------- */
-      const bpjsKesehatan = Math.round((basicSalary * rates.bpjsKesPct) / 100);
-      const bpjsKetenagakerjaan = Math.round((basicSalary * rates.bpjsTkPct) / 100);
-
-      const gross = basicSalary + allowancesAmount + overtimePay;
-      const preTaxDeductions = latePenalty + absentPenalty + bpjsKesehatan + bpjsKetenagakerjaan;
-      const taxableBase = gross - preTaxDeductions;
-      // Only the portion above the PTKP threshold is taxed — the previous
-      // version taxed the entire amount once the threshold was crossed, which
-      // created a cliff where earning Rp 1 more cost Rp 225.000 in tax.
-      const taxAmount =
-        taxableBase > rates.pph21Threshold
-          ? Math.round(((taxableBase - rates.pph21Threshold) * rates.pph21Pct) / 100)
-          : 0;
-
-      const allowanceLines = allowancesAmount > 0 ? [{ name: "Tunjangan", amount: allowancesAmount }] : [];
-      const deductionLines = [
-        { name: `Potongan keterlambatan (${lateMinutes} menit)`, amount: latePenalty },
-        { name: `Potongan alpha (${absentKeys.length} hari)`, amount: absentPenalty },
-        { name: `BPJS Kesehatan (${rates.bpjsKesPct}%)`, amount: bpjsKesehatan },
-        { name: `BPJS Ketenagakerjaan (${rates.bpjsTkPct}%)`, amount: bpjsKetenagakerjaan },
-        { name: `PPh 21 (${rates.pph21Pct}%)`, amount: taxAmount },
-      ].filter((d) => d.amount > 0);
-
-      const totalDeductions = deductionLines.reduce((s, d) => s + d.amount, 0);
-      const netSalary = gross - totalDeductions;
-
-      /* --- slip document ---------------------------------------------- */
       const slipHtml = renderSlip({
         companyName,
         companyAddress,
         period: body.period,
-        employeeName: employee.name,
-        nip: employee.employeeId,
-        taxStatus: employee.taxStatus ?? "-",
-        basicSalary,
-        overtimePay,
-        overtimeHours,
-        allowanceLines,
-        deductionLines,
-        gross,
-        totalDeductions,
-        netSalary,
-        presentDays: presentKeys.size,
-        workingDays: workingDayKeys.length,
-        absentDays: absentKeys.length,
-        leaveDays: leaveKeys.size,
+        employeeName: calc.employee.name,
+        nip: calc.employee.employeeId,
+        taxStatus: calc.employee.taxStatus,
+        basicSalary: calc.basicSalary,
+        overtimePay: calc.overtimeSalary,
+        overtimeHours: calc.overtimeHours,
+        allowanceLines: calc.allowances,
+        deductionLines: calc.deductions,
+        gross: calc.totalEarnings,
+        totalDeductions: calc.totalDeductions,
+        netSalary: calc.netSalary,
+        presentDays: calc.presentDays,
+        workingDays: calc.workingDays,
+        absentDays: calc.absentDays,
+        leaveDays: calc.leaveDays,
       });
 
       const fileKey = await storageProvider.upload(
@@ -262,19 +151,24 @@ export const POST = wrapRouteHandler(async (req) => {
       const payroll = await Payroll.findOneAndUpdate(
         { employeeId: empId, period: body.period },
         {
-          basicSalary,
-          incentives: 0,
-          allowances: allowanceLines,
-          deductions: deductionLines,
-          overtimeSalary: overtimePay,
-          overtimeHours,
-          lateMinutes,
-          absentDays: absentKeys.length,
-          presentDays: presentKeys.size,
-          workingDays: workingDayKeys.length,
-          totalEarnings: gross,
-          totalDeductions,
-          netSalary,
+          basicSalary: calc.basicSalary,
+          incentives: calc.incentives,
+          allowances: calc.allowances,
+          deductions: calc.deductions,
+          overtimeSalary: calc.overtimeSalary,
+          overtimeHours: calc.overtimeHours,
+          lateMinutes: calc.lateMinutes,
+          absentDays: calc.absentDays,
+          presentDays: calc.presentDays,
+          workingDays: calc.workingDays,
+          totalEarnings: calc.totalEarnings,
+          totalDeductions: calc.totalDeductions,
+          netSalary: calc.netSalary,
+          targetAchievement: calc.targetAchievement,
+          notes: calc.notes,
+          source: "generated",
+          uploadedFile: "",
+          uploadedFileName: "",
           fileUrl: fileKey,
           generatedBy: ctx.user.id,
           generatedAt: new Date(),
@@ -288,7 +182,7 @@ export const POST = wrapRouteHandler(async (req) => {
         void notifyUsers(recipients, {
           kind: "payroll",
           title: `Slip gaji ${formatPeriod(body.period)} sudah terbit`,
-          body: `Gaji bersih Anda periode ${formatPeriod(body.period)} sebesar ${formatRupiah(netSalary)}. Buka portal untuk melihat rinciannya.`,
+          body: `Gaji bersih Anda periode ${formatPeriod(body.period)} sebesar ${formatRupiah(calc.netSalary)}. Buka portal untuk melihat rinciannya.`,
           href: "/portal/payroll",
         });
       }
@@ -303,7 +197,7 @@ export const POST = wrapRouteHandler(async (req) => {
     userId: ctx.user.id,
     action: "GENERATE_PAYROLL",
     module: "payroll",
-    after: { period: body.period, generated: results.length, failed: errors.length, rates },
+    after: { period: body.period, generated: results.length, failed: errors.length, publish: body.publish },
     ip: ctx.ip,
     userAgent: ctx.userAgent,
   });
@@ -313,6 +207,119 @@ export const POST = wrapRouteHandler(async (req) => {
     errors.length
       ? `${results.length} slip gaji berhasil dibuat, ${errors.length} gagal. Periksa daftar kegagalan.`
       : `${results.length} slip gaji periode ${formatPeriod(body.period)} berhasil dibuat.`
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* PATCH — publish drafts, or attach an uploaded PDF slip               */
+/* ------------------------------------------------------------------ */
+
+const patchSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("publish"),
+    ids: z.array(z.string().regex(/^[0-9a-fA-F]{24}$/)).min(1).max(500),
+  }),
+  z.object({
+    action: z.literal("upload"),
+    employeeId: z.string().regex(/^[0-9a-fA-F]{24}$/),
+    period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+    file: attachmentInputSchema,
+    /** Optional totals so period summaries still add up. */
+    netSalary: z.number().min(0).max(1e12).optional(),
+    totalEarnings: z.number().min(0).max(1e12).optional(),
+    totalDeductions: z.number().min(0).max(1e12).optional(),
+    publish: z.boolean().default(true),
+    replace: z.boolean().default(false),
+  }),
+]);
+
+export const PATCH = wrapRouteHandler(async (req) => {
+  const ctx = await requirePermission(req, "payroll", "write");
+  const body = await parseBody(req, patchSchema);
+
+  if (body.action === "publish") {
+    const drafts = await Payroll.find({ _id: { $in: body.ids }, status: "draft" })
+      .select("employeeId period netSalary source")
+      .lean<Array<{ _id: mongoose.Types.ObjectId; employeeId: mongoose.Types.ObjectId; period: string; netSalary: number; source?: string }>>();
+    await Payroll.updateMany({ _id: { $in: drafts.map((d) => d._id) } }, { $set: { status: "published" } });
+    for (const d of drafts) {
+      const recipients = await resolveRecipientForEmployee(d.employeeId);
+      void notifyUsers(recipients, {
+        kind: "payroll",
+        title: `Slip gaji ${formatPeriod(d.period)} sudah terbit`,
+        body:
+          d.source === "uploaded"
+            ? `Slip gaji periode ${formatPeriod(d.period)} tersedia di portal.`
+            : `Gaji bersih Anda periode ${formatPeriod(d.period)} sebesar ${formatRupiah(d.netSalary)}. Buka portal untuk melihat rinciannya.`,
+        href: "/portal/payroll",
+      });
+    }
+    void logActivity({ userId: ctx.user.id, action: "PUBLISH_PAYROLL", module: "payroll", after: { count: drafts.length }, ip: ctx.ip, userAgent: ctx.userAgent });
+    return apiSuccess({ published: drafts.length }, `${drafts.length} slip gaji diterbitkan dan karyawan diberi tahu.`);
+  }
+
+  // upload
+  const existing = await Payroll.findOne({ employeeId: body.employeeId, period: body.period });
+  if (existing?.status === "published" && !body.replace) {
+    throw BadRequest("Karyawan ini sudah punya slip terbit untuk periode tersebut. Centang Ganti slip yang sudah terbit bila memang ingin menggantinya.");
+  }
+  const employee = await Employee.findById(body.employeeId).select("name").lean<{ name: string } | null>();
+  if (!employee) throw BadRequest("Karyawan tidak ditemukan.");
+
+  const key = await resolveSingleAttachment({
+    input: body.file,
+    context: "document",
+    ownerUserId: ctx.user.id,
+    destination: `payrolls/${body.employeeId}/uploaded`,
+  });
+
+  const payroll = await Payroll.findOneAndUpdate(
+    { employeeId: body.employeeId, period: body.period },
+    {
+      source: "uploaded",
+      uploadedFile: key,
+      uploadedFileName: body.file.kind === "file" ? body.file.name ?? `Slip ${body.period}.pdf` : "Tautan slip gaji",
+      basicSalary: 0,
+      incentives: 0,
+      allowances: [],
+      deductions: [],
+      overtimeSalary: 0,
+      overtimeHours: 0,
+      targetAchievement: null,
+      totalEarnings: body.totalEarnings ?? body.netSalary ?? 0,
+      totalDeductions: body.totalDeductions ?? 0,
+      netSalary: body.netSalary ?? 0,
+      notes: ["Slip gaji dari berkas PDF yang diunggah HRD."],
+      fileUrl: "",
+      generatedBy: ctx.user.id,
+      generatedAt: new Date(),
+      status: body.publish ? "published" : "draft",
+    },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+
+  if (body.publish) {
+    const recipients = await resolveRecipientForEmployee(body.employeeId);
+    void notifyUsers(recipients, {
+      kind: "payroll",
+      title: `Slip gaji ${formatPeriod(body.period)} sudah terbit`,
+      body: `Slip gaji periode ${formatPeriod(body.period)} tersedia di portal.`,
+      href: "/portal/payroll",
+    });
+  }
+
+  void logActivity({
+    userId: ctx.user.id,
+    action: "UPLOAD_PAYSLIP",
+    module: "payroll",
+    after: { employee: employee.name, period: body.period, publish: body.publish, replaced: Boolean(existing) },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
+
+  return apiSuccess(
+    { _id: payroll._id },
+    `Slip gaji ${employee.name} periode ${formatPeriod(body.period)} ${body.publish ? "diterbitkan" : "disimpan sebagai draf"}.`
   );
 });
 
@@ -334,6 +341,9 @@ export const DELETE = wrapRouteHandler(async (req) => {
   }
 
   if (payroll.fileUrl) await storageProvider.delete(payroll.fileUrl).catch(() => {});
+  if (payroll.uploadedFile && !/^https?:/i.test(payroll.uploadedFile)) {
+    await storageProvider.delete(payroll.uploadedFile).catch(() => {});
+  }
   await payroll.deleteOne();
 
   void logActivity({

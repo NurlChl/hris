@@ -63,6 +63,18 @@ export const GET = wrapRouteHandler(async (req) => {
     }
   }
 
+  const OPEN = { status: { $in: ["received", "in_progress"] } };
+  const CLOSED = { status: { $in: ["resolved", "rejected"] } };
+  const state = new URL(req.url).searchParams.get("state");
+  const baseFilter = filter;
+  if (state === "open") filter = { ...baseFilter, ...OPEN };
+  else if (state === "closed") filter = { ...baseFilter, ...CLOSED };
+
+  const [openCount, closedCount] = await Promise.all([
+    Complaint.countDocuments({ ...baseFilter, ...OPEN }),
+    Complaint.countDocuments({ ...baseFilter, ...CLOSED }),
+  ]);
+
   const [rows, total] = await Promise.all([
     Complaint.find(filter)
       .populate("employeeId", "name employeeId divisionId")
@@ -101,7 +113,11 @@ export const GET = wrapRouteHandler(async (req) => {
     })
   );
 
-  return apiSuccess({ items, asHandler }, "Berhasil memuat pengaduan", { page, limit, total });
+  return apiSuccess(
+    { items, asHandler, counts: { open: openCount, closed: closedCount } },
+    "Berhasil memuat pengaduan",
+    { page, limit, total }
+  );
 });
 
 /* ------------------------------------------------------------------ */

@@ -3,6 +3,9 @@ import mongoose, { Schema, Document } from "mongoose";
 export interface IApprovalInstance extends Document {
   refType: "leave" | "correction" | "holiday_swap" | "face_change";
   refId: mongoose.Types.ObjectId;
+  /** Requester and their division at submission; older instances lack them. */
+  employeeId?: mongoose.Types.ObjectId | null;
+  divisionId?: mongoose.Types.ObjectId | null;
   currentStep: number; // 1-indexed active step
   status: "pending" | "approved" | "rejected";
   stepsStatus: Array<{
@@ -25,6 +28,8 @@ const ApprovalInstanceSchema = new Schema<IApprovalInstance>(
   {
     refType: { type: String, enum: ["leave", "correction", "holiday_swap", "face_change"], required: true, index: true },
     refId: { type: Schema.Types.ObjectId, required: true, index: true },
+    employeeId: { type: Schema.Types.ObjectId, ref: "Employee", default: null, index: true },
+    divisionId: { type: Schema.Types.ObjectId, ref: "Division", default: null, index: true },
     currentStep: { type: Number, default: 1, required: true },
     status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending", index: true },
     stepsStatus: [

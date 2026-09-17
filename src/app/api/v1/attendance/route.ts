@@ -332,7 +332,9 @@ export const POST = wrapRouteHandler(async (req) => {
   let isLate = false;
   let lateMinutes = 0;
 
-  if (action === "clock_in") {
+  // On a rostered day off nobody is late or leaves early; the hours still get
+  // recorded and overtime rules decide what they are worth.
+  if (action === "clock_in" && !schedule.isOffDay) {
     const scheduledAt = wibTimeOnDay(dayKey, schedule.clockIn);
     const deadline = new Date(scheduledAt.getTime() + schedule.gracePeriodMinutes * 60_000);
     if (now.getTime() > deadline.getTime()) {
@@ -346,8 +348,10 @@ export const POST = wrapRouteHandler(async (req) => {
   /* --- 8. Early clock-out flag -------------------------------------- */
   let isEarlyLeave = false;
   let earlyLeaveMinutes = 0;
-  if (action === "clock_out") {
-    const scheduledOut = wibTimeOnDay(dayKey, schedule.clockOut);
+  if (action === "clock_out" && !schedule.isOffDay) {
+    // A night shift (23:00–07:00) ends on the following calendar day.
+    const outDay = schedule.clockOut <= schedule.clockIn ? new Date(wibStartOfDay(dayKey).getTime() + 86_400_000) : dayKey;
+    const scheduledOut = wibTimeOnDay(outDay, schedule.clockOut);
     if (now.getTime() < scheduledOut.getTime()) {
       isEarlyLeave = true;
       earlyLeaveMinutes = Math.round((scheduledOut.getTime() - now.getTime()) / 60_000);

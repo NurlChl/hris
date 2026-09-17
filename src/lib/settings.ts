@@ -105,7 +105,9 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "login_max_attempts", label: "Maks percobaan login gagal", description: "Akun dikunci sementara setelah melewati batas ini.", type: "number", default: 5, unit: "percobaan", min: 3, max: 20, group: "security" },
   { key: "login_lockout_minutes", label: "Durasi kunci akun", description: "Lama akun terkunci setelah percobaan login gagal beruntun.", type: "number", default: 15, unit: "menit", min: 1, max: 1440, group: "security" },
   { key: "force_password_change_on_first_login", label: "Wajib ganti password saat login pertama", description: "Mencegah akun karyawan tetap memakai password default dari HRD.", type: "boolean", default: true, group: "security" },
-  { key: "default_employee_password", label: "Password awal karyawan baru", description: "Dibagikan HRD sekali saat akun dibuat. Gunakan bersama opsi wajib ganti password.", type: "string", default: "Hris#2026Awal", group: "security" },
+  // Superseded by per-role initial passwords (lib/auth/initial-password.ts). Kept
+  // internal so older deployments keep their value as the starting point.
+  { key: "default_employee_password", label: "Password awal karyawan baru (lama)", description: "Digantikan pengaturan kata sandi awal per peran.", type: "string", default: "Hris#2026Awal", group: "security", internal: true },
 
   /* ---- notification ---- */
   { key: "notify_email_enabled", label: "Kirim notifikasi email", description: "Mematikan ini menghentikan seluruh email otomatis sistem.", type: "boolean", default: true, group: "notification" },
@@ -164,6 +166,8 @@ export async function getSettings(force = false): Promise<SettingsSnapshot> {
     await connectToDatabase();
     const rows = await Setting.find({}).lean<Array<{ key: string; value: unknown }>>();
     for (const row of rows) {
+      // Structured, credential-like rows are read by their own modules only.
+      if (row.key === "initial_password_policy") continue;
       snapshot[row.key] = SETTING_MAP[row.key]
         ? coerceSetting(row.key, row.value)
         : (row.value as string);

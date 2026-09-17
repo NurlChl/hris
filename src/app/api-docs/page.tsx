@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Download, Lock, Moon, Search, Sun } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 import { Alert, Badge, Input, cn, type BadgeTone } from "@/components/ui";
-import { API_BASE, API_GROUPS, type ApiEndpoint } from "@/lib/openapi";
+import type { ApiEndpoint, ApiGroup } from "@/lib/openapi";
+
+const API_BASE = "/api/v1";
 
 /**
  * API reference rendered natively rather than by an embedded viewer.
@@ -28,6 +30,14 @@ const METHOD_TONE: Record<ApiEndpoint["method"], BadgeTone> = {
 export default function ApiDocsPage() {
   const { theme, toggleTheme } = useTheme();
   const [query, setQuery] = useState("");
+  // Loaded from the Superadmin-only endpoint rather than bundled into the page.
+  const [API_GROUPS, setGroups] = useState<ApiGroup[]>([]);
+  useEffect(() => {
+    fetch("/api/v1/openapi?format=groups", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setGroups(d?.groups ?? []))
+      .catch(() => {});
+  }, []);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -38,7 +48,7 @@ export default function ApiDocsPage() {
         `${e.method} ${e.path} ${e.summary} ${e.description} ${e.auth}`.toLowerCase().includes(q)
       ),
     })).filter((g) => g.endpoints.length > 0);
-  }, [query]);
+  }, [query, API_GROUPS]);
 
   const total = API_GROUPS.reduce((n, g) => n + g.endpoints.length, 0);
 

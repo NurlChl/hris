@@ -21,6 +21,8 @@ const SECTION_ROLES: Array<{ prefix: string; roles: string[] }> = [
   { prefix: "/admin/vacancies", roles: ["SUPERADMIN", "HRD", "DIREKSI"] },
   { prefix: "/admin/branches", roles: ["SUPERADMIN", "HRD", "GA"] },
   { prefix: "/admin/departments", roles: ["SUPERADMIN", "HRD"] },
+  { prefix: "/admin/leave-types", roles: ["SUPERADMIN", "HRD"] },
+  { prefix: "/admin/contracts", roles: ["SUPERADMIN", "HRD", "AUDIT", "DIREKSI"] },
 ];
 
 /** Where a given role lands after signing in. */
@@ -38,16 +40,27 @@ export const proxy = auth((req) => {
 
   const isOnAdmin = path.startsWith("/admin");
   const isOnPortal = path.startsWith("/portal");
+  const isOnDocs = path === "/docs" || path.startsWith("/docs/");
+  const isOnApiDocs = path === "/api-docs" || path.startsWith("/api-docs/");
   const isOnAuthPage =
     path.startsWith("/auth/login") ||
     path.startsWith("/auth/admin") ||
     path.startsWith("/auth/forgot-password");
 
   // --- Protected areas require a session --------------------------------
-  if ((isOnAdmin || isOnPortal) && !isLoggedIn) {
-    const loginUrl = new URL(isOnAdmin ? "/auth/admin" : "/auth/login", nextUrl);
-    loginUrl.searchParams.set("callbackUrl", path + nextUrl.search);
+  // Everyone lands on the employee login. Sending a signed-out visitor of
+  // /admin to the administrator login would publish that address to anyone who
+  // tries the obvious URL; administrators type it themselves. The callback is
+  // kept only for non-admin areas for the same reason.
+  if ((isOnAdmin || isOnPortal || isOnDocs || isOnApiDocs) && !isLoggedIn) {
+    const loginUrl = new URL("/auth/login", nextUrl);
+    if (!isOnAdmin && !isOnApiDocs) loginUrl.searchParams.set("callbackUrl", path + nextUrl.search);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // The API reference describes every endpoint, including administration ones.
+  if (isOnApiDocs && isLoggedIn && role !== "SUPERADMIN") {
+    return NextResponse.redirect(new URL(landingFor(role), nextUrl));
   }
 
   // --- First-login password change is mandatory -------------------------
@@ -86,6 +99,8 @@ export const config = {
   matcher: [
     "/admin/:path*",
     "/portal/:path*",
+    "/docs",
+    "/api-docs",
     "/auth/login",
     "/auth/admin",
     "/auth/forgot-password",

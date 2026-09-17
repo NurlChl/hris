@@ -12,6 +12,9 @@ import {
   Target,
   Undo2,
   Users,
+  FileText,
+  FileUp,
+  Send,
 } from "lucide-react";
 import {
   Alert,
@@ -43,6 +46,8 @@ import { api, errorMessage } from "@/lib/client-api";
 import { formatRelative } from "@/lib/time";
 import { KpiTemplateBuilder } from "./KpiTemplateBuilder";
 import { EvaluationForm, type ExistingEvaluation } from "./EvaluationForm";
+import { UploadEvaluationDialog } from "./UploadEvaluationDialog";
+import { Pagination } from "@/components/ui/Pagination";
 import { EVALUATION_STATUS_LABELS } from "@/lib/hr/kpi";
 
 interface Overview {
@@ -82,6 +87,9 @@ interface EvaluationRow {
     positionId?: { name: string } | null;
   } | null;
   templateId: { _id: string; name: string } | null;
+  source?: "form" | "uploaded";
+  title?: string;
+  uploadedFile?: string;
 }
 
 const STATUS_TONE: Record<string, BadgeTone> = {
@@ -324,26 +332,31 @@ function EvaluationsTab() {
   const [period, setPeriod] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ExistingEvaluation | null>(null);
-  const [confirm, setConfirm] = useState<{ row: EvaluationRow; action: "finalize" | "return" } | null>(
+  const [confirm, setConfirm] = useState<{ row: EvaluationRow; action: "finalize" | "return" | "share" } | null>(
     null
   );
   const [acting, setActing] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const qs = new URLSearchParams();
+      const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (status !== "all") qs.set("status", status);
       if (period.trim()) qs.set("period", period.trim());
       const res = await api.get<EvaluationRow[]>(`/api/v1/kpi/evaluations?${qs}`);
       setRows(res.data ?? []);
+      setTotal(res.meta?.total ?? 0);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [status, period]);
+  }, [status, period, page, limit]);
 
   useEffect(() => {
     const t = window.setTimeout(() => void load(), period ? 350 : 0);
@@ -401,16 +414,20 @@ function EvaluationsTab() {
           aria-label="Saring periode"
           className="w-56"
         />
-        <Button
-          icon={Plus}
-          className="ml-auto"
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          Buat penilaian
-        </Button>
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button variant="secondary" icon={FileUp} onClick={() => setUploadOpen(true)}>
+            Unggah PDF
+          </Button>
+          <Button
+            icon={Plus}
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            Buat penilaian
+          </Button>
+        </div>
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
@@ -462,7 +479,16 @@ function EvaluationsTab() {
                         {row.employeeId?.divisionId?.name ?? "—"}
                       </span>
                     </Td>
-                    <Td className="text-muted text-body-sm">{row.templateId?.name ?? "—"}</Td>
+                    <Td className="text-muted text-body-sm">
+                      {row.source === "uploaded" ? (
+                        <>
+                          {row.title || "Penilaian unggahan"}
+                          <span className="block text-caption text-subtle">PDF unggahan</span>
+                        </>
+                      ) : (
+                        row.templateId?.name ?? "—"
+                      )}
+                    </Td>
                     <Td className="text-muted text-body-sm">{row.period}</Td>
                     <Td className="text-right">
                       <span className="text-body font-semibold tabular-nums">
@@ -483,9 +509,14 @@ function EvaluationsTab() {
                     </Td>
                     <Td>
                       <div className="flex items-center justify-end gap-1">
-                        {row.status !== "finalized" && (
+                        {row.status !== "finalized" && row.source !== "uploaded" && (
                           <Button variant="ghost" size="sm" onClick={() => openEdit(row)}>
                             Ubah
+                          </Button>
+                        )}
+                        {row.source === "uploaded" && row.status === "draft" && (
+                          <Button variant="ghost" size="sm" icon={Send} onClick={() => setConfirm({ row, action: "share" })}>
+                            Bagikan
                           </Button>
                         )}
                         {row.status === "submitted" && (
@@ -509,11 +540,19 @@ function EvaluationsTab() {
                             Finalkan
                           </Button>
                         )}
-                        <Link href={`/print/kpi/${row._id}`} target="_blank">
-                          <Button variant="ghost" size="sm" icon={Printer}>
-                            Cetak
-                          </Button>
-                        </Link>
+                        {row.source === "uploaded" ? (
+                          <a href={row.uploadedFile} target="_blank" rel="noreferrer">
+                            <Button variant="ghost" size="sm" icon={FileText}>
+                              Buka PDF
+                            </Button>
+                          </a>
+                        ) : (
+                          <Link href={`/print/kpi/${row._id}`} target="_blank">
+                            <Button variant="ghost" size="sm" icon={Printer}>
+                              Cetak
+                            </Button>
+                          </Link>
+                        )}
                       </div>
                     </Td>
                   </Tr>
@@ -522,6 +561,30 @@ function EvaluationsTab() {
             </TableWrap>
           </CardBody>
         </Card>
+      )}
+
+      {rows.length > 0 && (
+        <Pagination
+          page={page}
+          totalPages={Math.max(1, Math.ceil(total / limit))}
+          total={total}
+          limit={limit}
+          onPage={setPage}
+          onLimit={(l) => {
+            setLimit(l);
+            setPage(1);
+          }}
+        />
+      )}
+
+      {uploadOpen && (
+        <UploadEvaluationDialog
+          onClose={() => setUploadOpen(false)}
+          onSaved={() => {
+            setUploadOpen(false);
+            void load();
+          }}
+        />
       )}
 
       <EvaluationForm
@@ -539,11 +602,13 @@ function EvaluationsTab() {
         onClose={() => setConfirm(null)}
         onConfirm={act}
         loading={acting}
-        tone={confirm?.action === "finalize" ? "primary" : "danger"}
-        title={confirm?.action === "finalize" ? "Finalkan penilaian?" : "Tarik kembali penilaian?"}
-        confirmLabel={confirm?.action === "finalize" ? "Ya, finalkan" : "Ya, tarik"}
+        tone={confirm?.action === "return" ? "danger" : "primary"}
+        title={confirm?.action === "finalize" ? "Finalkan penilaian?" : confirm?.action === "share" ? "Bagikan ke karyawan?" : "Tarik kembali penilaian?"}
+        confirmLabel={confirm?.action === "finalize" ? "Ya, finalkan" : confirm?.action === "share" ? "Bagikan" : "Ya, tarik"}
         message={
-          confirm?.action === "finalize"
+          confirm?.action === "share"
+            ? `Dokumen penilaian ${confirm.row.employeeId?.name ?? ""} periode ${confirm.row.period} akan terlihat di portal karyawan dan karyawan menerima notifikasi.`
+            : confirm?.action === "finalize"
             ? `Penilaian ${confirm.row.employeeId?.name ?? ""} periode ${confirm?.row.period} akan dikunci dan tidak dapat diubah lagi. Karyawan menerima notifikasi dan dapat mengunduh dokumennya.`
             : `Penilaian akan kembali menjadi draf dan hilang dari portal karyawan sampai Anda mengirimkannya lagi.`
         }

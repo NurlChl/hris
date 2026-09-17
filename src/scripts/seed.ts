@@ -133,6 +133,7 @@ const LEAVE_TYPES = [
     requiresEvidence: false,
     minLeadDays: 3,
     maxConsecutiveDays: 12,
+    quotaMode: "annual",
     deductsBalance: true,
     colorTone: "primary",
   },
@@ -145,18 +146,20 @@ const LEAVE_TYPES = [
     requiresEvidence: true,
     minLeadDays: 0,
     maxConsecutiveDays: 0,
+    quotaMode: "none",
     deductsBalance: false,
     colorTone: "warning",
   },
   {
     name: "Cuti Menikah",
-    description: "Cuti pernikahan karyawan sendiri.",
+    description: "Cuti pernikahan karyawan sendiri. Maksimal 3 hari setiap kali, dapat diajukan lagi bila terjadi lagi.",
     quotaDays: 3,
     accrualMode: "flat",
     carryOverMaxDays: 0,
     requiresEvidence: true,
     minLeadDays: 14,
     maxConsecutiveDays: 3,
+    quotaMode: "per_event",
     deductsBalance: false,
     colorTone: "success",
   },
@@ -169,32 +172,35 @@ const LEAVE_TYPES = [
     requiresEvidence: true,
     minLeadDays: 30,
     maxConsecutiveDays: 0,
+    quotaMode: "per_event",
     deductsBalance: false,
     genderRestriction: "female",
     colorTone: "info",
   },
   {
     name: "Cuti Ayah",
-    description: "Cuti mendampingi istri melahirkan.",
+    description: "Cuti mendampingi istri melahirkan, setiap kelahiran.",
     quotaDays: 2,
     accrualMode: "flat",
     carryOverMaxDays: 0,
     requiresEvidence: true,
     minLeadDays: 0,
     maxConsecutiveDays: 2,
+    quotaMode: "per_event",
     deductsBalance: false,
     genderRestriction: "male",
     colorTone: "info",
   },
   {
     name: "Izin Keluarga Meninggal",
-    description: "Izin duka untuk keluarga inti.",
+    description: "Izin duka untuk keluarga inti. Maksimal 3 hari setiap kejadian.",
     quotaDays: 3,
     accrualMode: "flat",
     carryOverMaxDays: 0,
     requiresEvidence: false,
     minLeadDays: 0,
     maxConsecutiveDays: 3,
+    quotaMode: "per_event",
     deductsBalance: false,
     colorTone: "neutral",
   },
@@ -202,12 +208,13 @@ const LEAVE_TYPES = [
     name: "WFH / Dinas Luar",
     description:
       "Bekerja dari luar kantor. Disetujui lebih dulu agar presensi di luar radius kantor diterima sistem.",
-    quotaDays: 60,
+    quotaDays: 0,
     accrualMode: "flat",
     carryOverMaxDays: 0,
     requiresEvidence: false,
     minLeadDays: 0,
     maxConsecutiveDays: 0,
+    quotaMode: "none",
     deductsBalance: false,
     allowsRemoteAttendance: true,
     colorTone: "info",
@@ -221,8 +228,24 @@ const LEAVE_TYPES = [
     requiresEvidence: true,
     minLeadDays: 14,
     maxConsecutiveDays: 0,
+    quotaMode: "none",
     deductsBalance: false,
     colorTone: "danger",
+  },
+  {
+    name: "Izin Keperluan Lainnya",
+    description: "Untuk keperluan yang tidak ada di daftar. Tuliskan keperluannya; HRD menilai per pengajuan.",
+    quotaMode: "none",
+    quotaDays: 0,
+    accrualMode: "flat",
+    carryOverMaxDays: 0,
+    requiresEvidence: false,
+    minLeadDays: 0,
+    maxConsecutiveDays: 3,
+    deductsBalance: false,
+    isOther: true,
+    sortOrder: 900,
+    colorTone: "neutral",
   },
 ];
 
@@ -313,6 +336,14 @@ async function seed() {
       { name: lt.name },
       { $setOnInsert: lt },
       { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  }
+  // Types created before quota modes existed: give them the mode they were
+  // seeded with, without touching anything an operator configured since.
+  for (const lt of LEAVE_TYPES) {
+    await LeaveType.updateOne(
+      { name: lt.name, quotaMode: { $exists: false } },
+      { $set: { quotaMode: lt.quotaMode, ...(lt.quotaMode === "per_event" ? { maxConsecutiveDays: lt.quotaDays } : {}) } }
     );
   }
   log(`${LEAVE_TYPES.length} jenis izin/cuti`);

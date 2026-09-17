@@ -5,6 +5,7 @@ import {
   requireUser,
   requireEmployee,
   parseBody,
+  pagination,
   enforceRateLimit,
   BadRequest,
   Conflict,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/time";
 import { attachmentInputSchema } from "@/lib/attachments";
 import { attachmentRefHref, resolveSingleAttachment } from "@/lib/uploads";
+import { describeQuota, perRequestLimit, quotaModeOf } from "@/lib/hr/leave-policy";
 import LeaveType from "@/models/LeaveType";
 import LeaveBalance from "@/models/LeaveBalance";
 import LeaveRequest from "@/models/LeaveRequest";
@@ -51,7 +53,32 @@ export const GET = wrapRouteHandler(async (req) => {
       // rejected on submit.
       query.$or = [{ genderRestriction: "any" }, { genderRestriction: employee.gender }];
     }
-    const leaveTypes = await LeaveType.find(query).sort({ name: 1 }).lean();
+    const leaveTypes = await LeaveType.find(query).sort({ sortOrder: 1, name: 1 }).lean<Array<Record<string, unknown>>>();
+    // The rule is sent already worded, so the portal and the API never disagree
+    // about what "3 hari" means.
+    const year = new Date().getFullYear();
+    const used = ctx.user.employeeId
+      ? await LeaveRequest.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
+          {
+            $match: {
+              employeeId: new mongoose.Types.ObjectId(ctx.user.employeeId),
+              status: { $in: ["pending", "approved"] },
+              startDate: { $gte: wibStartOfDay(`${year}-01-01`), $lte: wibEndOfDay(`${year}-12-31`) },
+            },
+          },
+          { $group: { _id: "$leaveTypeId", n: { $sum: 1 } } },
+        ])
+      : [];
+    const usedBy = new Map(used.map((u) => [String(u._id), u.n]));
+    return apiSuccess(
+      leaveTypes.map((t) => ({
+        ...t,
+        quotaMode: quotaModeOf(t as never),
+        rule: describeQuota(t as never),
+        eventsThisYear: usedBy.get(String(t._id)) ?? 0,
+      })),
+      "Berhasil memuat jenis izin/cuti"
+    );
     return apiSuccess(leaveTypes, "Berhasil memuat jenis izin/cuti");
   }
 
@@ -62,19 +89,25 @@ export const GET = wrapRouteHandler(async (req) => {
   const year = new Date().getFullYear();
   const balances = await ensureBalances(ctx.user.employeeId, year);
 
-  const history = await LeaveRequest.find({ employeeId: ctx.user.employeeId })
-    .populate("leaveTypeId", "name colorTone")
-    .populate({ path: "approvalInstanceId", select: "status currentStep stepsStatus" })
-    .sort({ createdAt: -1 })
-    .limit(100)
-    .lean();
+  const { page, limit, skip } = pagination(req, 20, 100);
+  const [history, historyTotal] = await Promise.all([
+    LeaveRequest.find({ employeeId: ctx.user.employeeId })
+      .populate("leaveTypeId", "name colorTone")
+      .populate({ path: "approvalInstanceId", select: "status currentStep stepsStatus" })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    LeaveRequest.countDocuments({ employeeId: ctx.user.employeeId }),
+  ]);
+  const pendingCount = await LeaveRequest.countDocuments({ employeeId: ctx.user.employeeId, status: "pending" });
 
   // Stored keys are not openable URLs; each attachment gets a signed link.
   const withLinks = await Promise.all(
     history.map(async (h) => ({ ...h, evidenceUrl: await attachmentRefHref(h.evidenceUrl as string | undefined) }))
   );
 
-  return apiSuccess({ balances, history: withLinks, year }, "Berhasil memuat data cuti");
+  return apiSuccess({ balances, history: withLinks, year, pendingCount }, "Berhasil memuat data cuti", { page, limit, total: historyTotal });
 });
 
 /**
@@ -85,12 +118,16 @@ export const GET = wrapRouteHandler(async (req) => {
  * ignored (it always granted the full annual quota).
  */
 async function ensureBalances(employeeId: string, year: number) {
-  const [types, employee] = await Promise.all([
+  const [allTypes, employee] = await Promise.all([
     LeaveType.find({ isActive: { $ne: false } }).lean<
-      Array<{ _id: mongoose.Types.ObjectId; name: string; quotaDays: number; accrualMode: string; deductsBalance: boolean }>
+      Array<{ _id: mongoose.Types.ObjectId; name: string; quotaDays: number; accrualMode: string; deductsBalance: boolean; quotaMode?: "annual" | "per_event" | "none" }>
     >(),
     Employee.findById(employeeId).select("joinDate").lean<{ joinDate?: Date } | null>(),
   ]);
+
+  // Only yearly-balance types have a balance. A per-occurrence type showing
+  // "3 of 3 days left" invited exactly the misreading this rule set removes.
+  const types = allTypes.filter((t) => quotaModeOf(t) === "annual");
 
   const existing = await LeaveBalance.find({ employeeId, year }).lean<
     Array<{ leaveTypeId: mongoose.Types.ObjectId }>
@@ -141,6 +178,8 @@ const createSchema = z.object({
   attachment: attachmentInputSchema.optional(),
   /** Inline data URL; still accepted from older app versions. */
   evidence: z.string().optional(),
+  /** Required for an "other" type: what the leave is for. */
+  customPurpose: z.string().trim().max(120).optional(),
 });
 
 export const POST = wrapRouteHandler(async (req) => {
@@ -185,10 +224,35 @@ export const POST = wrapRouteHandler(async (req) => {
       "Rentang tanggal yang dipilih seluruhnya jatuh pada akhir pekan atau hari libur nasional, sehingga tidak perlu mengajukan cuti."
     );
   }
-  if (leaveType.maxConsecutiveDays > 0 && breakdown.chargedDays > leaveType.maxConsecutiveDays) {
+  const quotaMode = quotaModeOf(leaveType);
+  const limit = perRequestLimit(leaveType);
+  if (limit > 0 && breakdown.chargedDays > limit) {
     throw BadRequest(
-      `"${leaveType.name}" maksimal ${leaveType.maxConsecutiveDays} hari per pengajuan. Anda mengajukan ${breakdown.chargedDays} hari.`
+      quotaMode === "per_event"
+        ? `"${leaveType.name}" maksimal ${limit} hari setiap kali terjadi. Anda mengajukan ${breakdown.chargedDays} hari. ` +
+            "Bila peristiwanya terjadi lagi di lain waktu, ajukan sebagai pengajuan terpisah."
+        : `"${leaveType.name}" maksimal ${limit} hari per pengajuan. Anda mengajukan ${breakdown.chargedDays} hari.`
     );
+  }
+
+  if (quotaMode === "per_event" && leaveType.maxEventsPerYear > 0) {
+    const year = Number(startKey.slice(0, 4));
+    const taken = await LeaveRequest.countDocuments({
+      employeeId: ctx.employeeId,
+      leaveTypeId: leaveType._id,
+      status: { $in: ["pending", "approved"] },
+      startDate: { $gte: wibStartOfDay(`${year}-01-01`), $lte: wibEndOfDay(`${year}-12-31`) },
+    });
+    if (taken >= leaveType.maxEventsPerYear) {
+      throw Conflict(
+        `"${leaveType.name}" dapat diajukan ${leaveType.maxEventsPerYear} kali per tahun dan sudah terpakai ${taken} kali di ${year}. ` +
+          "Hubungi HRD bila ada keadaan khusus."
+      );
+    }
+  }
+
+  if (leaveType.isOther && (body.customPurpose ?? "").length < 3) {
+    throw BadRequest("Tuliskan keperluan izin Anda, misalnya \"Mengurus dokumen kependudukan\".");
   }
 
   /* --- overlap ------------------------------------------------------ */
@@ -234,7 +298,7 @@ export const POST = wrapRouteHandler(async (req) => {
   await ensureBalances(ctx.employeeId, year);
 
   let balance = null;
-  if (leaveType.deductsBalance) {
+  if (quotaMode === "annual") {
     // A conditional update is the atomic reservation: it only succeeds when the
     // balance is still sufficient, so two concurrent submissions cannot both
     // spend the last day.
@@ -273,11 +337,13 @@ export const POST = wrapRouteHandler(async (req) => {
       chargedDays: breakdown.chargedDays,
       calendarDays: breakdown.calendarDays,
       reason: body.reason.trim(),
+      customPurpose: leaveType.isOther ? body.customPurpose : "",
       evidenceUrl: evidenceKey,
       status: "pending",
     });
 
-    const summary = `${leaveType.name} ${formatDate(startKey)} – ${formatDate(endKey)} (${breakdown.chargedDays} hari)`;
+    const typeLabel = leaveType.isOther && body.customPurpose ? `${leaveType.name}: ${body.customPurpose}` : leaveType.name;
+    const summary = `${typeLabel} ${formatDate(startKey)} – ${formatDate(endKey)} (${breakdown.chargedDays} hari)`;
     const instanceId = await createApprovalInstance({
       refType: "leave",
       refId: leaveReq._id as mongoose.Types.ObjectId,
@@ -360,8 +426,8 @@ export const DELETE = wrapRouteHandler(async (req) => {
   leaveReq.status = "cancelled";
   await leaveReq.save();
 
-  const leaveType = await LeaveType.findById(leaveReq.leaveTypeId).lean<{ deductsBalance?: boolean } | null>();
-  if (leaveType?.deductsBalance !== false) {
+  const leaveType = await LeaveType.findById(leaveReq.leaveTypeId).lean<{ deductsBalance?: boolean; quotaMode?: "annual" | "per_event" | "none"; quotaDays: number } | null>();
+  if (!leaveType || quotaModeOf(leaveType) === "annual") {
     await LeaveBalance.updateOne(
       {
         employeeId: ctx.employeeId,

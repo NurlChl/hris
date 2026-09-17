@@ -5,7 +5,9 @@ import {
   Building2,
   BookOpen,
   CalendarClock,
+  CalendarHeart,
   CalendarOff,
+  FileSignature,
   LayoutDashboard,
   Megaphone,
   MessageSquareWarning,
@@ -50,6 +52,12 @@ const sections: NavSection[] = [
         roles: ["SUPERADMIN", "HRD", "AUDIT", "DIREKSI"],
       },
       {
+        name: "Kontrak Kerja",
+        href: "/admin/contracts",
+        icon: FileSignature,
+        roles: ["SUPERADMIN", "HRD", "AUDIT", "DIREKSI"],
+      },
+      {
         name: "Jadwal & Shift",
         href: "/admin/schedules",
         icon: CalendarClock,
@@ -90,6 +98,12 @@ const sections: NavSection[] = [
         name: "Divisi & Jabatan",
         href: "/admin/departments",
         icon: Network,
+        roles: ["SUPERADMIN", "HRD"],
+      },
+      {
+        name: "Jenis Izin & Cuti",
+        href: "/admin/leave-types",
+        icon: CalendarHeart,
         roles: ["SUPERADMIN", "HRD"],
       },
       {

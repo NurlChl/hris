@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Pagination } from "@/components/ui/Pagination";
 import { 
   Package, Search, Plus, Edit, Loader2, ClipboardCheck, ArrowUpRight, 
   Trash2, ShieldAlert, X, UserPlus, CheckCircle, RefreshCcw 
@@ -43,6 +44,9 @@ export default function InventoryAdminPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [total, setTotal] = useState(0);
   const [categoryFilter, setCategoryFilter] = useState("");
 
   // Modals state
@@ -89,10 +93,14 @@ export default function InventoryAdminPage() {
   const fetchAssets = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/v1/inventory");
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (searchQuery.trim()) params.set("q", searchQuery.trim());
+      if (categoryFilter) params.set("category", categoryFilter);
+      const res = await fetch(`/api/v1/inventory?${params}`);
       const data = await res.json();
       if (data.success) {
         setAssets(data.data || []);
+        setTotal(data.meta?.total ?? 0);
       }
     } catch (err) {
       console.error("Gagal memuat aset:", err);
@@ -114,10 +122,17 @@ export default function InventoryAdminPage() {
   };
 
   useEffect(() => {
-    fetchAssets();
     fetchEmployees();
     fetchCategories();
   }, []);
+
+  // Assets reload from the server whenever the page or filters change; search
+  // waits for a pause in typing.
+  useEffect(() => {
+    const t = window.setTimeout(() => void fetchAssets(), searchQuery ? 350 : 0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, limit, searchQuery, categoryFilter]);
 
   const handleOpenForm = (asset: InventoryAsset | null = null) => {
     setErrorMsg("");
@@ -256,13 +271,21 @@ export default function InventoryAdminPage() {
     }
   };
 
-  const handleScanSearch = (e: React.FormEvent) => {
+  const handleScanSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     setScanError("");
     const code = scanInputCode.trim();
     if (!code) return;
 
-    const found = assets.find(a => a.code.toLowerCase() === code.toLowerCase());
+    // Looked up on the server: the asset may be on a page that is not loaded.
+    let found: InventoryAsset | undefined;
+    try {
+      const res = await fetch(`/api/v1/inventory?code=${encodeURIComponent(code)}&limit=1`);
+      const data = await res.json();
+      found = data.success ? (data.data?.[0] as InventoryAsset | undefined) : undefined;
+    } catch {
+      found = undefined;
+    }
     if (found) {
       playBeep();
       setAuditAsset(found);
@@ -311,12 +334,7 @@ export default function InventoryAdminPage() {
     }
   };
 
-  const filteredAssets = assets.filter(asset => {
-    const matchesSearch = asset.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          asset.code.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = categoryFilter ? asset.category === categoryFilter : true;
-    return matchesSearch && matchesCategory;
-  });
+  const filteredAssets = assets;
 
   return (
     <div className="space-y-6">
@@ -363,7 +381,10 @@ export default function InventoryAdminPage() {
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setPage(1);
+              }}
               placeholder="Cari MacBook, AST-LAP-001..."
               className="w-full pl-9 pr-4 py-2 rounded-lg bg-surface-2 border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary dark:focus:ring-white text-label placeholder:text-subtle"
             />
@@ -374,7 +395,10 @@ export default function InventoryAdminPage() {
           <label className="text-caption font-semibold text-foreground uppercase tracking-wider block mb-1.5">Saring Kategori</label>
           <Select
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            onChange={(e) => {
+              setCategoryFilter(e.target.value);
+              setPage(1);
+            }}
             className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-line text-foreground dark:text-foreground focus:outline-none focus:ring-1 focus:ring-primary dark:focus:ring-white text-label"
           >
             <option value="">Semua Kategori</option>
@@ -495,6 +519,20 @@ export default function InventoryAdminPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {total > 0 && (
+        <Pagination
+          page={page}
+          totalPages={Math.max(1, Math.ceil(total / limit))}
+          total={total}
+          limit={limit}
+          onPage={setPage}
+          onLimit={(l) => {
+            setLimit(l);
+            setPage(1);
+          }}
+        />
       )}
 
       {/* Asset Form Drawer Modal */}

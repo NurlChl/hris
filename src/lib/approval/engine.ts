@@ -85,9 +85,12 @@ export async function createApprovalInstance({
   await connectToDatabase();
   const steps = await getFlowSteps(refType);
 
+  const requester = await Employee.findById(employeeId).select("divisionId").lean<{ divisionId?: mongoose.Types.ObjectId } | null>();
   const instance = await ApprovalInstance.create({
     refType,
     refId,
+    employeeId,
+    divisionId: requester?.divisionId ?? null,
     currentStep: steps[0]?.stepNumber ?? 1,
     status: "pending",
     stepsStatus: steps.map((s) => ({

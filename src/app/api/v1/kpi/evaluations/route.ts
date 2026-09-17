@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attachmentRefHref } from "@/lib/uploads";
 import mongoose from "mongoose";
 import { wrapRouteHandler, apiSuccess } from "@/lib/api";
 import { getSettings } from "@/lib/settings";
@@ -96,7 +97,10 @@ export const GET = wrapRouteHandler(async (req) => {
       logoHeight: template?.logoHeight ?? 14,
     };
 
-    return apiSuccess({ ...evaluation, branding }, "Berhasil memuat penilaian");
+    return apiSuccess(
+      { ...evaluation, uploadedFile: await attachmentRefHref(evaluation.uploadedFile as string | undefined), branding },
+      "Berhasil memuat penilaian"
+    );
   }
 
   /* --- list --- */
@@ -140,11 +144,14 @@ export const GET = wrapRouteHandler(async (req) => {
       .sort({ period: -1, updatedAt: -1 })
       .skip(skip)
       .limit(limit)
-      .lean(),
+      .lean<Array<Record<string, unknown>>>(),
     KpiEvaluation.countDocuments(filter),
   ]);
 
-  return apiSuccess(items, "Berhasil memuat daftar penilaian", { page, limit, total });
+  const withFiles = await Promise.all(
+    items.map(async (it) => (it.uploadedFile ? { ...it, uploadedFile: await attachmentRefHref(it.uploadedFile as string) } : it))
+  );
+  return apiSuccess(withFiles, "Berhasil memuat daftar penilaian", { page, limit, total });
 });
 
 /* ------------------------------------------------------------------ */
@@ -339,7 +346,7 @@ export const POST = wrapRouteHandler(async (req) => {
 
 const actionSchema = z.object({
   id: objectId,
-  action: z.enum(["acknowledge", "return", "finalize"]),
+  action: z.enum(["acknowledge", "return", "finalize", "share"]),
   comment: z.string().trim().max(2000).optional(),
 });
 
@@ -405,6 +412,23 @@ export const PATCH = wrapRouteHandler(async (req) => {
     );
   }
 
+  /* --- share an uploaded draft with the employee --- */
+  if (body.action === "share") {
+    if (!perm.allowed) throw Forbidden("Anda tidak memiliki izin mengubah penilaian.");
+    if (evaluation.status !== "draft") throw Conflict("Penilaian ini sudah dibagikan.");
+    evaluation.status = "submitted";
+    evaluation.submittedAt = new Date();
+    await evaluation.save();
+    const recipients = await resolveRecipientForEmployee(evaluation.employeeId);
+    void notifyUsers(recipients, {
+      kind: "system",
+      title: `Hasil penilaian kinerja ${evaluation.period} sudah tersedia`,
+      body: `${evaluation.title || "Penilaian kinerja"}. Buka dokumennya dan berikan tanggapan Anda.`,
+      href: "/portal/kpi",
+    });
+    return apiSuccess({ id: evaluation._id, status: "submitted" }, "Penilaian dibagikan ke karyawan.");
+  }
+
   /* --- evaluator pulls it back --- */
   if (body.action === "return") {
     if (!perm.allowed) throw Forbidden("Anda tidak memiliki izin mengubah penilaian.");
@@ -442,7 +466,10 @@ export const PATCH = wrapRouteHandler(async (req) => {
   void notifyUsers(recipients, {
     kind: "system",
     title: `Penilaian kinerja ${evaluation.period} telah final`,
-    body: `Nilai akhir Anda ${evaluation.finalScore} (${evaluation.gradeLabel}). Dokumen dapat diunduh dari portal.`,
+    body:
+      evaluation.source === "uploaded" && !evaluation.finalScore
+        ? "Dokumen penilaian Anda sudah final dan dapat dibuka dari portal."
+        : `Nilai akhir Anda ${evaluation.finalScore}${evaluation.gradeLabel ? ` (${evaluation.gradeLabel})` : ""}. Dokumen dapat diunduh dari portal.`,
     href: "/portal/kpi",
   });
 

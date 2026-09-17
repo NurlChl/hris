@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { Pagination } from "@/components/ui/Pagination";
 import { CreditCard, FileText, Printer, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import {
@@ -41,6 +42,9 @@ interface Payroll {
   fileUrl: string;
   generatedAt?: string;
   status: string;
+  source?: "generated" | "uploaded";
+  uploadedFile?: string;
+  uploadedFileName?: string;
 }
 
 export default function PortalPayrollPage() {
@@ -48,24 +52,28 @@ export default function PortalPayrollPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<Payroll | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const limit = 12;
 
   const load = useCallback(async () => {
     setError("");
     try {
-      const res = await api.get<Payroll[]>("/api/v1/payroll");
+      const res = await api.get<Payroll[]>(`/api/v1/payroll?page=${page}&limit=${limit}`);
       setItems(res.data ?? []);
+      setTotal(res.meta?.total ?? 0);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const latest = items[0];
+  const latest = page === 1 ? items[0] : undefined;
 
   if (loading) {
     return (
@@ -97,7 +105,7 @@ export default function PortalPayrollPage() {
         </Card>
       ) : (
         <>
-          {latest && (
+          {latest && latest.source !== "uploaded" && (
             <section>
               <h2 className="eyebrow mb-3">
                 Periode terakhir — {formatPeriod(latest.period)}
@@ -142,7 +150,7 @@ export default function PortalPayrollPage() {
           <Card>
             <CardHeader
               title="Riwayat slip gaji"
-              description={`${items.length} periode tersedia.`}
+              description={`${total} periode tersedia.`}
               icon={FileText}
             />
             <CardBody className="p-0">
@@ -158,22 +166,37 @@ export default function PortalPayrollPage() {
                         Diterbitkan {formatDateTime(p.generatedAt)}
                       </p>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-body font-semibold tabular-nums">{formatRupiah(p.netSalary)}</span>
-                      <Button variant="secondary" size="sm" onClick={() => setDetail(p)}>
-                        Rincian
-                      </Button>
-                      <Link href={`/print/payslip/${p._id}`} target="_blank">
-                        <Button variant="ghost" size="sm" icon={Printer}>
-                          Cetak / PDF
+                    {p.source === "uploaded" ? (
+                      <div className="flex items-center gap-3 shrink-0">
+                        {p.netSalary > 0 && <span className="text-body font-semibold tabular-nums">{formatRupiah(p.netSalary)}</span>}
+                        <a href={p.uploadedFile} target="_blank" rel="noreferrer">
+                          <Button variant="secondary" size="sm" icon={FileText}>
+                            Buka slip (PDF)
+                          </Button>
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-body font-semibold tabular-nums">{formatRupiah(p.netSalary)}</span>
+                        <Button variant="secondary" size="sm" onClick={() => setDetail(p)}>
+                          Rincian
                         </Button>
-                      </Link>
-                    </div>
+                        <Link href={`/print/payslip/${p._id}`} target="_blank">
+                          <Button variant="ghost" size="sm" icon={Printer}>
+                            Cetak / PDF
+                          </Button>
+                        </Link>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
             </CardBody>
           </Card>
+
+          {total > limit && (
+            <Pagination page={page} totalPages={Math.ceil(total / limit)} total={total} limit={limit} onPage={setPage} />
+          )}
 
           <Alert tone="info" title="Tentang kerahasiaan slip gaji">
             <span className="flex items-start gap-1.5">

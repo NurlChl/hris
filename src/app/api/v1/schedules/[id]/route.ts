@@ -1,43 +1,41 @@
-import { auth } from "@/auth";
-import { wrapRouteHandler, apiSuccess, apiError } from "@/lib/api";
-import { checkPermission } from "@/lib/rbac";
+import { wrapRouteHandler, apiSuccess, type RouteContext } from "@/lib/api";
+import { requirePermission, BadRequest, Conflict, NotFound } from "@/lib/guard";
 import { logActivity } from "@/lib/audit/logger";
 import WorkSchedule from "@/models/WorkSchedule";
-import { connectToDatabase } from "@/lib/db";
+import EmployeeSchedule from "@/models/EmployeeSchedule";
+import Employee from "@/models/Employee";
 
-export const DELETE = wrapRouteHandler(async (req, { params }) => {
-  const session = await auth();
-  if (!session?.user) {
-    return apiError("UNAUTHORIZED", "Anda harus login untuk melakukan aksi ini", null, 401);
-  }
+type Ctx = RouteContext<{ id: string }>;
 
-  const perm = await checkPermission(session.user.id, "attendance", "write");
-  if (!perm.allowed) {
-    return apiError("FORBIDDEN", "Anda tidak memiliki izin untuk menghapus jadwal", null, 403);
-  }
-
+/** Deletes a shift template that nobody uses any more. */
+export const DELETE = wrapRouteHandler<Ctx>(async (req, { params }) => {
+  const ctx = await requirePermission(req, "attendance", "write");
   const { id } = await params;
-  if (!id) {
-    return apiError("BAD_REQUEST", "ID jadwal wajib disediakan");
-  }
+  if (!/^[0-9a-fA-F]{24}$/.test(id)) throw BadRequest("ID jadwal tidak valid.");
 
-  await connectToDatabase();
   const schedule = await WorkSchedule.findById(id);
-  if (!schedule) {
-    return apiError("NOT_FOUND", "Template jadwal tidak ditemukan");
+  if (!schedule) throw NotFound("Template jadwal tidak ditemukan.");
+
+  const [employees, overrides] = await Promise.all([
+    Employee.countDocuments({ workScheduleId: id, status: { $ne: "resigned" } }),
+    EmployeeSchedule.countDocuments({ scheduleId: id, date: { $gte: new Date() } }),
+  ]);
+  if (employees || overrides) {
+    throw Conflict(
+      `Template "${schedule.name}" masih dipakai ${employees} karyawan` +
+        (overrides ? ` dan ${overrides} jadwal khusus mendatang` : "") +
+        ". Pindahkan mereka ke template lain lebih dulu."
+    );
   }
 
-  await WorkSchedule.findByIdAndDelete(id);
-
-  await logActivity({
-    userId: session.user.id,
+  await schedule.deleteOne();
+  void logActivity({
+    userId: ctx.user.id,
     action: "DELETE_SCHEDULE_TEMPLATE",
     module: "attendance",
     before: schedule.toObject(),
-    after: null,
-    ip: req.headers.get("x-forwarded-for") || "127.0.0.1",
-    userAgent: req.headers.get("user-agent") || "",
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
   });
-
-  return apiSuccess({ id }, "Berhasil menghapus template jadwal");
+  return apiSuccess({ id }, `Template "${schedule.name}" dihapus.`);
 });

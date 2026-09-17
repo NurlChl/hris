@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { Pagination } from "@/components/ui/Pagination";
 import {
   CalendarDays,
   Check,
@@ -76,7 +77,14 @@ const TYPE_ICON = {
 
 export default function ApprovalsPage() {
   const toast = useToast();
-  const [view, setView] = useState<"inbox" | "history">("inbox");
+  const [view, setViewState] = useState<"inbox" | "history">("inbox");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [total, setTotal] = useState(0);
+  const setView = (v: "inbox" | "history") => {
+    setViewState(v);
+    setPage(1);
+  };
   const [items, setItems] = useState<ApprovalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -90,14 +98,15 @@ export default function ApprovalsPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await api.get<ApprovalItem[]>(`/api/v1/approvals?view=${view}`);
+      const res = await api.get<ApprovalItem[]>(`/api/v1/approvals?view=${view}&page=${page}&limit=${limit}`);
       setItems(res.data ?? []);
+      setTotal(res.meta?.total ?? 0);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [view, page, limit]);
 
   useEffect(() => {
     void load();
@@ -250,6 +259,17 @@ export default function ApprovalsPage() {
               </Card>
             );
           })}
+          <Pagination
+            page={page}
+            totalPages={Math.max(1, Math.ceil(total / limit))}
+            total={total}
+            limit={limit}
+            onPage={setPage}
+            onLimit={(l) => {
+              setLimit(l);
+              setPage(1);
+            }}
+          />
         </div>
       )}
 

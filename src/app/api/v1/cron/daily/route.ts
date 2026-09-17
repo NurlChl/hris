@@ -29,6 +29,7 @@ import HolidaySwapRequest from "@/models/HolidaySwapRequest";
 import Attendance from "@/models/Attendance";
 import Contract from "@/models/Contract";
 import Employee from "@/models/Employee";
+import User from "@/models/User";
 import OvertimeRecord from "@/models/OvertimeRecord";
 import NationalHoliday from "@/models/NationalHoliday";
 
@@ -56,6 +57,7 @@ export const GET = wrapRouteHandler(async (req) => {
     todayKey,
     forfeitedSwaps: await forfeitUnworkedHolidaySwaps(todayKey),
     overtimeFromHolidays: await recordHolidayOvertime(todayKey),
+    endedContracts: await endExpiredContracts(),
     contractReminders: await sendContractReminders(),
     birthdayGreetings: await sendBirthdayGreetings(),
     expiredUploads: await purgeExpiredUploads(),
@@ -210,6 +212,29 @@ async function recordHolidayOvertime(todayKey: string) {
   return { created, holiday: holiday.name };
 }
 
+/**
+ * Moves contracts past their end date to "ended". Where HR decided not to renew
+ * and asked for it, the employee is marked resigned on that date too.
+ */
+async function endExpiredContracts() {
+  const today = wibStartOfDay();
+  const due = await Contract.find({ status: "active", endDate: { $ne: null, $lt: today } })
+    .select("employeeId decision notes nextContractId")
+    .limit(1000)
+    .lean<Array<{ _id: mongoose.Types.ObjectId; employeeId: mongoose.Types.ObjectId; decision: string; notes?: string }>>();
+  let resigned = 0;
+  for (const c of due) {
+    await Contract.updateOne({ _id: c._id, status: "active" }, { $set: { status: "ended" } });
+    if (c.decision === "not_renew" && c.notes?.includes("[auto-resign]")) {
+      await Employee.updateOne({ _id: c.employeeId, status: { $ne: "resigned" } }, { $set: { status: "resigned" } });
+      // Same as HR setting the status by hand: the login closes with it.
+      await User.updateOne({ employeeId: c.employeeId }, { $set: { isActive: false } });
+      resigned++;
+    }
+  }
+  return { ended: due.length, resigned };
+}
+
 /** Notifies employee, supervisor, and HRD ahead of a contract ending. */
 async function sendContractReminders() {
   const windows = [30, 14, 7];
@@ -220,6 +245,9 @@ async function sendContractReminders() {
     const target = new Date(todayStart.getTime() + days * 86_400_000);
     const contracts = await Contract.find({
       status: "active",
+      // Already renewed or decided: nobody needs reminding.
+      decision: "pending",
+      nextContractId: null,
       endDate: { $gte: wibStartOfDay(target), $lte: wibEndOfDay(target) },
     })
       .limit(200)
@@ -249,8 +277,8 @@ async function sendContractReminders() {
         title: `Kontrak ${employee.name} berakhir dalam ${days} hari`,
         body:
           `Kontrak ${contract.type.toUpperCase()} berakhir pada ${formatDate(contract.endDate)}. ` +
-          `Mohon proses evaluasi dan keputusan perpanjangan sebelum tanggal tersebut.`,
-        href: "/admin/employees",
+          `Putuskan diperpanjang, diangkat tetap, atau tidak diperpanjang sebelum tanggal tersebut.`,
+        href: "/admin/contracts?view=expiring",
         refType: "contract",
         refId: contract._id,
       });

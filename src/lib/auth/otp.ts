@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { isInitialPassword } from "@/lib/auth/initial-password";
 import VerificationCode from "@/models/VerificationCode";
 import { connectToDatabase } from "@/lib/db";
 import { randomOtp, sha256, safeEqual } from "@/lib/crypto";
@@ -111,7 +112,7 @@ export async function hashNewPassword(password: string): Promise<string> {
       "Kata sandi harus memuat huruf kecil, huruf besar, dan angka."
     );
   }
-  if (password === String(settings.default_employee_password)) {
+  if (password === String(settings.default_employee_password) || (await isInitialPassword(password))) {
     throw new HttpError(
       400,
       "WEAK_PASSWORD",

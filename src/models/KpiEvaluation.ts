@@ -26,7 +26,13 @@ export type IKpiScore = KpiScoreShape;
 
 export interface IKpiEvaluation extends Document {
   employeeId: mongoose.Types.ObjectId;
-  templateId: mongoose.Types.ObjectId;
+  /** Null for an appraisal supplied as an uploaded PDF. */
+  templateId?: mongoose.Types.ObjectId | null;
+  /** "uploaded" = HR attached a finished appraisal document instead of filling the form. */
+  source: "form" | "uploaded";
+  title: string;
+  uploadedFile: string;
+  uploadedFileName: string;
   /** 2026-07, 2026-Q3, 2026-S1, or 2026 depending on the period type. */
   period: string;
   periodType: string;
@@ -78,7 +84,11 @@ const ScoreSchema = new Schema<KpiScoreShape>(
 const KpiEvaluationSchema = new Schema<IKpiEvaluation>(
   {
     employeeId: { type: Schema.Types.ObjectId, ref: "Employee", required: true, index: true },
-    templateId: { type: Schema.Types.ObjectId, ref: "KpiTemplate", required: true },
+    templateId: { type: Schema.Types.ObjectId, ref: "KpiTemplate", default: null },
+    source: { type: String, enum: ["form", "uploaded"], default: "form" },
+    title: { type: String, default: "" },
+    uploadedFile: { type: String, default: "" },
+    uploadedFileName: { type: String, default: "" },
     period: { type: String, required: true, index: true },
     periodType: { type: String, default: "quarterly" },
     scoreMode: { type: String, default: "scale_5" },

@@ -51,7 +51,12 @@ export const GET = wrapRouteHandler(async (req) => {
     scope.employeeId = { $in: ids.map((e) => e._id) };
   }
 
-  const filter = { ...scope, ...(period ? { period } : {}) };
+  // An uploaded appraisal without a score has nothing to average.
+  const filter = {
+    ...scope,
+    ...(period ? { period } : {}),
+    $nor: [{ source: "uploaded", finalScore: { $in: [0, null] } }],
+  };
 
   const [evaluations, templateCount, activeEmployees, periods] = await Promise.all([
     KpiEvaluation.find(filter)

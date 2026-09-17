@@ -26,15 +26,7 @@ export interface DocChapter {
   sections: DocSection[];
 }
 
-export const ROLE_LABELS: Record<string, string> = {
-  STAFF: "Karyawan",
-  SPV: "Atasan / SPV",
-  HRD: "HRD",
-  AUDIT: "Audit",
-  GA: "GA",
-  DIREKSI: "Direksi",
-  SUPERADMIN: "Superadmin",
-};
+export { ROLE_LABELS } from "./roles";
 
 export const CHAPTERS: DocChapter[] = [
   /* ================================================================ */
@@ -51,7 +43,27 @@ export const CHAPTERS: DocChapter[] = [
           {
             type: "p",
             text:
-              "HRIS ini terdiri dari dua ruang kerja. Portal Karyawan dipakai setiap orang untuk urusan dirinya sendiri: absen, cuti, tukar libur, slip gaji, inventaris, dan pengaduan. Panel Admin dipakai HRD, atasan, dan manajemen untuk mengelola data, menyetujui pengajuan, serta mengatur aturan yang berlaku di seluruh sistem.",
+              "HRIS dipakai setiap karyawan untuk urusan dirinya sendiri: absen, cuti, tukar libur, slip gaji, penilaian kinerja, inventaris, dan pengaduan. Panduan ini hanya memuat menu yang bisa Anda gunakan sesuai peran akun Anda.",
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Semua waktu dalam WIB",
+            text:
+              "Jam masuk, batas keterlambatan, dan tanggal pengajuan dihitung memakai zona waktu Asia/Jakarta, bukan jam perangkat Anda. Karyawan di zona waktu lain tetap dinilai dengan patokan yang sama.",
+          },
+        ],
+      },
+      {
+        id: "peran-akses",
+        title: "Peran dan ruang kerja",
+        summary: "Siapa memakai bagian yang mana, dan cara masuk ke panel pengelola.",
+        audience: ["SUPERADMIN"],
+        blocks: [
+          {
+            type: "p",
+            text:
+              "Ada dua ruang kerja. Portal Karyawan untuk urusan pribadi setiap orang, dan panel pengelola untuk HRD, atasan, dan manajemen. Alamat login panel pengelola sengaja tidak ditautkan dari halaman mana pun; bagikan alamatnya langsung kepada pengelola yang berhak. Membuka alamat panel tanpa login diarahkan ke login karyawan, bukan ke login pengelola.",
           },
           {
             type: "table",
@@ -66,13 +78,6 @@ export const CHAPTERS: DocChapter[] = [
               ["Superadmin", "Admin", "Seluruh konfigurasi sistem, peran, dan hak akses"],
             ],
           },
-          {
-            type: "note",
-            tone: "info",
-            title: "Semua waktu dalam WIB",
-            text:
-              "Jam masuk, batas keterlambatan, dan tanggal pengajuan dihitung memakai zona waktu Asia/Jakarta, bukan jam perangkat Anda. Karyawan di zona waktu lain tetap dinilai dengan patokan yang sama.",
-          },
         ],
       },
       {
@@ -84,7 +89,7 @@ export const CHAPTERS: DocChapter[] = [
           {
             type: "steps",
             items: [
-              "Buka halaman utama, lalu pilih Portal Karyawan. Administrator memakai tautan Masuk lewat panel admin.",
+              "Buka halaman utama, lalu tekan Masuk.",
               "Masukkan email kantor dan kata sandi awal yang diberikan HRD.",
               "Pada login pertama, sistem mengarahkan Anda ke halaman Profil & Keamanan untuk mengganti kata sandi. Menu lain terkunci sampai langkah ini selesai.",
               "Klik Kirim kode verifikasi, buka email Anda, lalu masukkan kode 6 angka bersama kata sandi lama dan kata sandi baru.",
@@ -137,7 +142,7 @@ export const CHAPTERS: DocChapter[] = [
             tone: "info",
             title: "Email dan WhatsApp",
             text:
-              "Superadmin dapat menyalakan pengiriman yang sama lewat email atau WhatsApp di Pengaturan → Notifikasi. Pemberitahuan yang sangat sering, seperti pelamar baru, hanya dikirim di aplikasi. Pengingat terjadwal dikirim sekali per hari.",
+              "Bila perusahaan menyalakannya, notifikasi yang sama juga dikirim lewat email atau WhatsApp. Pemberitahuan yang sangat sering, seperti pelamar baru, hanya dikirim di aplikasi. Pengingat terjadwal dikirim sekali per hari.",
           },
         ],
       },
@@ -253,21 +258,61 @@ export const CHAPTERS: DocChapter[] = [
       {
         id: "jadwal",
         title: "Jadwal kerja dan keterlambatan",
-        summary: "Bagaimana sistem menentukan Anda terlambat atau tidak.",
+        summary: "Dari mana jam kerja Anda berasal dan bagaimana sistem menentukan terlambat.",
         audience: [],
         blocks: [
           {
             type: "p",
             text:
-              "Sistem membandingkan jam absen masuk Anda dengan jadwal yang berlaku hari itu. Jadwal diambil dengan urutan: jadwal shift yang ditugaskan khusus untuk Anda pada tanggal tersebut, lalu jam operasional cabang penempatan Anda sebagai cadangan.",
+              "Sistem membandingkan jam absen masuk Anda dengan jadwal yang berlaku hari itu. Jadwal bisa berbeda per hari, misalnya Senin–Kamis 08.00–17.00, Jumat 08.00–16.00, dan Sabtu 08.00–13.00.",
+          },
+          {
+            type: "table",
+            head: ["Urutan", "Sumber jadwal", "Contoh"],
+            rows: [
+              ["1", "Jadwal khusus tanggal", "Tukar shift atau libur pengganti yang diatur HRD/atasan untuk tanggal tertentu"],
+              ["2", "Template shift Anda", "Jam per hari dari template mingguan yang dipasang ke Anda; hari yang tidak aktif adalah hari libur"],
+              ["3", "Jam operasional cabang", "Dipakai bila Anda belum punya template"],
+            ],
           },
           {
             type: "list",
             items: [
-              "Toleransi keterlambatan diatur HRD dan bisa berbeda per jadwal kerja.",
+              "Toleransi keterlambatan diatur per template shift.",
               "Toleransi hanya menentukan apakah Anda ditandai terlambat. Menit keterlambatan tetap dihitung dari jam jadwal, bukan dari akhir masa toleransi.",
-              "Jam jadwal yang berlaku disimpan bersama catatan presensi, sehingga perubahan roster di kemudian hari tidak mengubah riwayat lama.",
+              "Pada hari libur menurut jadwal, absen tetap bisa dilakukan tetapi tidak pernah dihitung terlambat atau pulang lebih awal.",
+              "Shift malam yang berakhir setelah tengah malam (misalnya 23.00–07.00) dihitung sampai jam pulang di hari berikutnya.",
+              "Jam jadwal yang berlaku disimpan bersama catatan presensi, sehingga perubahan jadwal di kemudian hari tidak mengubah riwayat lama.",
             ],
+          },
+        ],
+      },
+      {
+        id: "atur-jadwal",
+        title: "Mengatur shift dan jadwal karyawan",
+        summary: "Template shift dengan jam berbeda per hari, memasangnya ke karyawan, dan jadwal khusus tanggal.",
+        audience: ["HRD", "SPV", "SUPERADMIN"],
+        blocks: [
+          {
+            type: "p",
+            text:
+              "Menu Jadwal & Shift punya tiga tab yang saling terhubung. Template shift menentukan jam per hari; Jadwal karyawan menentukan template mana yang dipakai setiap orang; Jadwal khusus tanggal mengganti jadwal pada tanggal tertentu tanpa mengubah template. Saat karyawan absen, sistem memakai jadwal khusus bila ada, lalu template karyawan, lalu jam operasional cabang.",
+          },
+          {
+            type: "steps",
+            items: [
+              "Tab Template shift → Buat template. Beri nama, isi toleransi terlambat, lalu atur setiap hari: centang hari kerja, isi jam masuk, pulang, dan istirahat. Gunakan Salin ke hari aktif lain bila jamnya sama.",
+              "Tab Jadwal karyawan → centang karyawan (bisa banyak sekaligus), pilih template di bar yang muncul, lalu Terapkan.",
+              "Tekan 14 hari pada baris karyawan untuk melihat jadwal yang benar-benar akan dipakai saat absen, lengkap dengan sumbernya.",
+              "Tab Jadwal khusus tanggal → Tambah jadwal khusus untuk tukar shift, lembur di hari libur, atau libur pengganti. Pilih karyawan, rentang tanggal, lalu pilih shift atau tandai sebagai libur.",
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Mengubah template",
+            text:
+              "Perubahan template berlaku untuk absen berikutnya bagi semua pemakainya. Riwayat presensi yang sudah tercatat tidak berubah. Template yang masih dipakai karyawan tidak bisa dihapus.",
           },
         ],
       },
@@ -433,9 +478,19 @@ export const CHAPTERS: DocChapter[] = [
             type: "steps",
             items: [
               "Buka menu Izin & Cuti lalu tekan Ajukan izin / cuti.",
-              "Pilih jenisnya. Kotak informasi akan menampilkan sisa saldo, batas H- pengajuan, dan apakah bukti diperlukan.",
+              "Pilih jenisnya. Kotak informasi menjelaskan aturan kuota jenis itu, sisa saldo bila ada, batas H- pengajuan, dan apakah bukti diperlukan.",
+              "Untuk Izin Keperluan Lainnya, tuliskan keperluannya di kolom Keperluan.",
               "Pilih tanggal mulai dan selesai. Kalender otomatis membatasi tanggal yang melanggar aturan H-.",
               "Tulis alasan minimal 10 karakter, lampirkan bukti bila diminta (unggah foto/PDF atau tempel tautan Google Drive), lalu kirim.",
+            ],
+          },
+          {
+            type: "table",
+            head: ["Jenis kuota", "Artinya", "Contoh"],
+            rows: [
+              ["Saldo tahunan", "Jatah hari per tahun yang berkurang setiap dipakai", "Cuti tahunan 12 hari"],
+              ["Per kejadian", "Batas hari untuk setiap peristiwa, tidak memotong saldo tahunan. Bila peristiwanya terjadi lagi, ajukan lagi", "Izin menikah 3 hari, keluarga meninggal 3 hari"],
+              ["Tanpa kuota", "Tidak ada jatah, hanya batas hari per pengajuan bila ada", "Sakit dengan surat dokter, WFH, keperluan lain"],
             ],
           },
           {
@@ -471,6 +526,39 @@ export const CHAPTERS: DocChapter[] = [
             type: "p",
             text:
               "Pengajuan dapat dibatalkan sendiri selama belum ada satu pun approver yang menekan tombol setuju atau tolak. Setelah proses berjalan, pembatalan harus lewat HRD agar jejak persetujuannya tetap utuh.",
+          },
+        ],
+      },
+      {
+        id: "jenis-cuti",
+        title: "Mengatur jenis izin dan cuti",
+        summary: "Menambah jenis, memilih cara menghitung kuota, dan izin untuk keperluan lain.",
+        audience: ["HRD", "SUPERADMIN"],
+        blocks: [
+          {
+            type: "steps",
+            items: [
+              "Buka Master Data → Jenis Izin & Cuti, lalu tekan Tambah jenis atau ikon pensil pada jenis yang ada.",
+              "Pilih cara menghitung kuota: Saldo tahunan, Per kejadian, atau Tanpa kuota.",
+              "Isi jumlah harinya. Untuk Per kejadian, isi juga batas kejadian per tahun bila perlu (0 = tidak dibatasi).",
+              "Atur batas H- pengajuan, wajib bukti, khusus jenis kelamin tertentu, dan boleh absen di luar radius kantor.",
+              "Nyalakan Keperluan ditulis karyawan untuk jenis serba guna seperti Izin Keperluan Lainnya.",
+              "Periksa kotak Yang dilihat karyawan: itulah kalimat aturan yang muncul di formulir pengajuan.",
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Izin menikah atau duka yang terjadi lebih dari sekali",
+            text:
+              "Gunakan Per kejadian. Batas hari berlaku untuk setiap peristiwa, bukan per bulan atau per tahun, sehingga karyawan dapat mengajukan lagi bila peristiwanya terjadi lagi. Isi batas kejadian per tahun hanya bila perusahaan memang membatasinya.",
+          },
+          {
+            type: "note",
+            tone: "warning",
+            title: "Mengubah cara hitung",
+            text:
+              "Cara hitung tidak bisa diubah selama masih ada pengajuan jenis itu yang menunggu persetujuan, agar saldo yang sudah ditahan tidak salah dikembalikan. Jenis yang pernah dipakai dinonaktifkan, bukan dihapus.",
           },
         ],
       },
@@ -601,32 +689,75 @@ export const CHAPTERS: DocChapter[] = [
       {
         id: "generate-payroll",
         title: "Menerbitkan slip gaji",
-        summary: "Proses generate periode dan arti mode draf.",
+        summary: "Menghitung, meninjau sebagai draf, menerbitkan, dan mengunggah slip PDF.",
         audience: ["HRD", "SUPERADMIN"],
         blocks: [
           {
             type: "steps",
             items: [
-              "Pastikan tarif potongan dan lembur di Pengaturan → Payroll sudah sesuai kebijakan berjalan.",
-              "Pastikan data presensi bulan tersebut sudah final, termasuk koreksi absen yang disetujui.",
-              "Buka menu Slip Gaji, pilih periode, lalu pilih karyawan yang akan diproses.",
-              "Jalankan dalam mode draf lebih dulu bila angkanya perlu ditinjau Finance. Draf tidak terlihat oleh karyawan.",
-              "Setelah yakin, terbitkan. Karyawan menerima notifikasi otomatis.",
+              "Pastikan tarif potongan dan lembur di Pengaturan → Payroll sudah sesuai, dan data presensi bulan itu sudah final.",
+              "Buka Slip Gaji dan pilih periode. Karyawan yang belum punya slip tampil di kiri.",
+              "Tekan Atur pada karyawan yang punya bonus, potongan, atau capaian target bulan ini (lihat bagian Komponen gaji). Hasil hitungnya terlihat langsung di sisi kanan jendela.",
+              "Centang karyawan, biarkan Simpan sebagai draf dulu menyala, lalu tekan Hitung.",
+              "Periksa draf: tekan nama karyawan untuk rincian. Bila ada yang salah, tekan Atur lalu Hitung ulang.",
+              "Tekan Terbitkan per baris atau Terbitkan semua draf. Karyawan menerima notifikasi.",
             ],
+          },
+          {
+            type: "p",
+            text:
+              "Slip yang dibuat di luar sistem, misalnya dari software akuntansi, dapat diunggah per karyawan lewat Unggah slip PDF. Karyawan membuka berkas itu di portal. Periode yang memakai slip unggahan tidak ikut dihitung otomatis agar tidak tertimpa.",
           },
           {
             type: "note",
             tone: "warning",
             title: "Slip yang sudah terbit tidak bisa dihapus",
             text:
-              "Demi jejak audit, slip berstatus terbit hanya bisa direvisi dengan menghasilkan ulang periode yang sama, bukan dihapus. Hanya draf yang dapat dihapus.",
+              "Demi jejak audit, slip berstatus terbit hanya bisa direvisi dengan Hitung ulang, bukan dihapus. Hanya draf yang dapat dihapus.",
           },
           {
             type: "note",
             tone: "info",
             title: "Bila ada karyawan yang gagal diproses",
             text:
-              "Daftar kegagalan muncul di bawah formulir beserta alasannya, satu baris per karyawan. Penyebab paling sering adalah karyawan belum punya kontrak aktif bernominal gaji sementara Gaji pokok default di Pengaturan juga masih nol. Perbaiki penyebabnya, lalu jalankan ulang untuk karyawan tersebut saja.",
+              "Daftar kegagalan muncul beserta alasannya. Penyebab paling sering adalah belum ada kontrak bernominal gaji pada periode itu sementara Gaji pokok default di Pengaturan masih nol.",
+          },
+        ],
+      },
+      {
+        id: "komponen-gaji",
+        title: "Komponen gaji, lembur, dan insentif target",
+        summary: "Tunjangan dan potongan tetap, bonus bulanan, lembur dibayar atau tidak, dan bonus sesuai capaian target.",
+        audience: ["HRD", "SUPERADMIN"],
+        blocks: [
+          {
+            type: "p",
+            text:
+              "Gaji pokok dan tunjangan tetap diambil dari kontrak yang berlaku pada periode tersebut. Selebihnya diatur per karyawan lewat tombol Atur di halaman Slip Gaji, yang punya dua tab.",
+          },
+          {
+            type: "table",
+            head: ["Tab", "Isi", "Berlaku"],
+            rows: [
+              ["Komponen tetap & aturan", "Lembur dibayar tarif perusahaan / tarif khusus / tidak dibayar; tanpa potongan terlambat atau alpha; tunjangan dan potongan tetap bulanan (boleh dengan bulan terakhir, misalnya cicilan); insentif target", "Setiap bulan sampai diubah"],
+              ["Periode ini", "Bonus dan potongan khusus bulan itu (bonus Lebaran, kasbon, denda); capaian target bulan itu", "Hanya periode yang dipilih"],
+            ],
+          },
+          {
+            type: "steps",
+            items: [
+              "Di Komponen tetap & aturan, nyalakan Insentif berdasarkan target. Isi nama target, nilai target per bulan, dan satuannya.",
+              "Isi tingkat bonus sesuai kesepakatan, misalnya capaian 80% ke atas Rp300.000, 100% ke atas Rp750.000, 120% ke atas Rp1.500.000. Yang dibayar adalah tingkat tertinggi yang tercapai.",
+              "Bila disepakati, isi tambahan per unit di atas target. Kotak Contoh hitungan memperlihatkan hasilnya untuk capaian 80%, 100%, dan 120%.",
+              "Setiap bulan, isi capaiannya di tab Periode ini. Insentif dihitung otomatis dan tercetak di slip beserta persentase capaiannya.",
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Urutan hitung",
+            text:
+              "Penghasilan = gaji pokok + tunjangan kontrak + tunjangan tetap + bonus bulan ini + insentif target + lembur. Potongan terlambat, alpha, dan BPJS dihitung lebih dulu; PPh 21 dihitung dari penghasilan dikurangi potongan tersebut di atas ambang PTKP; potongan tetap dan potongan bulan ini dikurangkan setelahnya.",
           },
         ],
       },
@@ -924,6 +1055,86 @@ export const CHAPTERS: DocChapter[] = [
 
   /* ================================================================ */
   {
+    id: "kontrak",
+    title: "Kontrak Kerja",
+    sections: [
+      {
+        id: "kontrak-kelola",
+        title: "Mengelola kontrak karyawan",
+        summary: "Jenis kontrak, kontrak yang akan berakhir, perpanjangan, dokumen, dan berkas bertanda tangan.",
+        audience: ["HRD", "SUPERADMIN", "AUDIT", "DIREKSI"],
+        blocks: [
+          {
+            type: "table",
+            head: ["Jenis", "Tanggal berakhir", "Keterangan"],
+            rows: [
+              ["PKWT", "Ada", "Karyawan kontrak"],
+              ["PKWTT", "Tidak ada", "Karyawan tetap; tidak masuk daftar kontrak yang akan habis"],
+              ["Masa percobaan, Magang, Harian lepas, Paruh waktu, Outsource", "Ada", "Status kepegawaian ikut jenis kontrak saat berlaku"],
+              ["Lainnya", "Ada", "Tuliskan nama jenisnya sendiri"],
+            ],
+          },
+          {
+            type: "steps",
+            items: [
+              "Buka Kontrak Kerja → Buat kontrak. Pilih karyawan, jenis, tanggal mulai dan berakhir (tombol 3/6/12 bulan membantu), gaji pokok, tunjangan tetap, dan template dokumen.",
+              "Simpan sebagai draf bila masih ditinjau, atau langsung berlakukan. Gaji pokok kontrak yang berlaku dipakai payroll.",
+              "Buka kontrak lalu Cetak / simpan PDF untuk mencetak dokumen dari template, tanda tangani, kemudian Unggah kontrak bertanda tangan. Kontrak yang sudah jadi di luar sistem bisa langsung diunggah tanpa template.",
+            ],
+          },
+          {
+            type: "p",
+            text:
+              "Tab Perlu keputusan berisi kontrak yang berakhir dalam rentang waktu pilihan Anda (bawaan 60 hari) dan kontrak yang sudah lewat tetapi belum diputuskan. Buka kontraknya lalu pilih tindak lanjut:",
+          },
+          {
+            type: "table",
+            head: ["Tindakan", "Yang terjadi"],
+            rows: [
+              ["Perpanjang", "Formulir kontrak baru terisi otomatis: mulai sehari setelah kontrak lama berakhir, lama dan gaji sama. Ubah bila ada kesepakatan baru, lalu simpan."],
+              ["Angkat karyawan tetap", "Formulir kontrak PKWTT tanpa tanggal berakhir."],
+              ["Tidak diperpanjang", "Catat alasannya. Pilih Nonaktifkan karyawan setelah kontrak berakhir agar status karyawan menjadi resign dan akun login ditutup otomatis pada tanggal itu."],
+            ],
+          },
+          {
+            type: "note",
+            tone: "info",
+            title: "Pengingat otomatis",
+            text:
+              "Karyawan, atasan, dan HRD menerima pengingat 30, 14, dan 7 hari sebelum kontrak berakhir selama belum diputuskan. Kontrak yang melewati tanggal berakhir ditandai Berakhir oleh tugas harian.",
+          },
+          {
+            type: "note",
+            tone: "warning",
+            title: "Kontrak bertanda tangan terkunci",
+            text:
+              "Setelah berkas bertanda tangan diunggah, tanggal dan gaji kontrak tidak bisa diubah. Buat kontrak baru, atau lepaskan dulu berkasnya bila memang salah unggah. Kontrak yang pernah berlaku tidak dihapus; gunakan Akhiri lebih awal.",
+          },
+          {
+            type: "p",
+            text:
+              "Tab Template dokumen berisi template kontrak. Tulis isinya dengan format sederhana (# judul, ## pasal, - poin, 1. nomor, **tebal**) dan sisipkan isian seperti nama, jabatan, tanggal, dan gaji dengan menekan tombolnya. Atur logo, nama dan jabatan penandatangan, serta kota; lihat hasilnya di tab Pratinjau dengan contoh data. Mengubah template tidak mengubah kontrak yang sudah dibuat.",
+          },
+        ],
+      },
+      {
+        id: "kontrak-saya",
+        title: "Melihat kontrak kerja Anda",
+        summary: "Masa berlaku kontrak dan salinan yang sudah ditandatangani.",
+        audience: ["STAFF", "SPV"],
+        blocks: [
+          {
+            type: "p",
+            text:
+              "Buka Profil & Keamanan → tab Kontrak Kerja. Setiap kontrak menampilkan jenis, nomor, masa berlakunya, dan tanda bila akan berakhir dalam 60 hari. Tekan Kontrak bertanda tangan untuk membuka salinan yang diunggah HRD, atau Lihat dokumen kontrak bila salinannya belum diunggah.",
+          },
+        ],
+      },
+    ],
+  },
+
+  /* ================================================================ */
+  {
     id: "kpi",
     title: "KPI & Kinerja",
     sections: [
@@ -1015,6 +1226,13 @@ export const CHAPTERS: DocChapter[] = [
             text:
               "Tekan Cetak untuk membuka formulir penilaian dalam bentuk dokumen. Halaman itu memanggil dialog cetak peramban; pilih tujuan Save as PDF untuk menyimpannya.",
           },
+          {
+            type: "note",
+            tone: "info",
+            title: "Memakai formulir penilaian sendiri",
+            text:
+              "Bila perusahaan menilai dengan formulir sendiri, tekan Unggah PDF di tab Penilaian. Pilih karyawan, periode, dan berkasnya; nilai akhir dan predikat boleh diisi agar ikut masuk ringkasan. Penilaian unggahan mengikuti alur yang sama: dibagikan ke karyawan, ditanggapi, lalu difinalkan.",
+          },
         ],
       },
       {
@@ -1075,6 +1293,7 @@ export const CHAPTERS: DocChapter[] = [
               ["Tukar Libur & Lembur", "Batas H-, setengah hari, bentrok divisi, lembur otomatis"],
               ["Payroll", "Tarif potongan telat, upah lembur, persentase BPJS dan PPh 21"],
               ["Keamanan", "Panjang minimal kata sandi, batas percobaan login, durasi kunci akun"],
+              ["Tab Kata Sandi Awal", "Kata sandi awal akun baru per peran: tetap atau acak per akun"],
               ["Notifikasi", "Menyalakan atau mematikan kanal email, WhatsApp, dan notifikasi aplikasi"],
             ],
           },
@@ -1084,6 +1303,30 @@ export const CHAPTERS: DocChapter[] = [
             title: "Berlaku seketika",
             text:
               "Perubahan pengaturan langsung dipakai pada permintaan berikutnya. Tidak perlu restart server maupun deploy ulang.",
+          },
+        ],
+      },
+      {
+        id: "kata-sandi-awal",
+        title: "Kata sandi awal akun baru",
+        summary: "Mengatur kata sandi awal per peran, selain Superadmin.",
+        audience: ["SUPERADMIN", "HRD"],
+        blocks: [
+          {
+            type: "steps",
+            items: [
+              "Buka Pengaturan & Peran → tab Kata Sandi Awal.",
+              "Untuk setiap peran pilih Kata sandi tetap (sama untuk semua akun baru peran itu) atau Acak per akun.",
+              "Untuk kata sandi tetap, ketik sendiri atau tekan ikon acak. Kata sandi harus memenuhi aturan panjang dan memuat huruf besar, huruf kecil, serta angka.",
+              "Tekan Simpan. Berlaku untuk akun yang dibuat sesudahnya, termasuk saat pelamar diterima menjadi karyawan.",
+            ],
+          },
+          {
+            type: "note",
+            tone: "warning",
+            title: "Pilih acak per akun bila memungkinkan",
+            text:
+              "Kata sandi tetap diketahui siapa pun yang pernah menerimanya, sehingga akun baru rawan dibuka orang lain sebelum pemiliknya login. Pastikan Wajib ganti password saat login pertama tetap menyala. Akun Superadmin baru selalu mendapat kata sandi acak.",
           },
         ],
       },
@@ -1158,7 +1401,7 @@ export const CHAPTERS: DocChapter[] = [
             items: [
               "Buka Data Karyawan lalu tambah karyawan baru. NIP dibuat otomatis dengan format EMP-TAHUN-NOMOR.",
               "Isi data diri, penempatan cabang dan divisi, lalu pilih peran akun agar login otomatis dibuat.",
-              "Sampaikan kata sandi awal secara aman. Karyawan wajib menggantinya saat login pertama.",
+              "Kata sandi awal ditampilkan sekali di layar setelah disimpan, sesuai pengaturan Kata Sandi Awal untuk peran yang dipilih. Sampaikan secara pribadi; karyawan wajib menggantinya saat login pertama.",
               "Setelah karyawan aktif, ia dapat melengkapi sendiri data kontak, alamat domisili, dan media sosialnya.",
             ],
           },
@@ -1361,3 +1604,19 @@ export const CHAPTERS: DocChapter[] = [
 export const ALL_SECTIONS = CHAPTERS.flatMap((c) =>
   c.sections.map((s) => ({ ...s, chapterId: c.id, chapterTitle: c.title }))
 );
+
+/**
+ * The chapters a role may read. Superadmin reads everything and may preview
+ * another role's view; every other role only receives the sections written for
+ * it plus those for everyone. Filtering happens on the server, so procedures
+ * for other roles never reach the reader's browser.
+ */
+export function chaptersForRole(role: string, preview?: string | null): DocChapter[] {
+  const effective = role === "SUPERADMIN" ? preview || null : role;
+  return CHAPTERS.map((c) => ({
+    ...c,
+    sections: c.sections.filter(
+      (s) => !effective || s.audience.length === 0 || s.audience.includes(effective)
+    ),
+  })).filter((c) => c.sections.length > 0);
+}

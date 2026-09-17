@@ -22,13 +22,21 @@ export interface IPayroll extends Document {
   fileUrl: string; // PDF link
   generatedBy: mongoose.Types.ObjectId; // References User
   status: "draft" | "published" | "paid";
+  /** "uploaded" = HR supplied a finished PDF instead of the system calculating it. */
+  source: "generated" | "uploaded";
+  uploadedFile: string;
+  uploadedFileName: string;
+  /** The target incentive as calculated, kept so the slip can explain itself later. */
+  targetAchievement?: { name: string; target: number; actual: number; pct: number; amount: number; explanation: string } | null;
+  /** Line-by-line explanation of how each figure was reached. */
+  notes: string[];
 }
 
 const PayrollSchema = new Schema<IPayroll>(
   {
     employeeId: { type: Schema.Types.ObjectId, ref: "Employee", required: true, index: true },
     period: { type: String, required: true, index: true },
-    basicSalary: { type: Number, required: true },
+    basicSalary: { type: Number, default: 0 },
     incentives: { type: Number, default: 0 },
     allowances: [
       {
@@ -49,10 +57,15 @@ const PayrollSchema = new Schema<IPayroll>(
     presentDays: { type: Number, default: 0 },
     workingDays: { type: Number, default: 0 },
     generatedAt: { type: Date, default: Date.now },
-    totalEarnings: { type: Number, required: true },
-    totalDeductions: { type: Number, required: true },
-    netSalary: { type: Number, required: true },
+    totalEarnings: { type: Number, default: 0 },
+    totalDeductions: { type: Number, default: 0 },
+    netSalary: { type: Number, default: 0 },
     fileUrl: { type: String, default: "" },
+    source: { type: String, enum: ["generated", "uploaded"], default: "generated" },
+    uploadedFile: { type: String, default: "" },
+    uploadedFileName: { type: String, default: "" },
+    targetAchievement: { type: Schema.Types.Mixed, default: null },
+    notes: { type: [String], default: [] },
     generatedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     status: { 
       type: String, 

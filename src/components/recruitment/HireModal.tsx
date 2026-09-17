@@ -5,6 +5,7 @@ import { Alert, Button, Field, Input, Modal, Select } from "@/components/ui";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { useToast } from "@/components/ui/Toast";
 import { api, errorMessage } from "@/lib/client-api";
+import { CredentialDialog } from "@/components/CredentialDialog";
 
 /**
  * Turns an accepted applicant into an employee. Shared by the vacancy board,
@@ -41,6 +42,7 @@ export function HireModal({
     roles: Array<{ _id: string; name: string }>;
   }>({ branches: [], divisions: [], positions: [], roles: [] });
   const [saving, setSaving] = useState(false);
+  const [credential, setCredential] = useState<{ email: string; password: string; name?: string } | null>(null);
 
   useEffect(() => {
     if (!candidate) return;
@@ -73,14 +75,22 @@ export function HireModal({
     })();
   }, [candidate, defaultPositionId, defaultJoinDate]);
 
-  if (!candidate) return null;
+  // The credential dialog outlives the hire form, which closes as soon as the
+  // hire succeeds.
+  if (!candidate) return <CredentialDialog credential={credential} onClose={() => setCredential(null)} />;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await api.put<{ employee: string }>("/api/v1/candidates", { id: candidate._id, ...form });
+      const res = await api.put<{ employee: string; generatedPassword: string | null }>("/api/v1/candidates", {
+        id: candidate._id,
+        ...form,
+      });
       toast.success("Karyawan dibuat", res.message);
+      if (res.data?.generatedPassword) {
+        setCredential({ email: form.officeEmail, password: res.data.generatedPassword, name: candidate.name });
+      }
       onHired(res.data?.employee);
     } catch (err) {
       toast.error("Gagal memproses", errorMessage(err));
@@ -193,6 +203,9 @@ export function HireModal({
               <option value="probation">Masa percobaan</option>
               <option value="pkwt">PKWT (kontrak)</option>
               <option value="pkwtt">PKWTT (tetap)</option>
+              <option value="magang">Magang</option>
+              <option value="harian_lepas">Harian lepas</option>
+              <option value="paruh_waktu">Paruh waktu</option>
               <option value="outsource">Outsource</option>
             </Select>
           </Field>

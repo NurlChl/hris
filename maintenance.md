@@ -620,6 +620,83 @@ credentials), jadi email notifikasi tidak terkirim sampai kredensialnya
 diperbaiki. `CRON_SECRET` belum diisi, sehingga tugas harian dan semua pengingat
 di atas belum berjalan.
 
+### 3.10 Kontrak, komponen gaji, jadwal per hari, kuota izin, dan akses per peran (2026-09-17)
+
+**Akses dan panduan per peran.** Isi panduan dipindah ke
+`lib/docs/content.ts` dan disajikan lewat `GET /api/v1/docs`, yang menyaring
+bagian menurut peran di server (`chaptersForRole`). Bagian peran lain tidak
+pernah sampai ke peramban; Superadmin dapat mempratinjau peran lain dengan
+`?role=`. `GET /openapi` dan `/api-docs` kini khusus Superadmin. Halaman publik,
+portal, dan panduan tidak lagi menautkan login admin, referensi API, atau
+informasi Superadmin; `proxy.ts` mengarahkan pengguna belum login dari
+`/admin`, `/portal`, `/docs`, `/api-docs` ke `/auth/login` tanpa membawa
+callback ke area admin.
+
+**Kata sandi awal per peran.** `lib/auth/initial-password.ts` menyimpan
+kebijakan terenkripsi di Setting `initial_password_policy` (dilewati
+`getSettings()`). Setiap peran memilih kata sandi tetap atau acak per akun;
+Superadmin selalu acak. Dipakai saat membuat karyawan dan saat pelamar
+diterima; nilainya hanya ditampilkan sekali lewat `CredentialDialog` dan tidak
+lagi ikut di pesan respons. `otp.ts` menolak kata sandi awal sebagai kata sandi
+baru. Bila Setting belum ada, nilai lama `default_employee_password` menjadi
+kata sandi tetap semua peran.
+
+**Kuota izin.** `LeaveType.quotaMode`: `annual` (saldo tahunan),
+`per_event` (batas hari per kejadian, opsional `maxEventsPerYear`, tidak
+memotong saldo), `none`. `isOther` mewajibkan `LeaveRequest.customPurpose`.
+Aturan dan kalimat penjelasnya ada di `lib/hr/leave-policy.ts`. Seed
+menambahkan "Izin Keperluan Lainnya" dan langkah migrasi yang mengisi
+`quotaMode` dari `deductsBalance` (izin menikah/duka → `per_event`). Halaman
+baru: `/admin/leave-types`.
+
+**Jadwal per hari.** `WorkSchedule.days` (tujuh entri: aktif, masuk, pulang,
+istirahat); kolom datar lama tetap diisi untuk pembaca lama.
+`Employee.workScheduleId` memasang template mingguan; `EmployeeSchedule`
+menjadi jadwal khusus tanggal dengan `isOffDay`. `resolveSchedule()` di
+`lib/hr/calendar.ts` memakai urutan jadwal khusus → template karyawan → jam
+cabang dan melaporkan sumbernya. Absen pada hari libur tidak pernah terlambat;
+shift yang melewati tengah malam dihitung sampai hari berikutnya.
+
+**Kontrak kerja.** `Contract` (jenis PKWT, PKWTT, PROBATION, INTERNSHIP,
+DAILY, PART_TIME, OUTSOURCE, OTHER; nomor otomatis per jenis/tahun lewat
+counter `contract:<tahun>`), `ContractTemplate` dengan isian `{{...}}` dan
+markup ringan, cetak di `/print/contract/[id]`, berkas bertanda tangan lewat
+unggahan konteks `contract` (disimpan di `employees/<id>/contracts`).
+Keputusan perpanjangan (`decision`), perpanjangan berantai
+(`previousContractId`/`nextContractId`), dan tugas harian
+`endExpiredContracts` yang menandai kontrak berakhir serta menonaktifkan
+karyawan bila HRD memilihnya. Enum `employmentStatus` diperluas di semua
+tempat. Karyawan melihat kontraknya di Profil → tab Kontrak Kerja.
+
+**Komponen gaji.** `PayProfile` (lembur perusahaan/khusus/tidak dibayar,
+pengecualian potongan terlambat/alpha, komponen tetap dengan `untilPeriod`,
+insentif target bertingkat + `excessRate`) dan `PayrollInput` per periode
+(bonus/potongan sekali, capaian target). `lib/hr/payroll-calc.ts#calculatePayroll`
+dipakai bersama oleh `GET /payroll/preview` dan `POST /payroll`, jadi pratinjau
+dan hasil selalu sama. Slip dibuat sebagai draf lalu diterbitkan
+(`PATCH action=publish`), atau diunggah sebagai PDF (`action=upload`,
+`Payroll.source = "uploaded"`); periode unggahan tidak ditimpa perhitungan
+otomatis.
+
+**KPI unggahan.** `POST /kpi/evaluations/upload` membuat penilaian bersumber
+`uploaded` (tanpa template) dengan alur bagikan → tanggapi → final. Penilaian
+unggahan tanpa nilai tidak ikut ringkasan KPI.
+
+**Paginasi.** Persetujuan, pengaduan, lowongan, tukar libur, inventaris, riwayat
+cuti, payroll, penilaian KPI, dan kontrak memakai `pagination()` +
+komponen `Pagination`. Cabang dan divisi sengaja tidak dipaginasi (datanya
+kecil dan dipakai sebagai pilihan dropdown). `ApprovalInstance` kini menyimpan
+`employeeId` dan `divisionId` agar filter dan pengingat tidak perlu lookup.
+
+**Pelajaran.**
+- Nilai kosong di `.env` (`DNS_SERVERS=`) terbaca sebagai string kosong, bukan
+  undefined, sehingga `process.env.X ?? bawaan` tidak pernah memakai bawaan.
+  `db.ts` dan `auth.ts` kini memakai `||`. Semua kunci yang dipakai kode sudah
+  ditambahkan (kosong) ke `.env`.
+- Menjalankan `next build` saat `next dev` hidup merusak `.next` dan membuat
+  semua rute 404. Hentikan dev server, hapus `.next`, jalankan ulang.
+- Perubahan skema Mongoose butuh restart dev server karena model di-cache.
+
 ---
 
 ## 4. Hal yang perlu diperhatikan
@@ -654,17 +731,15 @@ Diurutkan menurut nilainya:
    (lihat 3.8), tetapi foto wajah dari layar lain masih dapat lolos.
 2. **2FA (TOTP)** — field `is2faEnabled` dan `twoFactorSecret` sudah ada di model
    `User` tetapi alurnya belum dibuat.
-3. **Kontrak kerja** — model dan pengingat kedaluwarsa sudah jalan, tetapi
-   template builder dan generator PDF belum ada.
-4. **Uji kompetensi** — bank soal dan penilaian otomatis.
-5. **Offboarding formal** — pengajuan resign, clearance inventaris dan keuangan,
+3. **Uji kompetensi** — bank soal dan penilaian otomatis.
+4. **Offboarding formal** — pengajuan resign, clearance inventaris dan keuangan,
    surat pengalaman kerja otomatis.
-6. **Ekspor Excel/PDF** — saat ini CSV; `exceljs` dan `@react-pdf/renderer`
+5. **Ekspor Excel/PDF** — saat ini CSV; `exceljs` dan `@react-pdf/renderer`
    dapat ditambahkan tanpa mengubah lapisan data.
-7. **Pengujian otomatis** — belum ada unit maupun e2e test. Kandidat pertama
+6. **Pengujian otomatis** — belum ada unit maupun e2e test. Kandidat pertama
    yang paling bernilai: `lib/time.ts`, `countLeaveDays`, dan mesin approval.
-8. **Sisa peringatan lint.** `npm run lint` tidak lagi melaporkan error, tetapi
-   masih ada sekitar 105 warning. Sebagian besar `react-hooks/set-state-in-effect`
+7. **Sisa peringatan lint.** `npm run lint` tidak lagi melaporkan error, tetapi
+   masih ada sekitar 110 warning. Sebagian besar `react-hooks/set-state-in-effect`
    pada halaman yang memuat datanya lewat `useEffect`, sisanya variabel dan
    argumen yang tidak terpakai. Tidak ada yang salah secara perilaku; pola
    pemuatan datanya yang perlu diseragamkan, sebaiknya per halaman sambil

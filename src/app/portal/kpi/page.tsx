@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { Pagination } from "@/components/ui/Pagination";
 import Link from "next/link";
-import { CircleCheck, MessageSquare, Printer, Target, TrendingUp } from "lucide-react";
+import { CircleCheck, FileText, MessageSquare, Printer, Target, TrendingUp } from "lucide-react";
 import {
   Alert,
   Badge,
@@ -58,6 +59,9 @@ interface Evaluation {
   acknowledgedAt?: string | null;
   finalizedAt?: string | null;
   updatedAt: string;
+  source?: "form" | "uploaded";
+  title?: string;
+  uploadedFile?: string;
   scores: Score[];
   templateId: { name: string } | null;
 }
@@ -75,18 +79,22 @@ export default function PortalKpiPage() {
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<Evaluation | null>(null);
   const [ackTarget, setAckTarget] = useState<Evaluation | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const limit = 10;
 
   const load = useCallback(async () => {
     setError("");
     try {
-      const res = await api.get<Evaluation[]>("/api/v1/kpi/evaluations?mine=1");
+      const res = await api.get<Evaluation[]>(`/api/v1/kpi/evaluations?mine=1&page=${page}&limit=${limit}`);
       setItems(res.data ?? []);
+      setTotal(res.meta?.total ?? 0);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     void load();
@@ -177,7 +185,7 @@ export default function PortalKpiPage() {
           )}
 
           <Card>
-            <CardHeader title="Riwayat penilaian" description={`${items.length} periode.`} />
+            <CardHeader title="Riwayat penilaian" description={`${total} penilaian.`} />
             <CardBody className="p-0">
               <ul className="divide-y divide-[var(--border)]">
                 {items.map((e) => (
@@ -194,7 +202,7 @@ export default function PortalKpiPage() {
                         </Badge>
                       </div>
                       <p className="text-body-sm text-muted mt-1">
-                        {e.templateId?.name ?? "Template dihapus"}
+                        {e.source === "uploaded" ? e.title || "Penilaian kinerja" : e.templateId?.name ?? "Template dihapus"}
                         {e.finalizedAt && ` · final ${formatDateTime(e.finalizedAt)}`}
                       </p>
                     </div>
@@ -208,15 +216,23 @@ export default function PortalKpiPage() {
                       </div>
 
                       <div className="flex items-center gap-1">
-                        <Button variant="secondary" size="sm" onClick={() => openDetail(e)}>
-                          Lihat
-                        </Button>
+                        {e.source === "uploaded" ? (
+                          <a href={e.uploadedFile} target="_blank" rel="noreferrer">
+                            <Button variant="secondary" size="sm" icon={FileText}>
+                              Buka dokumen
+                            </Button>
+                          </a>
+                        ) : (
+                          <Button variant="secondary" size="sm" onClick={() => openDetail(e)}>
+                            Lihat
+                          </Button>
+                        )}
                         {e.status === "submitted" && (
                           <Button size="sm" icon={MessageSquare} onClick={() => setAckTarget(e)}>
                             Tanggapi
                           </Button>
                         )}
-                        {e.status === "finalized" && (
+                        {e.status === "finalized" && e.source !== "uploaded" && (
                           <Link href={`/print/kpi/${e._id}`} target="_blank">
                             <Button variant="ghost" size="sm" icon={Printer}>
                               Cetak
@@ -231,6 +247,10 @@ export default function PortalKpiPage() {
             </CardBody>
           </Card>
         </>
+      )}
+
+      {total > limit && (
+        <Pagination page={page} totalPages={Math.ceil(total / limit)} total={total} limit={limit} onPage={setPage} />
       )}
 
       <DetailModal

@@ -37,8 +37,27 @@ export const GET = wrapRouteHandler(async (req) => {
 
   await connectToDatabase();
 
-  // Fetch all assets
-  const assets = await Inventory.find({}).lean<LeanAsset[]>();
+  // Paged, searchable on the server; `code` is an exact lookup for the barcode scanner.
+  const sp = new URL(req.url).searchParams;
+  const page = Math.max(1, Number(sp.get("page")) || 1);
+  const limit = Math.min(100, Math.max(1, Number(sp.get("limit")) || 25));
+  const assetFilter: Record<string, unknown> = {};
+  const code = sp.get("code")?.trim();
+  const q = sp.get("q")?.trim();
+  const category = sp.get("category")?.trim();
+  if (code) {
+    assetFilter.code = new RegExp(`^${code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+  } else {
+    if (q) {
+      const rx = new RegExp(q.slice(0, 60).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      assetFilter.$or = [{ name: rx }, { code: rx }];
+    }
+    if (category) assetFilter.category = category;
+  }
+  const [assets, total] = await Promise.all([
+    Inventory.find(assetFilter).sort({ code: 1 }).skip((page - 1) * limit).limit(limit).lean<LeanAsset[]>(),
+    Inventory.countDocuments(assetFilter),
+  ]);
 
   // For each asset, find the most recent assignment (pending or active or returned)
   const assetIds = assets.map(a => a._id);
@@ -73,7 +92,7 @@ export const GET = wrapRouteHandler(async (req) => {
     };
   });
 
-  return apiSuccess(mappedAssets, "Berhasil memuat data inventaris");
+  return apiSuccess(mappedAssets, "Berhasil memuat data inventaris", { page, limit, total });
 });
 
 export const POST = wrapRouteHandler(async (req) => {

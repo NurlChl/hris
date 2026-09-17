@@ -16,6 +16,7 @@ import JobVacancy from "@/models/JobVacancy";
 import Employee from "@/models/Employee";
 import User from "@/models/User";
 import Counter from "@/models/Counter";
+import { initialPasswordFor } from "@/lib/auth/initial-password";
 
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "ID tidak valid");
 
@@ -315,7 +316,7 @@ const hireSchema = z.object({
   positionId: objectId,
   joinDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal mulai kerja tidak valid"),
   officeEmail: z.string().trim().toLowerCase().email("Email kantor tidak valid"),
-  employmentStatus: z.enum(["probation", "pkwt", "pkwtt", "outsource"]).default("probation"),
+  employmentStatus: z.enum(["probation", "pkwt", "pkwtt", "magang", "harian_lepas", "paruh_waktu", "outsource", "lainnya"]).default("probation"),
   roleId: z.union([objectId, z.literal("")]).optional(),
 });
 
@@ -436,7 +437,7 @@ export const PUT = wrapRouteHandler(async (req) => {
 
   let generatedPassword: string | null = null;
   if (body.roleId) {
-    const pwd = String(settings.default_employee_password);
+    const pwd = (await initialPasswordFor(body.roleId)).password;
     generatedPassword = pwd;
     await User.create({
       email: body.officeEmail,
@@ -508,7 +509,7 @@ export const PUT = wrapRouteHandler(async (req) => {
     { employeeId: nip, employee: employee._id, generatedPassword, vacancyClosed },
     `${candidate.name} dibuat sebagai karyawan dengan NIP ${nip} dan ditandai "baru" di Data Karyawan.` +
       (documents.length ? ` ${documents.length} dokumen lamaran ikut dipindahkan.` : "") +
-      (generatedPassword ? ` Kata sandi awal akunnya: ${generatedPassword}.` : " Akun login belum dibuat karena peran belum dipilih.") +
+      (generatedPassword ? " Akun login dibuat; kata sandi awalnya ditampilkan di layar." : " Akun login belum dibuat karena peran belum dipilih.") +
       (vacancyClosed ? " Lowongan ditutup otomatis karena kuota terpenuhi." : "")
   );
 });

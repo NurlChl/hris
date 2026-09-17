@@ -2,6 +2,8 @@
 
 import React, { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { FileSignature } from "lucide-react";
+import { MyContracts } from "@/components/portal/MyContracts";
 import { useSession } from "next-auth/react";
 import {
   Briefcase,
@@ -80,9 +82,14 @@ function ProfilePage() {
   const params = useSearchParams();
   const forced = params.get("force_password") === "1";
   // `?tab=face` is where the attendance page and face notifications send people.
-  const initialTab = forced ? "security" : params.get("tab") === "face" ? "face" : "profile";
+  const requestedTab = params.get("tab");
+  const initialTab = forced
+    ? "security"
+    : requestedTab === "face" || requestedTab === "contract"
+      ? requestedTab
+      : "profile";
 
-  const [tab, setTab] = useState<"profile" | "security" | "face">(initialTab);
+  const [tab, setTab] = useState<"profile" | "security" | "face" | "contract">(initialTab);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -123,7 +130,7 @@ function ProfilePage() {
       <header>
         <h1 className="text-display-sm md:text-display text-heading">Profil &amp; Keamanan</h1>
         <p className="text-body text-muted mt-2 leading-relaxed">
-          Perbarui data kontak Anda dan kelola kata sandi akun.
+          Perbarui data kontak, kelola kata sandi, dan lihat kontrak kerja Anda.
         </p>
       </header>
 
@@ -145,10 +152,13 @@ function ProfilePage() {
           // Face enrolment belongs to an employee record; admin-only accounts
           // have no attendance to verify.
           ...(employeeId ? [{ id: "face" as const, label: "Wajah Presensi", icon: ScanFace }] : []),
+          ...(employeeId ? [{ id: "contract" as const, label: "Kontrak Kerja", icon: FileSignature }] : []),
         ]}
       />
 
-      {tab === "face" && employeeId ? (
+      {tab === "contract" && employeeId ? (
+        <MyContracts />
+      ) : tab === "face" && employeeId ? (
         <FaceEnrollment />
       ) : tab === "profile" ? (
         !employeeId ? (

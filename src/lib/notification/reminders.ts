@@ -5,6 +5,10 @@ import ApprovalInstance from "@/models/ApprovalInstance";
 import CandidateStageHistory from "@/models/CandidateStageHistory";
 import Candidate from "@/models/Candidate";
 import Employee from "@/models/Employee";
+import "@/models/LeaveRequest";
+import "@/models/AttendanceCorrection";
+import "@/models/HolidaySwapRequest";
+import "@/models/FaceChangeRequest";
 import {
   notifyUsers,
   resolveRecipientForEmployee,
@@ -80,15 +84,40 @@ export async function remindMissingClockOut() {
 export async function remindStaleApprovals() {
   const cutoff = new Date(Date.now() - 48 * 3600_000);
   const stale = await ApprovalInstance.find({ status: "pending", updatedAt: { $lt: cutoff } })
-    .select("currentStep stepsStatus employeeId")
+    .select("refType refId currentStep stepsStatus employeeId divisionId")
     .limit(1000)
     .lean<
       Array<{
-        employeeId: mongoose.Types.ObjectId;
+        refType: string;
+        refId: mongoose.Types.ObjectId;
+        employeeId?: mongoose.Types.ObjectId | null;
+        divisionId?: mongoose.Types.ObjectId | null;
         currentStep: number;
         stepsStatus: Array<{ stepNumber: number; approverRole: string }>;
       }>
     >();
+
+  // Instances created before the requester was stored on them: read it from
+  // the request document itself.
+  const REF_MODELS: Record<string, string> = {
+    leave: "LeaveRequest",
+    correction: "AttendanceCorrection",
+    holiday_swap: "HolidaySwapRequest",
+    face_change: "FaceChangeRequest",
+  };
+  async function requesterDivision(inst: (typeof stale)[number]) {
+    if (inst.divisionId) return String(inst.divisionId);
+    let employeeId = inst.employeeId;
+    if (!employeeId) {
+      const modelName = REF_MODELS[inst.refType];
+      const model = modelName ? mongoose.models[modelName] : null;
+      const doc = model ? await model.findById(inst.refId).select("employeeId").lean<{ employeeId?: mongoose.Types.ObjectId } | null>() : null;
+      employeeId = doc?.employeeId ?? null;
+    }
+    if (!employeeId) return null;
+    const emp = await Employee.findById(employeeId).select("divisionId").lean<{ divisionId?: mongoose.Types.ObjectId } | null>();
+    return emp?.divisionId ? String(emp.divisionId) : null;
+  }
 
   // Count per role (and per division for SPV, whose queue is division-scoped).
   const buckets = new Map<string, { role: string; divisionId: string | null; count: number }>();
@@ -97,8 +126,9 @@ export async function remindStaleApprovals() {
     if (!step) continue;
     let divisionId: string | null = null;
     if (step.approverRole === "SPV") {
-      const emp = await Employee.findById(inst.employeeId).select("divisionId").lean<{ divisionId?: mongoose.Types.ObjectId } | null>();
-      divisionId = emp?.divisionId ? String(emp.divisionId) : null;
+      divisionId = await requesterDivision(inst);
+      // Without a division an SPV reminder would reach every supervisor.
+      if (!divisionId) continue;
     }
     const k = `${step.approverRole}:${divisionId ?? "*"}`;
     const b = buckets.get(k) ?? { role: step.approverRole, divisionId, count: 0 };

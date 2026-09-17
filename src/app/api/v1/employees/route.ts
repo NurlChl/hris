@@ -20,6 +20,7 @@ import Employee from "@/models/Employee";
 import User from "@/models/User";
 import Counter from "@/models/Counter";
 import { missingProfileFields } from "@/lib/hr/employee-completeness";
+import { initialPasswordFor } from "@/lib/auth/initial-password";
 
 /**
  * Employee master data.
@@ -84,7 +85,7 @@ const employeeSchema = z.object({
   storeManagerId: optionalObjectId,
   areaManagerId: optionalObjectId,
   joinDate: z.string().optional(),
-  employmentStatus: z.enum(["probation", "pkwt", "pkwtt", "outsource"]).optional(),
+  employmentStatus: z.enum(["probation", "pkwt", "pkwtt", "magang", "harian_lepas", "paruh_waktu", "outsource", "lainnya"]).optional(),
   status: z.enum(["active", "onboarding", "suspended", "resigned"]).optional(),
   roleId: optionalObjectId,
   password: z.string().optional(),
@@ -319,7 +320,8 @@ export const POST = wrapRouteHandler(async (req) => {
 
   let generatedPassword: string | null = null;
   if (body.roleId) {
-    const pwd = body.password || String(settings.default_employee_password);
+    const initial = body.password ? null : await initialPasswordFor(body.roleId);
+    const pwd = body.password || initial!.password;
     if (!body.password) generatedPassword = pwd;
     await User.create({
       email: body.officeEmail,
@@ -346,9 +348,7 @@ export const POST = wrapRouteHandler(async (req) => {
       generatedPassword,
     },
     `Karyawan ${body.name} dibuat dengan NIP ${employeeId}.` +
-      (generatedPassword
-        ? ` Kata sandi awal: ${generatedPassword} — sampaikan secara aman, karyawan wajib menggantinya saat login pertama.`
-        : ""),
+      (generatedPassword ? " Akun login dibuat; kata sandi awalnya ditampilkan di layar." : ""),
     undefined,
     201
   );

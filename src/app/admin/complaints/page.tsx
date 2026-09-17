@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Pagination } from "@/components/ui/Pagination";
 import { EyeOff, Lock, MessageSquareWarning, Paperclip, User } from "lucide-react";
 import {
   Alert,
@@ -64,26 +65,32 @@ export default function AdminComplaintsPage() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"open" | "closed">("open");
   const [active, setActive] = useState<Complaint | null>(null);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({ open: 0, closed: 0 });
 
   const load = useCallback(async () => {
     setError("");
     try {
-      const res = await api.get<{ items: Complaint[]; asHandler: boolean }>("/api/v1/complaints");
+      const res = await api.get<{ items: Complaint[]; asHandler: boolean; counts: { open: number; closed: number } }>(
+        `/api/v1/complaints?state=${tab}&page=${page}&limit=${limit}`
+      );
       setItems(res.data?.items ?? []);
+      setCounts(res.data?.counts ?? { open: 0, closed: 0 });
+      setTotal(res.meta?.total ?? 0);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tab, page, limit]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const open = useMemo(() => items.filter((c) => c.status === "received" || c.status === "in_progress"), [items]);
-  const closed = useMemo(() => items.filter((c) => c.status === "resolved" || c.status === "rejected"), [items]);
-  const shown = tab === "open" ? open : closed;
+  const shown = items;
 
   if (loading) {
     return (
@@ -112,10 +119,13 @@ export default function AdminComplaintsPage() {
 
       <Tabs
         value={tab}
-        onChange={setTab}
+        onChange={(t) => {
+          setTab(t);
+          setPage(1);
+        }}
         tabs={[
-          { id: "open", label: "Perlu Ditangani", count: open.length, icon: MessageSquareWarning },
-          { id: "closed", label: "Selesai", count: closed.length },
+          { id: "open", label: "Perlu Ditangani", count: counts.open, icon: MessageSquareWarning },
+          { id: "closed", label: "Selesai", count: counts.closed },
         ]}
       />
 
@@ -133,7 +143,7 @@ export default function AdminComplaintsPage() {
         </Card>
       ) : (
         <Card>
-          <CardHeader title={tab === "open" ? "Perlu ditangani" : "Riwayat penanganan"} description={`${shown.length} tiket.`} />
+          <CardHeader title={tab === "open" ? "Perlu ditangani" : "Riwayat penanganan"} description={`${total} tiket.`} />
           <CardBody className="p-0">
             <ul className="divide-y divide-[var(--border)]">
               {shown.map((c) => (
@@ -175,6 +185,20 @@ export default function AdminComplaintsPage() {
             </ul>
           </CardBody>
         </Card>
+      )}
+
+      {total > 0 && (
+        <Pagination
+          page={page}
+          totalPages={Math.max(1, Math.ceil(total / limit))}
+          total={total}
+          limit={limit}
+          onPage={setPage}
+          onLimit={(l) => {
+            setLimit(l);
+            setPage(1);
+          }}
+        />
       )}
 
       <HandleModal

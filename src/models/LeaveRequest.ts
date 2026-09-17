@@ -11,6 +11,8 @@ export interface ILeaveRequest extends Document {
   /** Total calendar days spanned — shown next to chargedDays so the difference is visible. */
   calendarDays: number;
   reason: string;
+  /** For a catch-all "other" type: what the leave is for, in the employee's words. */
+  customPurpose?: string;
   /** Storage key of the supporting document, if any. */
   evidenceUrl?: string;
   approvalInstanceId?: mongoose.Types.ObjectId;
@@ -27,6 +29,7 @@ const LeaveRequestSchema = new Schema<ILeaveRequest>(
     chargedDays: { type: Number, required: true, default: 1, min: 0 },
     calendarDays: { type: Number, required: true, default: 1, min: 0 },
     reason: { type: String, required: true },
+    customPurpose: { type: String, default: "" },
     evidenceUrl: { type: String, default: "" },
     approvalInstanceId: { type: Schema.Types.ObjectId, ref: "ApprovalInstance" },
     status: {

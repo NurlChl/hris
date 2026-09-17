@@ -457,10 +457,14 @@ export function MonthPicker({
   required,
   id,
   className,
+  clearable,
+  placeholder = "Pilih periode",
   "aria-label": ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
+  clearable?: boolean;
+  placeholder?: string;
   disabled?: boolean;
   required?: boolean;
   id?: string;
@@ -507,8 +511,22 @@ export function MonthPicker({
       >
         <CalendarDays className="w-4 h-4 shrink-0 text-subtle" strokeWidth={ICON_STROKE} />
         <span className={cn("flex-1 min-w-0 truncate", label ? "text-foreground" : "text-subtle")}>
-          {label || "Pilih periode"}
+          {label || placeholder}
         </span>
+        {clearable && value && !disabled && (
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label="Kosongkan periode"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange("");
+            }}
+            className="shrink-0 grid place-items-center w-5 h-5 rounded text-subtle hover:text-foreground hover:bg-surface-2"
+          >
+            <X className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} />
+          </span>
+        )}
       </button>
 
       {open && (

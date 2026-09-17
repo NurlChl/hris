@@ -7,6 +7,7 @@ import {
   Building2, Briefcase, MapPin, CreditCard, ShieldCheck, Sparkles, CheckCheck
 } from "lucide-react";
 import SearchSelect from "@/components/SearchSelect";
+import { CredentialDialog } from "@/components/CredentialDialog";
 import {
   Alert,
   Badge,
@@ -88,7 +89,7 @@ interface Employee {
   storeManagerId?: Ref;
   areaManagerId?: Ref;
   joinDate: string | Date;
-  employmentStatus: "probation" | "pkwt" | "pkwtt" | "outsource";
+  employmentStatus: "probation" | "pkwt" | "pkwtt" | "magang" | "harian_lepas" | "paruh_waktu" | "outsource" | "lainnya";
   status: "active" | "onboarding" | "suspended" | "resigned";
   isNewHire?: boolean;
   missingFields?: string[];
@@ -144,6 +145,7 @@ function EmployeesView() {
   const [debouncedQuery, setDebouncedQuery] = useState(sp.get("q") ?? "");
   const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [credential, setCredential] = useState<{ email: string; password: string; name?: string } | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -190,7 +192,7 @@ function EmployeesView() {
   const [roleId, setRoleId] = useState(""); // select login user role
   const [password, setPassword] = useState("");
   const [joinDate, setJoinDate] = useState("");
-  const [employmentStatus, setEmploymentStatus] = useState<"probation" | "pkwt" | "pkwtt" | "outsource">("probation");
+  const [employmentStatus, setEmploymentStatus] = useState<"probation" | "pkwt" | "pkwtt" | "magang" | "harian_lepas" | "paruh_waktu" | "outsource" | "lainnya">("probation");
   const [status, setStatus] = useState<"active" | "onboarding" | "suspended" | "resigned">("onboarding");
 
   // Indonesian Region API States
@@ -486,6 +488,9 @@ function EmployeesView() {
 
       const data = await response.json();
       if (data.success) {
+        if (data.data?.generatedPassword) {
+          setCredential({ email: officeEmail, password: data.data.generatedPassword, name });
+        }
         void fetchEmployees();
         void fetchAllEmployees();
         setFormOpen(false);
@@ -734,6 +739,8 @@ function EmployeesView() {
           />
         </div>
       )}
+
+      <CredentialDialog credential={credential} onClose={() => setCredential(null)} />
 
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -1080,11 +1087,15 @@ function EmployeesView() {
                       </div>
                       <div className="space-y-1">
                         <label className="font-semibold">Status Kepegawaian</label>
-                        <Select value={employmentStatus} onChange={e => setEmploymentStatus(e.target.value as "probation" | "pkwt" | "pkwtt" | "outsource")} className="w-full">
-                          <option value="probation">Probation</option>
-                          <option value="pkwt">PKWT</option>
-                          <option value="pkwtt">PKWTT</option>
+                        <Select value={employmentStatus} onChange={e => setEmploymentStatus(e.target.value as "probation" | "pkwt" | "pkwtt" | "magang" | "harian_lepas" | "paruh_waktu" | "outsource" | "lainnya")} className="w-full">
+                          <option value="probation">Masa percobaan</option>
+                          <option value="pkwt">PKWT (kontrak)</option>
+                          <option value="pkwtt">PKWTT (tetap)</option>
+                          <option value="magang">Magang</option>
+                          <option value="harian_lepas">Harian lepas</option>
+                          <option value="paruh_waktu">Paruh waktu</option>
                           <option value="outsource">Outsource</option>
+                          <option value="lainnya">Lainnya</option>
                         </Select>
                       </div>
                       <div className="space-y-1">
@@ -1121,7 +1132,7 @@ function EmployeesView() {
                             placeholder="Pilih Role..."
                           />
                           <p className="text-label text-muted italic mt-1">
-                            * Karyawan yang diberi role akan dibuatkan akun login dengan email kantor. Kata sandi awalnya diambil dari Pengaturan → Keamanan dan ditampilkan setelah data disimpan.
+                            * Karyawan yang diberi role akan dibuatkan akun login dengan email kantor. Kata sandi awalnya mengikuti Pengaturan → Kata Sandi Awal untuk peran yang dipilih dan ditampilkan sekali setelah data disimpan.
                           </p>
                         </div>
                       </div>

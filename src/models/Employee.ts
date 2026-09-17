@@ -56,7 +56,7 @@ export interface IEmployee extends Document {
   storeManagerId?: mongoose.Types.ObjectId | null;
   areaManagerId?: mongoose.Types.ObjectId | null;
   joinDate?: Date;
-  employmentStatus: "probation" | "pkwt" | "pkwtt" | "outsource";
+  employmentStatus: "probation" | "pkwt" | "pkwtt" | "magang" | "harian_lepas" | "paruh_waktu" | "outsource" | "lainnya";
   status: "active" | "onboarding" | "suspended" | "resigned";
   /** Storage key of the profile photo. */
   photoUrl: string;
@@ -68,6 +68,8 @@ export interface IEmployee extends Document {
    * until someone does.
    */
   isNewHire: boolean;
+  /** Weekly shift template that applies unless a date has its own override. */
+  workScheduleId?: mongoose.Types.ObjectId | null;
   hiredFromCandidateId?: mongoose.Types.ObjectId | null;
   profileCompletedAt?: Date | null;
 }
@@ -131,7 +133,7 @@ const EmployeeSchema = new Schema<IEmployee>(
     joinDate: { type: Date, index: true },
     employmentStatus: {
       type: String,
-      enum: ["probation", "pkwt", "pkwtt", "outsource"],
+      enum: ["probation", "pkwt", "pkwtt", "magang", "harian_lepas", "paruh_waktu", "outsource", "lainnya"],
       default: "probation",
     },
     status: {
@@ -143,6 +145,7 @@ const EmployeeSchema = new Schema<IEmployee>(
     },
     photoUrl: { type: String, default: "" },
     isNewHire: { type: Boolean, default: false, index: true },
+    workScheduleId: { type: Schema.Types.ObjectId, ref: "WorkSchedule", default: null, index: true },
     hiredFromCandidateId: { type: Schema.Types.ObjectId, ref: "Candidate", default: null },
     profileCompletedAt: { type: Date, default: null },
     documents: [

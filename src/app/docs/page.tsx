@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import {
@@ -13,15 +13,17 @@ import {
   X,
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
-import { Alert, Badge, Input, Select, cn } from "@/components/ui";
-import { ALL_SECTIONS, CHAPTERS, ROLE_LABELS, type DocBlock, type DocSection } from "./content";
+import { Alert, Badge, ErrorState, Input, Select, SkeletonList, cn } from "@/components/ui";
+import { api, errorMessage } from "@/lib/client-api";
+import { ROLE_LABELS } from "@/lib/docs/roles";
+import type { DocBlock, DocChapter, DocSection } from "@/lib/docs/content";
 
 /**
- * Full system documentation.
+ * The guide.
  *
- * Public on purpose: a new employee needs to read "how do I clock in" before
- * they have working credentials, and support staff need to link to a specific
- * section. Nothing here exposes data — only how the system behaves.
+ * Signed-in only, and filtered by role on the server: each role receives the
+ * procedures written for it and nothing else. Superadmin reads everything and
+ * can preview what a particular role sees.
  */
 export default function DocsPage() {
   const { theme, toggleTheme } = useTheme();
@@ -32,19 +34,31 @@ export default function DocsPage() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [navOpen, setNavOpen] = useState(false);
   const [activeId, setActiveId] = useState("");
+  const [source, setSource] = useState<DocChapter[] | null>(null);
+  const [canPreview, setCanPreview] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
-  // Default the filter to the reader's own role so a new employee is not shown
-  // administrator procedures they cannot act on.
+  const load = useCallback(async () => {
+    setLoadError("");
+    try {
+      const qs = roleFilter !== "all" ? `?role=${encodeURIComponent(roleFilter)}` : "";
+      const res = await api.get<{ chapters: DocChapter[]; canPreview: boolean }>(`/api/v1/docs${qs}`);
+      setSource(res.data?.chapters ?? []);
+      setCanPreview(Boolean(res.data?.canPreview));
+    } catch (err) {
+      setLoadError(errorMessage(err));
+    }
+  }, [roleFilter]);
+
   useEffect(() => {
-    if (sessionRole) setRoleFilter(sessionRole);
-  }, [sessionRole]);
+    void load();
+  }, [load]);
+
+  const allSections = useMemo(() => (source ?? []).flatMap((c) => c.sections), [source]);
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return ALL_SECTIONS.filter((s) => {
-      const roleOk =
-        roleFilter === "all" || s.audience.length === 0 || s.audience.includes(roleFilter);
-      if (!roleOk) return false;
+    return allSections.filter((s) => {
       if (!q) return true;
       const haystack = [
         s.title,
@@ -55,17 +69,17 @@ export default function DocsPage() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [query, roleFilter]);
+  }, [query, allSections]);
 
   const visibleIds = useMemo(() => new Set(matches.map((m) => m.id)), [matches]);
 
   const chapters = useMemo(
     () =>
-      CHAPTERS.map((c) => ({
+      (source ?? []).map((c) => ({
         ...c,
         sections: c.sections.filter((s) => visibleIds.has(s.id)),
       })).filter((c) => c.sections.length > 0),
-    [visibleIds]
+    [visibleIds, source]
   );
 
   // Highlights the section currently in view in the sidebar.
@@ -149,11 +163,11 @@ export default function DocsPage() {
               {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
             <Link
-              href={sessionRole ? "/portal/attendance" : "/auth/login"}
+              href={sessionRole && sessionRole !== "STAFF" ? "/admin" : "/portal/attendance"}
               className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-label font-semibold text-muted hover:text-foreground hover:bg-surface-2 transition-colors"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              {sessionRole ? "Kembali ke aplikasi" : "Masuk"}
+              Kembali ke aplikasi
             </Link>
           </div>
         </div>
@@ -168,6 +182,7 @@ export default function DocsPage() {
               setQuery={setQuery}
               roleFilter={roleFilter}
               setRoleFilter={setRoleFilter}
+              canPreview={canPreview}
             />
             {nav}
           </div>
@@ -200,6 +215,7 @@ export default function DocsPage() {
                   setQuery={setQuery}
                   roleFilter={roleFilter}
                   setRoleFilter={setRoleFilter}
+                  canPreview={canPreview}
                 />
                 {nav}
               </div>
@@ -212,11 +228,11 @@ export default function DocsPage() {
           <div className="mb-8">
             <h1 className="text-display-sm md:text-display text-heading">Panduan Penggunaan HRIS</h1>
             <p className="mt-2 text-body text-muted leading-relaxed max-w-2xl">
-              Semua yang perlu Anda ketahui untuk memakai sistem ini, dari absen harian sampai
-              mengatur aturan perusahaan. Gunakan penyaring peran di samping untuk menyembunyikan
-              bagian yang tidak relevan dengan pekerjaan Anda.
+              {canPreview
+                ? "Sebagai Superadmin Anda melihat panduan semua peran. Pilih peran di penyaring untuk melihat persis apa yang ditampilkan kepada peran tersebut."
+                : `Panduan untuk peran ${ROLE_LABELS[sessionRole ?? ""] ?? sessionRole ?? "Anda"}: hanya menu dan alur yang bisa Anda gunakan.`}
             </p>
-            {roleFilter !== "all" && (
+            {canPreview && roleFilter !== "all" && (
               <p className="mt-3 text-label text-subtle">
                 Menampilkan bagian untuk peran{" "}
                 <strong className="text-foreground">{ROLE_LABELS[roleFilter] ?? roleFilter}</strong>{" "}
@@ -231,13 +247,18 @@ export default function DocsPage() {
               setQuery={setQuery}
               roleFilter={roleFilter}
               setRoleFilter={setRoleFilter}
+              canPreview={canPreview}
             />
           </div>
 
-          {chapters.length === 0 ? (
+          {loadError ? (
+            <ErrorState message={loadError} onRetry={load} />
+          ) : source === null ? (
+            <SkeletonList rows={6} />
+          ) : chapters.length === 0 ? (
             <Alert tone="info" title="Tidak ada bagian yang cocok">
               Tidak ditemukan bagian dokumentasi untuk kata kunci &ldquo;{query}&rdquo;. Coba kata
-              lain, atau ubah penyaring peran ke &ldquo;Semua peran&rdquo;.
+              lain.
             </Alert>
           ) : (
             <div className="space-y-14">
@@ -258,9 +279,11 @@ export default function DocsPage() {
 
           <footer className="mt-16 pt-6 border-t border-line flex flex-wrap items-center justify-between gap-3 text-caption text-subtle">
             <p>Dokumentasi ini menjelaskan perilaku sistem versi yang sedang berjalan.</p>
-            <Link href="/api-docs" className="hover:text-foreground transition-colors">
-              Referensi API →
-            </Link>
+            {canPreview && (
+              <Link href="/api-docs" className="hover:text-foreground transition-colors">
+                Referensi API →
+              </Link>
+            )}
           </footer>
         </main>
       </div>
@@ -273,11 +296,13 @@ function DocFilters({
   setQuery,
   roleFilter,
   setRoleFilter,
+  canPreview,
 }: {
   query: string;
   setQuery: (v: string) => void;
   roleFilter: string;
   setRoleFilter: (v: string) => void;
+  canPreview: boolean;
 }) {
   return (
     <div className="space-y-2">
@@ -291,6 +316,7 @@ function DocFilters({
           className="pl-9 h-9 text-label"
         />
       </div>
+      {canPreview && (
       <div>
         <Select
           value={roleFilter}
@@ -307,6 +333,7 @@ function DocFilters({
           ))}
         </Select>
       </div>
+      )}
     </div>
   );
 }

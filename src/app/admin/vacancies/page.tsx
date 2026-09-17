@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { Pagination } from "@/components/ui/Pagination";
 import Link from "next/link";
 import {
   Eye,
@@ -98,22 +99,26 @@ export default function VacanciesPage() {
   const [editing, setEditing] = useState<VacancyDraft | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Vacancy | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const qs = new URLSearchParams();
+      const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (tab !== "all") qs.set("status", tab);
       if (query.trim()) qs.set("q", query.trim());
       const res = await api.get<Vacancy[]>(`/api/v1/vacancies?${qs}`);
       setItems(res.data ?? []);
+      setTotal(res.meta?.total ?? 0);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [tab, query]);
+  }, [tab, query, page, limit]);
 
   useEffect(() => {
     const t = window.setTimeout(() => void load(), query ? 350 : 0);
@@ -335,6 +340,17 @@ export default function VacanciesPage() {
               </CardBody>
             </Card>
           ))}
+          <Pagination
+            page={page}
+            totalPages={Math.max(1, Math.ceil(total / limit))}
+            total={total}
+            limit={limit}
+            onPage={setPage}
+            onLimit={(l) => {
+              setLimit(l);
+              setPage(1);
+            }}
+          />
         </div>
       )}
 

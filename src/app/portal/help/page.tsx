@@ -18,7 +18,7 @@ import {
   Target,
 } from "lucide-react";
 import { Alert, Badge, Card, CardBody, CardHeader, cn } from "@/components/ui";
-import { ROLE_LABELS } from "@/app/docs/content";
+import { ROLE_LABELS } from "@/lib/docs/roles";
 
 /**
  * Role-aware quick help.
@@ -141,12 +141,6 @@ const FAQS: Faq[] = [
       "Sebagai atasan, Anda hanya melihat pengajuan dari karyawan di divisi yang sama dengan Anda. Pengajuan dari divisi lain tidak akan muncul. Selain itu, pengajuan baru muncul hanya bila giliran persetujuannya sudah sampai pada peran Anda.",
     roles: ["SPV"],
   },
-  {
-    q: "Bagaimana mengubah toleransi keterlambatan atau kuota koreksi absen?",
-    a:
-      "Buka Panel Admin → Pengaturan Sistem → bagian Presensi. Ubah nilainya lalu simpan; perubahan langsung berlaku pada permintaan berikutnya tanpa perlu deploy ulang.",
-    roles: ["HRD", "SUPERADMIN"],
-  },
 ];
 
 export default function HelpPage() {
@@ -155,7 +149,7 @@ export default function HelpPage() {
   const [open, setOpen] = useState<number | null>(0);
 
   const faqs = useMemo(
-    () => FAQS.filter((f) => !f.roles || !role || f.roles.includes(role)),
+    () => FAQS.filter((f) => !f.roles || (role !== undefined && (f.roles.includes(role) || role === "SUPERADMIN"))),
     [role]
   );
 
@@ -170,8 +164,7 @@ export default function HelpPage() {
       </header>
 
       <Alert tone="info" title="Butuh penjelasan lengkap?">
-        Halaman ini hanya memuat ringkasan. Dokumentasi penuh berisi alur setiap modul, aturan
-        bisnis, dan catatan teknis tersedia di{" "}
+        Halaman ini hanya memuat ringkasan. Panduan lengkap sesuai peran Anda tersedia di{" "}
         <Link href="/docs" className="font-semibold underline">
           halaman Dokumentasi
         </Link>
@@ -256,7 +249,7 @@ export default function HelpPage() {
               <ExternalLink className="w-3 h-3 text-subtle" />
             </span>
             <span className="block text-label text-muted mt-1 leading-relaxed">
-              Alur setiap modul, aturan bisnis, dan acuan teknis sistem.
+              Alur lengkap setiap menu yang bisa Anda gunakan.
             </span>
           </span>
         </Link>

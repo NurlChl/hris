@@ -1,10 +1,12 @@
 import NationalHoliday from "@/models/NationalHoliday";
 import WorkSchedule from "@/models/WorkSchedule";
 import EmployeeSchedule from "@/models/EmployeeSchedule";
+import Employee from "@/models/Employee";
+import { expandDays, type ScheduleTemplateLike } from "@/lib/hr/schedule-days";
 import Branch from "@/models/Branch";
 import { connectToDatabase } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
-import { eachDayKey, isWeekendKey, wibEndOfDay, wibStartOfDay } from "@/lib/time";
+import { eachDayKey, isWeekendKey, wibEndOfDay, wibParts, wibStartOfDay } from "@/lib/time";
 
 /** All active national-holiday day keys in a range, mapped to their names. */
 export async function holidayMap(
@@ -79,17 +81,55 @@ export interface ResolvedSchedule {
   breakIn?: string;
   isBreakActive: boolean;
   gracePeriodMinutes: number;
+  /** A day off by roster: clocking in is allowed but never counted late. */
+  isOffDay: boolean;
   /** Where the values came from, for the UI to explain itself. */
-  source: "employee_schedule" | "branch_default";
+  source: "date_override" | "employee_template" | "branch_default";
   scheduleName: string;
+  scheduleId?: string;
+}
+
+type TemplateDoc = ScheduleTemplateLike & {
+  _id?: unknown;
+  name?: string;
+  isBreakActive?: boolean;
+  gracePeriodMinutes?: number;
+};
+
+function fromTemplate(
+  template: TemplateDoc,
+  dateKey: string,
+  source: ResolvedSchedule["source"],
+  globalGrace: number,
+  breakEnabled: boolean
+): ResolvedSchedule {
+  const weekday = wibParts(wibStartOfDay(dateKey)).weekday;
+  const day = expandDays(template).find((d) => d.day === weekday)!;
+  return {
+    clockIn: day.clockIn,
+    clockOut: day.clockOut,
+    breakOut: day.breakOut,
+    breakIn: day.breakIn,
+    isBreakActive: breakEnabled && template.isBreakActive !== false && Boolean(day.breakOut && day.breakIn),
+    gracePeriodMinutes:
+      typeof template.gracePeriodMinutes === "number" ? template.gracePeriodMinutes : globalGrace,
+    isOffDay: !day.active,
+    source,
+    scheduleName: template.name ?? "Jadwal kerja",
+    scheduleId: template._id ? String(template._id) : undefined,
+  };
 }
 
 /**
  * Resolves the work schedule that applies to an employee on a WIB day.
  *
- * Order of precedence: an explicit per-day assignment (shift roster) first,
- * then the branch's operating hours as the backstop. Grace period follows the
- * same order, with the global CMS setting as the final default.
+ * 1. A date override from the roster (a different shift, or a day off).
+ * 2. The employee's weekly shift template, using that weekday's hours; a
+ *    weekday the template marks inactive is a day off.
+ * 3. The branch's operating hours as the backstop.
+ *
+ * Grace period follows the same order, with the global setting as the final
+ * default.
  */
 export async function resolveSchedule(
   employeeId: string,
@@ -101,37 +141,37 @@ export async function resolveSchedule(
   const globalGrace = Number(settings.grace_period_minutes ?? 1);
   const breakEnabled = Boolean(settings.enable_break_attendance);
 
-  const assignment = await EmployeeSchedule.findOne({
+  const override = await EmployeeSchedule.findOne({
     employeeId,
     date: { $gte: wibStartOfDay(dateKey), $lte: wibEndOfDay(dateKey) },
   })
     .populate("scheduleId")
-    .lean<{ scheduleId?: Record<string, unknown> } | null>();
+    .lean<{ isOffDay?: boolean; note?: string; scheduleId?: TemplateDoc | null } | null>();
 
-  const schedule = assignment?.scheduleId as
-    | {
-        name?: string;
-        clockIn?: string;
-        clockOut?: string;
-        breakOut?: string;
-        breakIn?: string;
-        isBreakActive?: boolean;
-        gracePeriodMinutes?: number;
-      }
-    | undefined;
-
-  if (schedule?.clockIn) {
+  if (override?.isOffDay) {
     return {
-      clockIn: schedule.clockIn,
-      clockOut: schedule.clockOut ?? "17:00",
-      breakOut: schedule.breakOut,
-      breakIn: schedule.breakIn,
-      isBreakActive: breakEnabled && schedule.isBreakActive !== false,
-      gracePeriodMinutes:
-        typeof schedule.gracePeriodMinutes === "number" ? schedule.gracePeriodMinutes : globalGrace,
-      source: "employee_schedule",
-      scheduleName: schedule.name ?? "Jadwal individual",
+      clockIn: branch?.workHours?.start ?? "09:00",
+      clockOut: branch?.workHours?.end ?? "17:00",
+      isBreakActive: false,
+      gracePeriodMinutes: globalGrace,
+      isOffDay: true,
+      source: "date_override",
+      scheduleName: override.note ? `Libur: ${override.note}` : "Libur (jadwal khusus)",
     };
+  }
+  if (override?.scheduleId) {
+    // An override names a shift for that date; it is a working day whatever the
+    // template's weekday pattern says.
+    const resolved = fromTemplate(override.scheduleId, dateKey, "date_override", globalGrace, breakEnabled);
+    return { ...resolved, isOffDay: false };
+  }
+
+  const employee = await Employee.findById(employeeId)
+    .select("workScheduleId")
+    .populate("workScheduleId")
+    .lean<{ workScheduleId?: TemplateDoc | null } | null>();
+  if (employee?.workScheduleId) {
+    return fromTemplate(employee.workScheduleId, dateKey, "employee_template", globalGrace, breakEnabled);
   }
 
   return {
@@ -139,6 +179,7 @@ export async function resolveSchedule(
     clockOut: branch?.workHours?.end ?? "17:00",
     isBreakActive: breakEnabled,
     gracePeriodMinutes: globalGrace,
+    isOffDay: false,
     source: "branch_default",
     scheduleName: branch?.name ? `Jam operasional ${branch.name}` : "Jam kerja default",
   };

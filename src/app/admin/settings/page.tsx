@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { KeyRound } from "lucide-react";
+import { InitialPasswordsPanel } from "./InitialPasswords";
 import { Plus, RotateCcw, Save, Shield, Sliders, Trash2, Users } from "lucide-react";
 import {
   Alert,
@@ -65,7 +67,7 @@ interface RbacMeta {
 }
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<"settings" | "roles">("settings");
+  const [tab, setTab] = useState<"settings" | "roles" | "passwords">("settings");
 
   return (
     <div className="space-y-6">
@@ -82,10 +84,11 @@ export default function SettingsPage() {
         tabs={[
           { id: "settings", label: "Aturan Bisnis", icon: Sliders },
           { id: "roles", label: "Peran & Hak Akses", icon: Shield },
+          { id: "passwords", label: "Kata Sandi Awal", icon: KeyRound },
         ]}
       />
 
-      {tab === "settings" ? <BusinessRules /> : <RolesPanel />}
+      {tab === "settings" ? <BusinessRules /> : tab === "roles" ? <RolesPanel /> : <InitialPasswordsPanel />}
     </div>
   );
 }

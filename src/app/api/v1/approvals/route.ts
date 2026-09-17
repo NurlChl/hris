@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { quotaModeOf } from "@/lib/hr/leave-policy";
 import { attachmentRefHref } from "@/lib/uploads";
 import mongoose from "mongoose";
 import { wrapRouteHandler, apiSuccess } from "@/lib/api";
-import { requireUser, parseBody, BadRequest, NotFound, Forbidden } from "@/lib/guard";
+import { requireUser, parseBody, pagination, BadRequest, NotFound, Forbidden } from "@/lib/guard";
 import { logActivity } from "@/lib/audit/logger";
 import { decide, type RefType, REF_TYPE_LABEL } from "@/lib/approval/engine";
 import { formatDate, wibStartOfDay, wibTimeOnDay } from "@/lib/time";
@@ -47,9 +48,18 @@ export const GET = wrapRouteHandler(async (req) => {
             : {}),
         };
 
+  // A supervisor's queue is their division's; instances that carry the
+  // division are narrowed in the query, older ones are checked below.
+  if (ctx.user.role === "SPV" && ctx.user.divisionId) {
+    filter.$or = [{ divisionId: new mongoose.Types.ObjectId(ctx.user.divisionId) }, { divisionId: null }];
+  }
+
+  const { page, limit, skip } = pagination(req, 25, 100);
+  const total = await ApprovalInstance.countDocuments(filter);
   const instances = await ApprovalInstance.find(filter)
     .sort({ updatedAt: -1 })
-    .limit(view === "history" ? 100 : 300)
+    .skip(skip)
+    .limit(limit)
     .lean<
       Array<{
         _id: mongoose.Types.ObjectId;
@@ -139,14 +149,16 @@ export const GET = wrapRouteHandler(async (req) => {
     });
   }
 
-  return apiSuccess(items, "Berhasil memuat antrean persetujuan");
+  return apiSuccess(items, "Berhasil memuat antrean persetujuan", { page, limit, total });
 });
 
 async function describe(refType: RefType, doc: Record<string, unknown>) {
   if (refType === "leave") {
     const evidence = doc.evidenceUrl as string;
     return {
-      title: (doc.leaveTypeId as { name?: string } | undefined)?.name ?? "Izin/Cuti",
+      title:
+        ((doc.leaveTypeId as { name?: string } | undefined)?.name ?? "Izin/Cuti") +
+        (doc.customPurpose ? `: ${doc.customPurpose as string}` : ""),
       period: `${formatDate(doc.startDate as Date)} – ${formatDate(doc.endDate as Date)}`,
       duration: `${doc.chargedDays ?? "-"} hari kerja`,
       reason: doc.reason as string,
@@ -276,12 +288,13 @@ async function loadRef(refType: RefType, refId: mongoose.Types.ObjectId) {
       startDate: Date;
       endDate: Date;
       chargedDays: number;
+      customPurpose?: string;
       leaveTypeId?: { name?: string };
     } | null>();
     if (!doc) throw NotFound("Pengajuan cuti tidak ditemukan.");
     return {
       employeeId: doc.employeeId,
-      summary: `${doc.leaveTypeId?.name ?? "Cuti"} ${formatDate(doc.startDate)} – ${formatDate(doc.endDate)} (${doc.chargedDays} hari)`,
+      summary: `${doc.leaveTypeId?.name ?? "Cuti"}${doc.customPurpose ? `: ${doc.customPurpose}` : ""} ${formatDate(doc.startDate)} – ${formatDate(doc.endDate)} (${doc.chargedDays} hari)`,
     };
   }
   if (refType === "correction") {
@@ -338,8 +351,8 @@ async function finalize(
     leaveReq.status = status;
     await leaveReq.save();
 
-    const leaveType = await LeaveType.findById(leaveReq.leaveTypeId).lean<{ deductsBalance?: boolean } | null>();
-    if (leaveType?.deductsBalance !== false) {
+    const leaveType = await LeaveType.findById(leaveReq.leaveTypeId).lean<{ deductsBalance?: boolean; quotaMode?: "annual" | "per_event" | "none"; quotaDays: number } | null>();
+    if (!leaveType || quotaModeOf(leaveType) === "annual") {
       const days = leaveReq.chargedDays ?? 0;
       // Approved: the reserved days become used. Rejected: they go back to the
       // employee. Either way `pendingDays` must be released exactly once.

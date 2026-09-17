@@ -5,6 +5,7 @@ import {
   requireUser,
   requireEmployee,
   parseBody,
+  pagination,
   enforceRateLimit,
   BadRequest,
   Conflict,
@@ -43,11 +44,13 @@ export const GET = wrapRouteHandler(async (req) => {
   const todayKey = wibDateKey();
   const yearEnd = `${todayKey.slice(0, 4)}-12-31`;
 
-  const [requests, holidays] = await Promise.all([
+  const { page, limit, skip } = pagination(req, 20, 100);
+  const [requests, holidays, total] = await Promise.all([
     HolidaySwapRequest.find({ employeeId: ctx.user.employeeId })
       .populate("approvalInstanceId", "status currentStep stepsStatus")
       .sort({ holidayDate: -1 })
-      .limit(50)
+      .skip(skip)
+      .limit(limit)
       .lean(),
     NationalHoliday.find({
       isActive: true,
@@ -56,15 +59,19 @@ export const GET = wrapRouteHandler(async (req) => {
     })
       .sort({ dateKey: 1 })
       .lean(),
+    HolidaySwapRequest.countDocuments({ employeeId: ctx.user.employeeId }),
   ]);
 
   // Holidays already claimed are shown greyed out rather than omitted, so the
   // employee can see why they cannot pick them again.
-  const claimed = new Set(
-    requests
-      .filter((r) => ["pending", "approved"].includes(r.status as string))
-      .map((r) => wibDateKey(new Date(r.holidayDate as unknown as string)))
-  );
+  // Read from all active requests, not just the page being shown.
+  const active = await HolidaySwapRequest.find({
+    employeeId: ctx.user.employeeId,
+    status: { $in: ["pending", "approved"] },
+  })
+    .select("holidayDate")
+    .lean<Array<{ holidayDate: Date }>>();
+  const claimed = new Set(active.map((r) => wibDateKey(new Date(r.holidayDate))));
 
   return apiSuccess(
     {
@@ -77,7 +84,8 @@ export const GET = wrapRouteHandler(async (req) => {
         blockSameDivision: Boolean(settings.holiday_swap_block_same_division),
       },
     },
-    "Berhasil memuat data tukar libur"
+    "Berhasil memuat data tukar libur",
+    { page, limit, total }
   );
 });
 

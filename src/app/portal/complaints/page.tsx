@@ -21,6 +21,7 @@ import {
   Toggle,
 } from "@/components/ui";
 import { useToast } from "@/components/ui/Toast";
+import { Pagination } from "@/components/ui/Pagination";
 import {
   FileOrLinkInput,
   attachmentProblem,
@@ -66,18 +67,22 @@ export default function PortalComplaintsPage() {
   const [error, setError] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [detail, setDetail] = useState<Complaint | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const limit = 10;
 
   const load = useCallback(async () => {
     setError("");
     try {
-      const res = await api.get<{ items: Complaint[] }>("/api/v1/complaints?mine=1");
+      const res = await api.get<{ items: Complaint[] }>(`/api/v1/complaints?mine=1&page=${page}&limit=${limit}`);
       setItems(res.data?.items ?? []);
+      setTotal(res.meta?.total ?? 0);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     void load();
@@ -120,7 +125,7 @@ export default function PortalComplaintsPage() {
       </Alert>
 
       <Card>
-        <CardHeader title="Pengaduan saya" description={`${items.length} tiket.`} icon={MessageSquareWarning} />
+        <CardHeader title="Pengaduan saya" description={`${total} tiket.`} icon={MessageSquareWarning} />
         <CardBody className="p-0">
           {items.length === 0 ? (
             <EmptyState
@@ -167,6 +172,10 @@ export default function PortalComplaintsPage() {
           )}
         </CardBody>
       </Card>
+
+      {total > limit && (
+        <Pagination page={page} totalPages={Math.ceil(total / limit)} total={total} limit={limit} onPage={setPage} />
+      )}
 
       <ComplaintForm
         open={formOpen}
